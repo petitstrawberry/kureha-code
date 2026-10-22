@@ -45,6 +45,10 @@ window title, Refresh icon, raised confirmation, File-menu Open Folder and
 menu Undo followed by clean tab closing. The final dependency is ScarletUI
 7adae8c, which additionally synchronizes declarative menu state after rebuilding.
 Its 32 focused runtime tests passed; Kureha’s 26 tests passed again at that pin.
+A final native run at 7adae8c opened the shared Open Folder picker from the
+Explorer button, selected `/root`, and opened Rust and Japanese text in separate
+tabs. The screenshots are in `native-submenus/` (including
+`kureha-native-open-folder-api.png` and `kureha-final-workbench.png`).
 
 ## macOS interaction and limits
 
