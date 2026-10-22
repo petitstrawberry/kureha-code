@@ -1,0 +1,5 @@
+/target/
+/dist/
+/artifacts/
+/.scarlet/
+.DS_Store

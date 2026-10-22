@@ -1,0 +1,5 @@
+[[layers]]
+kind = "app"
+source = "../../app.toml"
+to = "/applications/kureha-code.app"
+architectures = ["aarch64", "riscv64"]

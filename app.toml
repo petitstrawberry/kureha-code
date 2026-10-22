@@ -1,0 +1,16 @@
+# Shared identity for every platform; packaged as a native .app on Scarlet.
+[app]
+id = "org.scarlet-os.kureha-code"
+slug = "kureha-code"
+name = "Kureha Code"
+exec = "bin/kureha-code"
+args = ["%f"]
+new-instance = true
+icon = "code"
+mime-types = ["text/plain", "text/x-rust", "text/x-c", "text/x-python", "application/json"]
+
+[build]
+kind = "cargo"
+source = "."
+package = "kureha-code"
+bin = "kureha-code"

@@ -1,0 +1,22 @@
+[package]
+name = "kureha-code"
+version = "0.1.0"
+edition = "2024"
+description = "A cross-platform code editor built with ScarletUI"
+license = "MIT"
+
+[dependencies]
+floem-editor-core = { git = "https://github.com/lapce/floem", rev = "31fa8f444c37f4c314f47d88c23ffdbc25f2ab53" }
+
+[target.'cfg(target_os = "scarlet")'.dependencies]
+scarlet-fs = { git = "https://github.com/petitstrawberry/Scarlet", rev = "4a7f67db9d35cacb6d2a05c21037394c6be739d0" }
+scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "7adae8c4227687ffd4dff94046ea8b31f96a3398", default-features = false, features = ["std", "platform-sws"] }
+
+[target.'cfg(not(target_os = "scarlet"))'.dependencies]
+scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "7adae8c4227687ffd4dff94046ea8b31f96a3398", default-features = false, features = ["std", "platform-winit"] }
+
+[build-dependencies]
+toml = "0.8"
+
+[profile.release]
+panic = "abort"
