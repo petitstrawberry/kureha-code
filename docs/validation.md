@@ -193,3 +193,28 @@ Rapid typing after Quick Open exposed one remaining queued-input race: the first
 character could reach the previous editor before the overlay mounted. An editor
 capture guard now routes that queued text into the navigation query. The mounted
 regression fails before this fix and passes after it, without changing the document.
+
+
+## Terminal cursor and grid rendering — 2026-10-24
+
+The terminal now rebuilds its own cursor/focus view when those states change,
+without waiting for an unrelated workbench update. Pending-wrap cursor positions
+are clamped to the visible grid and wide continuations use the leading cell.
+Dim ANSI text is preserved. Cell dimensions and PTY sizing use the same editor
+font metrics. The published ScarletUI revision `fd587a29` honors the explicit
+font stack in retained painting as well as CPU rendering and uses the font line
+height for vertical placement.
+
+Thirteen terminal tests passed, including real PTY input/output, resize, exit,
+cancellation, and a mounted rendering-pipeline regression for cursor-only
+movement/hide/show and focus changes. The TextGrid regression compares CPU and
+retained font rendering, including bold cells.
+
+Actual macOS PTY interaction used `terminal_probe.py` in
+`../Scarlet/artifacts/kureha-terminal-20261024/`. It displayed narrow/wide Latin
+characters, Japanese, ANSI colors/bold/dim and box-drawing lines, then changed
+only ANSI cursor position/visibility while leaving the text unchanged. The
+corresponding `terminal-rendering.png` and `cursor-{moved,hidden,shown}.png`
+captures confirm the immediate visible updates. These are host UI observations,
+not a Scarlet-native UI performance measurement. TextGrid still represents a
+cell with one scalar, so combining-mark/emoji shaping is not claimed complete.

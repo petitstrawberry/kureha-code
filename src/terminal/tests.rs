@@ -63,6 +63,130 @@ fn ansi_cursor_color_unicode_alternate_screen_and_bounded_scrollback() {
 }
 
 #[test]
+fn screen_snapshot_keeps_cursor_on_grid_and_off_wide_continuations() {
+    for (output, raw_position, display_position) in [
+        ("abcd", (0, 4), (0, 3)),
+        ("abcdX", (1, 1), (1, 1)),
+        ("abcdefgh", (1, 4), (1, 3)),
+        ("ab界", (0, 4), (0, 2)),
+        ("界\x1b[1;2H", (0, 1), (0, 0)),
+        ("界\x1b[1;3H", (0, 2), (0, 2)),
+    ] {
+        let mut parser = vt100::Parser::new(2, 4, 0);
+        parser.process(output.as_bytes());
+        assert_eq!(parser.screen().cursor_position(), raw_position);
+        let snap = screen::snapshot(parser.screen(), TerminalStatus::Running);
+        assert_eq!(
+            (snap.cursor.row, snap.cursor.column),
+            display_position,
+            "{output:?}"
+        );
+        assert!(snap.cursor.visible);
+        // Rendering the cursor must not consume VT100's pending wrap state.
+        assert_eq!(parser.screen().cursor_position(), raw_position);
+    }
+}
+
+#[test]
+fn screen_snapshot_preserves_faint_styles_colors_and_resets() {
+    let mut parser = vt100::Parser::new(1, 8, 0);
+    parser.process(b"\x1b[2;3;4;7;38;2;12;34;56;48;5;196mX\x1b[1mY\x1b[0mZ");
+    // Erased cells still carry the active background and rendition.
+    parser.process(b"\x1b[2;48;5;244m\x1b[K");
+    let snap = screen::snapshot(parser.screen(), TerminalStatus::Running);
+    let faint = snap.grid.cell(0, 0).unwrap();
+    assert!(faint.faint && faint.italic && faint.underline && faint.inverse);
+    assert!(!faint.bold);
+    assert_eq!(faint.foreground, scarlet_ui::Color::rgb(12, 34, 56));
+    assert_eq!(faint.background, scarlet_ui::Color::rgb(255, 0, 0));
+    let bold = snap.grid.cell(1, 0).unwrap();
+    assert!(bold.bold && bold.italic && bold.underline && bold.inverse);
+    assert!(!bold.faint);
+    let reset = snap.grid.cell(2, 0).unwrap();
+    let default = screen::blank((1, 1)).cell(0, 0).unwrap();
+    assert_eq!(reset, scarlet_ui::TextGridCell { ch: 'Z', ..default });
+    let erased = snap.grid.cell(7, 0).unwrap();
+    assert_eq!(erased.ch, ' ');
+    assert!(erased.faint);
+    assert_eq!(erased.background, scarlet_ui::Color::rgb(128, 128, 128));
+}
+
+#[test]
+fn screen_snapshot_tracks_cursor_only_visibility_modes_and_scrollback() {
+    let mut parser = vt100::Parser::new(2, 8, 4);
+    parser.process(b"one\r\ntwo\r\nthree");
+    let before = screen::snapshot(parser.screen(), TerminalStatus::Running);
+    assert!(before.cursor.visible);
+    parser.process(b"\x1b[?25l\x1b[?1h\x1b[?2004h");
+    let hidden = screen::snapshot(parser.screen(), TerminalStatus::Running);
+    assert_eq!(hidden.grid, before.grid);
+    assert!(!hidden.cursor.visible);
+    assert!(hidden.application_cursor && hidden.bracketed_paste);
+    parser.process(b"\x1b[?25h\x1b[?1l\x1b[?2004l");
+    let shown = screen::snapshot(parser.screen(), TerminalStatus::Running);
+    assert_eq!(shown.grid, before.grid);
+    assert!(shown.cursor.visible);
+    assert!(!shown.application_cursor && !shown.bracketed_paste);
+    parser.screen_mut().set_scrollback(1);
+    let history = screen::snapshot(parser.screen(), TerminalStatus::Running);
+    assert_eq!(history.grid.cell(0, 0).unwrap().ch, 'o');
+    assert!(!history.cursor.visible);
+    parser.screen_mut().set_scrollback(0);
+    let live = screen::snapshot(parser.screen(), TerminalStatus::Running);
+    assert_eq!(live.grid, before.grid);
+    assert!(live.cursor.visible);
+}
+
+#[test]
+fn screen_snapshot_keeps_combining_text_aligned_and_clears_overwritten_wide_cells() {
+    let mut parser = vt100::Parser::new(2, 8, 0);
+    for byte in "e\u{301}界\u{3099}Z".as_bytes() {
+        parser.process(&[*byte]);
+    }
+    assert_eq!(parser.screen().cell(0, 0).unwrap().contents(), "e\u{301}");
+    assert_eq!(parser.screen().cell(0, 1).unwrap().contents(), "界\u{3099}");
+    let snap = screen::snapshot(parser.screen(), TerminalStatus::Running);
+    // TextGrid supports one scalar per cell. Combining marks must not be
+    // placed in neighboring cells or shift subsequent characters.
+    for (column, ch) in ['e', '界', '\0', 'Z', ' '].into_iter().enumerate() {
+        assert_eq!(snap.grid.cell(column, 0).unwrap().ch, ch);
+    }
+    assert_eq!((snap.cursor.row, snap.cursor.column), (0, 4));
+    parser.process(b"\x1b[1;3HQ");
+    let overwritten = screen::snapshot(parser.screen(), TerminalStatus::Running);
+    assert_eq!(overwritten.grid.cell(1, 0).unwrap().ch, ' ');
+    assert_eq!(overwritten.grid.cell(2, 0).unwrap().ch, 'Q');
+    assert_eq!(overwritten.grid.cell(3, 0).unwrap().ch, 'Z');
+    parser.process("\r界\rA".as_bytes());
+    let replaced = screen::snapshot(parser.screen(), TerminalStatus::Running);
+    assert_eq!(replaced.grid.cell(0, 0).unwrap().ch, 'A');
+    assert_eq!(replaced.grid.cell(1, 0).unwrap().ch, ' ');
+}
+
+#[test]
+fn screen_snapshot_stays_bounded_and_recovers_after_malformed_output() {
+    let mut parser = vt100::Parser::new(2, 8, 0);
+    let output = b"\xff\xfe\xe2\x82\x1b[999999999999999999999;999999999999999999999H\
+        \x1b[38;2;999;0;0m?\x1b[31;\x1b[0m\x1b]0;unfinished\
+        \x07\x1b[0m\x1b[2J\x1b[HOK";
+    for byte in output {
+        parser.process(&[*byte]);
+        let snap = screen::snapshot(parser.screen(), TerminalStatus::Running);
+        assert_eq!((snap.grid.columns(), snap.grid.rows()), (8, 2));
+        assert!(snap.cursor.column < 8 && snap.cursor.row < 2);
+    }
+    let snap = screen::snapshot(parser.screen(), TerminalStatus::Running);
+    let mut expected = screen::blank((8, 2));
+    for (column, ch) in ['O', 'K'].into_iter().enumerate() {
+        let mut cell = expected.cell(column, 0).unwrap();
+        cell.ch = ch;
+        expected.set_cell(column, 0, cell);
+    }
+    assert_eq!(snap.grid, expected);
+    assert_eq!((snap.cursor.row, snap.cursor.column), (0, 2));
+}
+
+#[test]
 fn keys_control_sequences_modes_modifiers_and_paste_limit() {
     let pressed = |key, modifiers| KeyEvent::Pressed {
         keycode: key,

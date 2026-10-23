@@ -8,6 +8,9 @@ mod backend;
 mod screen;
 #[cfg(test)]
 mod tests;
+mod view;
+#[cfg(test)]
+mod view_tests;
 
 use scarlet_ui::{
     Event, FontStack, KeyCode, KeyEvent, State, TextGrid, TextGridBuffer, TextGridCursor, View,
@@ -311,9 +314,16 @@ impl Terminal {
         self.view_with_font(None)
     }
     pub fn view_with_font(&self, font: Option<FontStack>) -> impl View + Clone + use<> {
+        view::LiveView {
+            terminal: self.clone(),
+            font,
+        }
+    }
+    fn content(&self, font: Option<FontStack>) -> impl View + Clone + use<> {
         let terminal = self.clone();
+        let cell_size = view::cell_size(font.as_ref());
         let mut grid = TextGrid::new(self.shared.grid.clone())
-            .cell_size(CELL_WIDTH, CELL_HEIGHT)
+            .cell_size(cell_size.width, cell_size.height)
             .font_size(14.0)
             .background_color(screen::background())
             .cursor(if self.focused() {
@@ -339,6 +349,7 @@ impl Terminal {
             .frame(f32::INFINITY, f32::INFINITY);
         screen::MeasuredView {
             terminal: self.clone(),
+            cell_size,
             content,
         }
     }

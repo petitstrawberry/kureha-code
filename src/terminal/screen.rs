@@ -31,12 +31,15 @@ pub(super) fn snapshot(screen: &vt100::Screen, status: TerminalStatus) -> Snapsh
                 if source.is_wide_continuation() {
                     '\0'
                 } else {
+                    // TextGrid stores one scalar per cell; keep the base
+                    // character without shifting neighbors for combining marks.
                     source.contents().chars().next().unwrap_or(' ')
                 },
                 color(source.fgcolor(), foreground()),
                 color(source.bgcolor(), background()),
             );
             cell.bold = source.bold();
+            cell.faint = source.dim();
             cell.italic = source.italic();
             cell.underline = source.underline();
             cell.inverse = source.inverse();
@@ -44,6 +47,17 @@ pub(super) fn snapshot(screen: &vt100::Screen, status: TerminalStatus) -> Snapsh
         }
     }
     let (row, col) = screen.cursor_position();
+    // VT100 keeps the cursor past the right margin while a wrap is pending.
+    // Only normalize the displayed position, leaving the parser state intact.
+    let row = row.min(rows.saturating_sub(1));
+    let mut col = col.min(cols.saturating_sub(1));
+    if col > 0
+        && screen
+            .cell(row, col)
+            .is_some_and(|cell| cell.is_wide_continuation())
+    {
+        col -= 1;
+    }
     let mut cursor = TextGridCursor::new(col as usize, row as usize);
     cursor.visible = !screen.hide_cursor() && screen.scrollback() == 0;
     Snapshot {
@@ -148,6 +162,7 @@ impl Queries {
 #[derive(Clone)]
 pub(super) struct MeasuredView<V: View + Clone> {
     pub terminal: Terminal,
+    pub cell_size: Size,
     pub content: V,
 }
 impl<V: View + Clone> View for MeasuredView<V> {
@@ -156,10 +171,12 @@ impl<V: View + Clone> View for MeasuredView<V> {
             self.clone(),
             |view| Measure {
                 terminal: view.terminal.clone(),
+                cell_size: view.cell_size,
                 size: Size::ZERO,
             },
             |object, view| {
                 object.terminal = view.terminal.clone();
+                object.cell_size = view.cell_size;
                 UpdateResult::Updated
             },
             |view| vec![view.content.clone_view()],
@@ -174,6 +191,7 @@ impl<V: View + Clone> View for MeasuredView<V> {
 }
 struct Measure {
     terminal: Terminal,
+    cell_size: Size,
     size: Size,
 }
 impl ElementRenderObject for Measure {
@@ -183,16 +201,20 @@ impl ElementRenderObject for Measure {
             if constraints.max_width.is_finite() {
                 constraints.max_width
             } else {
-                grid.columns() as f32 * super::CELL_WIDTH
+                grid.columns() as f32 * self.cell_size.width
             },
             if constraints.max_height.is_finite() {
                 constraints.max_height
             } else {
-                grid.rows() as f32 * super::CELL_HEIGHT
+                grid.rows() as f32 * self.cell_size.height
             },
         ));
-        self.terminal
-            .resize_pixels(self.size.width, self.size.height);
+        if self.size.width > 0.0 && self.size.height > 0.0 {
+            self.terminal.resize(
+                (self.size.width / self.cell_size.width) as u16,
+                (self.size.height / self.cell_size.height) as u16,
+            );
+        }
         self.size
     }
     fn size(&self) -> Size {
