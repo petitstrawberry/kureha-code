@@ -177,3 +177,10 @@ Scarlet/artifacts/kureha-workbench-20261023/.
 Remaining product scope includes more than two/nested groups, multi-cursor editing,
 code folding, cross-file rename, Git/diff and debugging integration, extension
 hosting and workspace restoration. The current result is not full VS Code parity.
+
+The reviewed native package also saved all three changed files through File →
+Save All, and saved an undo through Control+Alt+S while the editor was focused.
+A subsequent native check exposed focus remaining on the disabled workspace
+Replace All button. The fix returns focus after replacement and explicit editor
+or tab activation; a mounted interaction regression clicks Replace All and then
+verifies that Save All reaches the filesystem through its keyboard shortcut.

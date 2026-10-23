@@ -134,6 +134,11 @@ impl ProjectSearch {
         self.open.get() && self.owns_focus.get()
     }
 
+    pub(super) fn blur(&self) {
+        self.owns_focus.set(false);
+        self.focus_query.set(false);
+    }
+
     pub(super) fn close(&self) {
         self.owns_focus.set(false);
         self.focus_query.set(false);
@@ -446,6 +451,9 @@ impl App {
                         match self.apply_project_replacements(&results, changes) {
                             Ok((files, matches)) => {
                                 self.project.clear_results();
+                                // The triggering button is now disabled. Hand
+                                // keyboard focus back for review, Undo and Save All.
+                                self.project.blur();
                                 let message = format!(
                                     "Replaced {matches} matches in {files} files · review and save · Undo in each tab"
                                 );
@@ -1233,21 +1241,25 @@ mod tests {
             .update(&window());
         pipeline.layout_initial();
         pipeline.render();
-        fn locate(e: &dyn Element, origin: Point) -> Option<Point> {
+        fn locate(e: &dyn Element, origin: Point, label: &str) -> Option<Point> {
             let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
             if let Some(render) = e.render_object() {
                 let mut paint = PaintContext::new();
                 render.paint(&mut paint, Point::ZERO);
-                if paint.commands().iter().any(|command| matches!(command, PaintCommand::DrawText { text, .. } if text == "a.txt:1:1")) {
+                if paint.commands().iter().any(|command| matches!(command, PaintCommand::DrawText { text, .. } if text == label)) {
                     return Some(Point::new(p.x + 5.0, p.y + 5.0));
                 }
             }
             e.children()
                 .iter()
-                .find_map(|child| locate(child.as_ref(), p))
+                .find_map(|child| locate(child.as_ref(), p, label))
         }
-        let hit = locate(pipeline.element_tree().root().unwrap(), Point::ZERO)
-            .expect("visible real search result");
+        let hit = locate(
+            pipeline.element_tree().root().unwrap(),
+            Point::ZERO,
+            "a.txt:1:1",
+        )
+        .expect("visible real search result");
         pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
             button: MouseButton::Left,
             x: hit.x as i32,
@@ -1292,6 +1304,67 @@ mod tests {
             "Select All did not return to the editor after a search result click"
         );
         assert_eq!(app.project.query.get(), "cat");
+        app.show_project_search();
+        app.search_project();
+        finish_search(&app);
+        app.project.replacement.set("dog".into());
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.layout_initial();
+        pipeline.render();
+        let button = locate(
+            pipeline.element_tree().root().unwrap(),
+            Point::ZERO,
+            "Replace All in Files",
+        )
+        .unwrap();
+        for event in [
+            MouseEvent::ButtonPressed {
+                button: MouseButton::Left,
+                x: button.x as i32,
+                y: button.y as i32,
+                click_count: 1,
+            },
+            MouseEvent::ButtonReleased {
+                button: MouseButton::Left,
+                x: button.x as i32,
+                y: button.y as i32,
+                click_count: 1,
+            },
+        ] {
+            pipeline.handle_event(&Event::Mouse(event));
+        }
+        finish_search(&app);
+        assert!(
+            !app.project.wants_focus(),
+            "disabled Replace All retained keyboard focus"
+        );
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.layout_initial();
+        pipeline.render();
+        modifiers.alt = true;
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+            keycode: KeyCode::Char('s'),
+            modifiers,
+        }));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.runtime.lock().unwrap().job.is_some() {
+            app.poll();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "dog result\n",
+            "Save All shortcut was lost after replacement"
+        );
         pipeline.teardown();
     }
     #[test]

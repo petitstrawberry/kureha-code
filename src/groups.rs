@@ -31,6 +31,7 @@ impl App {
         if group == 1 && self.second.get().is_none() {
             return;
         }
+        self.project.blur();
         if self.focused_group.get() != group {
             self.invalidate_clipboard();
             self.focused_group.set(group);
