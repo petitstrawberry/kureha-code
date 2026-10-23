@@ -6,7 +6,7 @@ name = "Kureha Code"
 exec = "bin/kureha-code"
 args = ["%f"]
 new-instance = true
-icon = "code"
+icon = "resources/kureha.png"
 mime-types = ["text/plain", "text/x-rust", "text/x-c", "text/x-python", "application/json"]
 
 [build]
@@ -14,3 +14,7 @@ kind = "cargo"
 source = "."
 package = "kureha-code"
 bin = "kureha-code"
+
+[[resources]]
+source = "assets/kureha.png"
+to = "resources/kureha.png"

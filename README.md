@@ -19,8 +19,7 @@ are not traversed. Refresh reloads the current root.
 
 Find/Replace is literal, case-sensitive, wraps in either direction, and works on
 the active document. LF is used internally; CRLF input is saved as CRLF. Opened
-files and Replace All results are limited to 16 MiB. Syntax highlighting,
-language servers, completion and extensions are not implemented.
+files and Replace All results are limited to 16 MiB. The editor provides syntax colors, file-kind icons, language-server diagnostics, completion, definition navigation and hover information. Extensions are not implemented.
 
 ## Desktop development
 
@@ -62,22 +61,21 @@ The Cargo recipe is at the repository root because the SDK requires its build
 sources to remain within the recipe directory. No copy of the build recipe is
 shipped inside the finished app.
 
-For a local Scarlet checkout with the native SGFX environment prepared, add this
-layer to the appropriate image in its `scarlet.local.toml`:
+Scarlet includes this app through the remote bundle at a fixed, published commit:
 
 ```toml
-[[images.rootfs.layers]]
+[[layers]]
 kind = "bundle"
-path = "../../../kureha-code/platforms/scarlet/bundle.toml"
+source = { git = "https://github.com/petitstrawberry/kureha-code.git", rev = "<published-commit>" }
+bundle = "platforms/scarlet/bundle.toml"
 ```
 
-Then use the normal `cargo scarlet image` command. To package just the app from
-that project's directory:
+The distribution's `bundles/desktop/bundle.toml` contains the real pinned revision. No sibling checkout or local bundle override is required. To package a development checkout independently, run the SDK from a configured Scarlet project:
 
 ```sh
-cargo scarlet app build --source ../../../kureha-code \
+cargo scarlet app build --source /absolute/path/to/kureha-code \
   --target aarch64-unknown-scarlet --release \
-  --output ../../../kureha-code/dist/kureha-code.app
+  --output /absolute/path/to/new/kureha-code.app
 ```
 
 The output must be a new directory. The SDK validates native ELF architecture,
@@ -102,3 +100,27 @@ different tab or a newer revision clean. A saving tab is temporarily read-only;
 other tabs remain editable. Clipboard mutations are discarded after tab,
 document, selection or file-operation changes, including switching away and
 back. Menu callbacks queue commands for the UI thread.
+
+## Code features
+
+Explorer and tabs use 16 px file-kind icons, including language accents and separate folder, package/configuration, document, image and archive shapes. The packaged app has its own leaf/code icon in `assets/kureha.svg` and `assets/kureha.png`.
+
+Syntax parsing uses Syntect's pure Rust regex backend on one background worker. Rust, Python, JavaScript/TypeScript, JSON, TOML, Markdown and the included language grammars receive colors, including multiline strings and comments. Results are keyed by stable tab ID, engine revision and path; pending revisions coalesce and stale results are discarded. Documents above 1 MiB, 20,000 lines or a 16 KiB line fall back to plain text with a visible reason; parsing also has span/time bounds. Editing remains available.
+
+The Code menu exposes Completion (Ctrl+Space), Go to Definition (F12), Hover (Ctrl+K), Problems, and Restart Language Server. Completion candidates appear below the editor and apply as one undo step, including compatible additional text edits. Snippet-form completions are not advertised or inserted as raw template text. Problems select their document range; error/warning underlines track the current revision. Escape closes the language panel.
+
+Language servers are separate executables, not bundled or downloaded by Kureha. Defaults are `rust-analyzer`, `pylsp`, `typescript-language-server --stdio`, `vscode-json-language-server --stdio`, and `clangd`. They must be runnable on the platform hosting the editor. A host language server executable is not a Scarlet executable. Missing servers and initialization failures are reported in the status bar; the editor continues to work.
+
+Configure commands and arguments in `$XDG_CONFIG_HOME/kureha-code/lsp.toml` (normally `~/.config/kureha-code/lsp.toml`):
+
+```toml
+[servers.rust]
+command = "/absolute/path/to/rust-analyzer"
+args = []
+
+[servers.python]
+command = "pylsp"
+args = []
+```
+
+`KUREHA_LSP_CONFIG` selects another user configuration file. `KUREHA_LSP_RUST` and corresponding uppercase language IDs override just the executable. Project folders do not supply executable commands. Files must be saved to a path before language services can identify them. Communication uses bounded JSON-RPC over stdio with UTF-16 positions; edits and tab switches invalidate stale completion/navigation responses.

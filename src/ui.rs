@@ -1,9 +1,10 @@
 //! The workbench uses ScarletUI controls; the window menu is the app menu.
 use super::*;
+use kureha_code::{file_icons, syntax};
 use scarlet_ui::views::containers::ViewTuple;
 
 #[derive(Clone)]
-struct ViewCollection<V: View + Clone>(Vec<V>);
+pub(super) struct ViewCollection<V: View + Clone>(pub(super) Vec<V>);
 impl<V: View + Clone> ViewTuple for ViewCollection<V> {
     fn create_elements(&self) -> Vec<Box<dyn Element>> {
         self.0.iter().map(|view| view.create_element()).collect()
@@ -28,6 +29,7 @@ impl App {
             hstack! {
                 Text::from_state(self.status.clone()).font_size(11.0),
                 Spacer::new(),
+                Text::from_state(self.language_status.clone()).font_size(11.0),
                 Text::from_state(self.position.clone()).font_size(11.0),
             }.spacing(12.0).padding(6.0).background(palette.surface_variant()),
         }
@@ -37,6 +39,17 @@ impl App {
             let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event else {
                 return false;
             };
+            if *keycode == KeyCode::Escape && keys.dismiss_language_panel() {
+                return true;
+            }
+            if *keycode == KeyCode::F(12) {
+                keys.language_request("textDocument/definition");
+                return true;
+            }
+            if *keycode == KeyCode::Space && modifiers.control {
+                keys.language_request("textDocument/completion");
+                return true;
+            }
             if *keycode == KeyCode::F(3) {
                 keys.find(modifiers.shift);
                 return true;
@@ -49,6 +62,7 @@ impl App {
                 return false;
             }
             match keycode {
+                KeyCode::Char('k' | 'K') => keys.language_request("textDocument/hover"),
                 KeyCode::Char('n' | 'N') => keys.new_document(),
                 KeyCode::Char('o' | 'O') if modifiers.shift => keys.show_folder(),
                 KeyCode::Char('o' | 'O') => keys.picker(DialogPurpose::Open),
@@ -71,6 +85,7 @@ impl App {
             self.tabs_view(),
             if_view!(self.find_open.get(), self.find_view(), VStack::new(())),
             self.editor_view(id),
+            self.language_panel(),
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY)
@@ -82,20 +97,22 @@ impl App {
             let rt = self.runtime.lock().unwrap();
             rt.workspace.documents.iter().map(|doc| {
                 let saving = matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id, .. }) if *id == doc.id);
-                (doc.id, format!("{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if saving { " …" } else { "" }))
+                (doc.id, doc.path.clone(), format!("{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if saving { " …" } else { "" }))
             }).collect::<Vec<_>>()
         };
         let mut left = 0.0;
         let mut selected_range = (0.0, 0.0);
-        let tabs = summaries.into_iter().map(|(id, label)| {
-            let width = (label.chars().count() as f32 * 7.0 + 50.0).clamp(120.0, 240.0);
+        let tabs = summaries.into_iter().map(|(id, path, label)| {
+            let width = (label.chars().count() as f32 * 7.0 + 70.0).clamp(120.0, 240.0);
             if id == active { selected_range = (left, left + width); }
             left += width;
             let select = self.clone();
             let close = self.clone();
             let background = if id == active { palette.background() } else { palette.surface_variant() };
+            let icon = file_icons::for_path(path.as_deref());
             hstack! {
                 Button::new(label).header_style().font_size(13.0).padding(7.0)
+                    .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Small)
                     .background_color(background).on_click(move || select.activate(id)).frame(width - 28.0, 32.0),
                 Button::new("×").header_style().padding(4.0).background_color(background)
                     .on_click(move || close.request_close(Some(id))).frame(28.0, 32.0),
@@ -113,7 +130,26 @@ impl App {
         let edited = self.clone();
         let keys = self.clone();
         let selection = bindings.selection.clone();
+        let (styles, fallback) = {
+            let rt = self.runtime.lock().unwrap();
+            let doc = rt.workspace.get(id).unwrap();
+            let revision = doc.editor.revision();
+            // Materialize the immutable document only when its revision/path
+            // changes; TextDocument caches as_str for subsequent paints.
+            let styles = syntax::spans(
+                id,
+                revision,
+                doc.path.as_deref(),
+                &doc.editor.document.as_str(),
+            );
+            (
+                styles,
+                syntax::fallback_reason(id, revision, doc.path.as_deref()),
+            )
+        };
         let editor = TextView::with_document(bindings.document, bindings.selection)
+            .text_spans(styles)
+            .diagnostic_spans(self.language_diagnostics(id))
             .autofocus(true)
             .scroll_state(bindings.scroll)
             .wrap_mode(WrapMode::None)
@@ -125,13 +161,18 @@ impl App {
             .reveal_selection_on_change(true)
             .border_color(Color::TRANSPARENT)
             .focused_border_color(Color::TRANSPARENT)
-            .on_text_change(move |delta| edited.edit(id, delta));
+            .on_text_change(move |delta| {
+                edited.edit(id, delta);
+                // Every revision needs fresh syntax/diagnostic decorations,
+                // including typing after the dirty flag is already set.
+                edited.changed();
+            });
         let editor = if let Some(stack) = &self.editor_font {
             editor.font_stack(stack.clone())
         } else {
             editor
         };
-        editor
+        let editor = editor
             .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {
                 if !keys.editable(id)
@@ -164,7 +205,16 @@ impl App {
                 }
                 false
             })
-            .key(id)
+            .key(id);
+        vstack! {
+            if_view!(fallback.is_some(),
+                Text::new(fallback.unwrap_or("")).font_size(11.0)
+                    .color(ColorPalette::default().text_secondary()).padding(6.0),
+                VStack::new(())),
+            editor,
+        }
+        .spacing(0.0)
+        .frame(f32::INFINITY, f32::INFINITY)
     }
     fn explorer_view(&self) -> impl View + Clone + use<> {
         let palette = ColorPalette::default();
@@ -187,10 +237,12 @@ impl App {
                 ListView::new(self.tree_rows.clone(), self.tree_selected.clone(), 27.0, move |index, row: Row, selected| {
                     let app = rows.clone();
                     let enabled = row.path.is_some();
-                    let icon = if row.directory { if row.expanded { "▾" } else { "▸" } } else { "·" };
-                    let label = format!("{}{} {}", "  ".repeat(row.depth), icon, row.label);
+                    let icon = if row.directory { file_icons::folder(row.expanded) }
+                        else { file_icons::for_path(row.path.as_deref()) };
                     hstack! {
-                        Button::new(label).header_style().font_size(13.0).padding(4.0).enabled(enabled)
+                        Spacer::new().frame(row.depth as f32 * 14.0, 1.0),
+                        Button::new(row.label.clone()).header_style().font_size(13.0).padding(4.0).enabled(enabled)
+                            .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Small)
                             .on_click(move || app.open_tree_row(row.clone(), index)),
                         Spacer::new(),
                     }.spacing(0.0).frame(f32::INFINITY, 27.0)
@@ -299,6 +351,25 @@ impl App {
                 self.item("find-previous", "Find Previous", "Shift+F3", |a| {
                     a.find(true)
                 }),
+            ]),
+            MenuItemModel::new("code", "Code").children(vec![
+                self.item("completion", "Completion", "Ctrl+Space", |a| {
+                    a.language_request("textDocument/completion")
+                }),
+                self.item("definition", "Go to Definition", "F12", |a| {
+                    a.language_request("textDocument/definition")
+                }),
+                self.item("hover", "Hover", "Ctrl+K", |a| {
+                    a.language_request("textDocument/hover")
+                }),
+                self.item("problems", "Problems", "", App::show_problems),
+                MenuEntry::Separator,
+                self.item(
+                    "restart-language-server",
+                    "Restart Language Server",
+                    "",
+                    App::restart_language_server,
+                ),
             ]),
         ])
     }

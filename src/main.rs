@@ -22,6 +22,7 @@ use std::{
     },
     thread,
 };
+mod language;
 mod ui;
 
 #[derive(Clone, Copy)]
@@ -88,6 +89,7 @@ struct Runtime {
     clipboard_error: Option<String>,
     clipboard_job: Option<ClipboardJob>,
     menu_actions: Vec<fn(&App)>,
+    language: language::Service,
 }
 #[derive(Clone)]
 struct App {
@@ -96,6 +98,7 @@ struct App {
     chrome: State<u64>,
     status: State<String>,
     position: State<String>,
+    language_status: State<String>,
     tree_rows: State<Vec<Row>>,
     tree_selected: State<Option<usize>>,
     confirmation: State<String>,
@@ -116,6 +119,7 @@ impl App {
         }));
         Self {
             editor_font: kureha_code::fonts::editor_stack(),
+            language_status: State::new(generate_state_id(), "Plain text".into()),
             active,
             navigation,
             chrome: State::new(generate_state_id(), 0),
@@ -918,7 +922,13 @@ impl App {
     fn complete_file(&self, operation: FileOperation, result: JobResult) {
         match (operation, result) {
             (FileOperation::Open, Ok(Completion::Open(path, text))) => {
-                let id = self.runtime.lock().unwrap().workspace.open(path, &text);
+                let id = self
+                    .runtime
+                    .lock()
+                    .unwrap()
+                    .workspace
+                    .open(path.clone(), &text);
+                self.language_opened(&path, id);
                 self.activate_unchecked(id);
                 self.status.set("Ready".into());
             }
@@ -1059,6 +1069,10 @@ impl Application for App {
         self.poll_menu();
         self.poll();
         self.poll_clipboard();
+        self.poll_language();
+        if kureha_code::syntax::poll() {
+            self.changed();
+        }
     }
 }
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
