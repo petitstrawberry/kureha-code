@@ -20,25 +20,41 @@ impl<V: View + Clone> ViewTuple for ViewCollection<V> {
 }
 impl App {
     pub(super) fn content(&self) -> impl View + Clone + use<> {
-        let palette = ColorPalette::default();
+        let theme = self.theme.get();
         let keys = self.clone();
         vstack! {
             SplitView::new(self.explorer_view(), self.editor_area())
-                .fraction(0.22).min_first(170.0).min_second(420.0)
+                .fraction(0.22).min_first(170.0).min_second(420.0).divider_colors(theme.colors().border,theme.colors().accent)
                 .frame(f32::INFINITY, f32::INFINITY),
             hstack! {
-                Text::from_state(self.status.clone()).font_size(11.0),
+                Text::from_state(self.status.clone()).font_size(11.0).color(theme.colors().foreground),
                 Spacer::new(),
-                Text::from_state(self.language_status.clone()).font_size(11.0),
-                Text::from_state(self.position.clone()).font_size(11.0),
-            }.spacing(12.0).padding(6.0).background(palette.surface_variant()),
+                Text::from_state(self.language_status.clone()).font_size(11.0).color(theme.colors().muted),
+                Text::from_state(self.position.clone()).font_size(11.0).color(theme.colors().muted),
+            }.spacing(12.0).padding(6.0).background(theme.colors().surface),
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY)
+        .background(theme.colors().background)
         .on_event_capture(move |event| {
             let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event else {
                 return false;
             };
+            if modifiers.control && matches!(keycode, KeyCode::Char('`')) {
+                keys.toggle_terminal();
+                return true;
+            }
+            if keys.terminal_visible.get() && keys.terminal.focused() {
+                if modifiers.primary() && matches!(keycode,KeyCode::Char('v'|'V')) && (cfg!(target_os="macos") || modifiers.shift) {keys.paste_terminal();return true;}
+                if modifiers.primary() && matches!(keycode, KeyCode::Char('j' | 'J')) {
+                    keys.toggle_terminal();
+                    return true;
+                }
+                return false;
+            }
+            if keys.language_key(*keycode, *modifiers) {
+                return true;
+            }
             if *keycode == KeyCode::Escape && keys.dismiss_language_panel() {
                 return true;
             }
@@ -58,11 +74,15 @@ impl App {
                 keys.find_open.set(false);
                 return true;
             }
+            if *keycode == KeyCode::Tab && modifiers.control && !modifiers.alt {
+                keys.next_tab(modifiers.shift);
+                return true;
+            }
             if !modifiers.primary() {
                 return false;
             }
             match keycode {
-                KeyCode::Char('k' | 'K') => keys.language_request("textDocument/hover"),
+                KeyCode::Char('j' | 'J') => keys.toggle_terminal(),
                 KeyCode::Char('n' | 'N') => keys.new_document(),
                 KeyCode::Char('o' | 'O') if modifiers.shift => keys.show_folder(),
                 KeyCode::Char('o' | 'O') => keys.picker(DialogPurpose::Open),
@@ -72,7 +92,9 @@ impl App {
                 KeyCode::Char('s' | 'S') => keys.save(),
                 KeyCode::Char('w' | 'W') if modifiers.shift => keys.request_close(None),
                 KeyCode::Char('w' | 'W') => keys.request_close(Some(keys.active_id())),
-                KeyCode::Char('f' | 'F' | 'h' | 'H') => keys.show_find(),
+                KeyCode::Char('f' | 'F') => keys.show_find(),
+                KeyCode::Char('h' | 'H') if !cfg!(target_os = "macos") => keys.show_find(),
+                KeyCode::Char('g' | 'G') => keys.find(modifiers.shift),
                 KeyCode::Tab => keys.next_tab(modifiers.shift),
                 _ => return false,
             }
@@ -80,18 +102,35 @@ impl App {
         })
     }
     fn editor_area(&self) -> impl View + Clone + use<> {
+        let theme = self.theme.get();
         let id = self.active_id();
         vstack! {
             self.tabs_view(),
-            if_view!(self.find_open.get(), self.find_view(), VStack::new(())),
-            self.editor_view(id),
+            SplitView::new(self.editor_view(id),self.bottom_panel()).axis(scarlet_ui::views::SplitAxis::Vertical).divider_colors(theme.colors().border,theme.colors().accent)
+                .fraction(if self.terminal_visible.get() {0.70} else {1.0})
+                .min_first(120.0).min_second(if self.terminal_visible.get() {100.0} else {0.0})
+                .frame(f32::INFINITY,f32::INFINITY),
             self.language_panel(),
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY)
     }
+    fn bottom_panel(&self) -> impl View + Clone + use<> {
+        let close = self.clone();
+        let restart = self.clone();
+        let theme = self.theme.get();
+        if_view!(self.terminal_visible.get(),vstack! {
+            hstack! {
+                Text::new("TERMINAL").font_size(11.0).color(theme.colors().muted),
+                Spacer::new(),
+                Button::new("New Session").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || {restart.terminal.close();restart.show_terminal();}),
+                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move ||close.toggle_terminal()),
+            }.spacing(8.0).padding(5.0).background(theme.colors().surface),
+            self.terminal.view_with_font(self.editor_font.clone()),
+        }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY),VStack::new(()))
+    }
     fn tabs_view(&self) -> impl View + Clone + use<> {
-        let palette = ColorPalette::default();
+        let theme = self.theme.get();
         let active = self.active_id();
         let summaries = {
             let rt = self.runtime.lock().unwrap();
@@ -108,13 +147,13 @@ impl App {
             left += width;
             let select = self.clone();
             let close = self.clone();
-            let background = if id == active { palette.background() } else { palette.surface_variant() };
+            let background = if id == active { theme.colors().background } else { theme.colors().surface };
             let icon = file_icons::for_path(path.as_deref());
             hstack! {
-                Button::new(label).header_style().font_size(13.0).padding(7.0)
+                Button::new(label).header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).font_size(13.0).padding(7.0)
                     .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Small)
                     .background_color(background).on_click(move || select.activate(id)).frame(width - 28.0, 32.0),
-                Button::new("×").header_style().padding(4.0).background_color(background)
+                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).padding(4.0).background_color(background)
                     .on_click(move || close.request_close(Some(id))).frame(28.0, 32.0),
             }.spacing(0.0).frame(width, 32.0).background(background).key(id)
         }).collect::<Vec<_>>();
@@ -123,14 +162,17 @@ impl App {
             .content_size(left, 32.0)
             .scroll_to_horizontal_range(selected_range.0, selected_range.1)
             .frame(f32::INFINITY, 34.0)
-            .background(palette.surface_variant())
+            .background(theme.colors().surface)
     }
     fn editor_view(&self, id: DocumentId) -> impl View + Clone + use<> {
         let bindings = self.bindings(id).unwrap();
         let edited = self.clone();
         let keys = self.clone();
         let selection = bindings.selection.clone();
-        let (styles, fallback) = {
+        let hovering = self.clone();
+        let definition = self.clone();
+        let theme = self.theme.get();
+        let (styles, fallback, minimap) = {
             let rt = self.runtime.lock().unwrap();
             let doc = rt.workspace.get(id).unwrap();
             let revision = doc.editor.revision();
@@ -145,12 +187,25 @@ impl App {
             (
                 styles,
                 syntax::fallback_reason(id, revision, doc.path.as_deref()),
+                (doc.editor.document.clone(), doc.path.clone(), revision),
             )
         };
+        let snapshot = self.runtime.lock().unwrap().minimap.snapshot(
+            id,
+            minimap.2,
+            minimap.1.as_deref(),
+            &minimap.0,
+        );
+        let minimap_scroll = bindings.scroll.clone();
         let editor = TextView::with_document(bindings.document, bindings.selection)
             .text_spans(styles)
             .diagnostic_spans(self.language_diagnostics(id))
-            .autofocus(true)
+            .caret_rect_state(self.caret_rect.clone())
+            .on_hover(move |hit| {
+                hovering.pointer_hover(id, hit.map(|hit| (hit.byte_offset, hit.position)))
+            })
+            .on_modified_click(move |hit| definition.definition_at(id, hit.byte_offset))
+            .autofocus(!self.find_open.get())
             .scroll_state(bindings.scroll)
             .wrap_mode(WrapMode::None)
             .line_numbers(true)
@@ -163,10 +218,16 @@ impl App {
             .focused_border_color(Color::TRANSPARENT)
             .on_text_change(move |delta| {
                 edited.edit(id, delta);
+                edited.schedule_completion(id, delta);
                 // Every revision needs fresh syntax/diagnostic decorations,
                 // including typing after the dirty flag is already set.
                 edited.changed();
             });
+        let editor = theme
+            .style_text_view(editor)
+            .borderless()
+            .border_color(Color::TRANSPARENT)
+            .focused_border_color(Color::TRANSPARENT);
         let editor = if let Some(stack) = &self.editor_font {
             editor.font_stack(stack.clone())
         } else {
@@ -175,6 +236,12 @@ impl App {
         let editor = editor
             .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {
+                if matches!(
+                    event,
+                    Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })
+                ) {
+                    keys.terminal.blur();
+                }
                 if !keys.editable(id)
                     && matches!(
                         event,
@@ -209,26 +276,30 @@ impl App {
         vstack! {
             if_view!(fallback.is_some(),
                 Text::new(fallback.unwrap_or("")).font_size(11.0)
-                    .color(ColorPalette::default().text_secondary()).padding(6.0),
+                    .color(theme.colors().muted).padding(6.0),
                 VStack::new(())),
-            editor,
+            hstack! {
+                ZStack::new((editor,self.language_popup(),if_view!(self.find_open.get(),super::popup::Anchored::top_right(self.find_view()),VStack::new(())))).alignment(Alignment::TopLeading)
+                    .frame(f32::INFINITY,f32::INFINITY),
+                kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme).enabled(self.minimap_visible.get()).line_height(self.editor_font.as_ref().map_or_else(||scarlet_ui::graphics::line_height_sized(14.0),|font|scarlet_ui::graphics::line_height_sized_with_font_stack(14.0,font)) as f32).view(),
+            }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY),
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY)
     }
     fn explorer_view(&self) -> impl View + Clone + use<> {
-        let palette = ColorPalette::default();
+        let theme = self.theme.get();
         let open = self.clone();
         let refresh = self.clone();
         let rows = self.clone();
-        let selected_color = palette.menu_hover();
+        let selected_color = theme.colors().selection;
         let has_root = self.runtime.lock().unwrap().explorer.root.is_some();
         vstack! {
             hstack! {
-                Text::new("EXPLORER").font_size(11.0).color(palette.text_secondary()),
+                Text::new("EXPLORER").font_size(11.0).color(theme.colors().muted),
                 Spacer::new(),
-                Button::new("Open Folder").header_style().font_size(11.0).padding(5.0).on_click(move || open.show_folder()),
-                Button::icon_only(Icon::Refresh).header_style().padding(5.0).enabled(has_root).on_click(move || {
+                Button::new("Open Folder").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).font_size(11.0).padding(5.0).on_click(move || open.show_folder()),
+                Button::icon_only(Icon::Refresh).header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).padding(5.0).enabled(has_root).on_click(move || {
                     let root = refresh.runtime.lock().unwrap().explorer.root.clone();
                     if let Some(root) = root { refresh.open_folder(root); }
                 }),
@@ -241,7 +312,7 @@ impl App {
                         else { file_icons::for_path(row.path.as_deref()) };
                     hstack! {
                         Spacer::new().frame(row.depth as f32 * 14.0, 1.0),
-                        Button::new(row.label.clone()).header_style().font_size(13.0).padding(4.0).enabled(enabled)
+                        Button::new(row.label.clone()).header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).font_size(13.0).padding(4.0).enabled(enabled)
                             .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Small)
                             .on_click(move || app.open_tree_row(row.clone(), index)),
                         Spacer::new(),
@@ -250,13 +321,14 @@ impl App {
                 }).item_key(|row| row.key.clone().into())
                   .frame(f32::INFINITY, f32::INFINITY),
                 vstack! {
-                    Text::new("Open a folder to browse files.").font_size(12.0).color(palette.text_secondary()),
+                    Text::new("Open a folder to browse files.").font_size(12.0).color(theme.colors().muted),
                     Spacer::new(),
                 }.padding(12.0).frame(f32::INFINITY, f32::INFINITY)
             ),
-        }.spacing(0.0).background(palette.surface_variant()).frame(f32::INFINITY, f32::INFINITY)
+        }.spacing(0.0).background(theme.colors().surface).frame(f32::INFINITY, f32::INFINITY)
     }
     fn find_view(&self) -> impl View + Clone + use<> {
+        let theme = self.theme.get();
         let submit = self.clone();
         let previous = self.clone();
         let next = self.clone();
@@ -265,28 +337,29 @@ impl App {
         let close = self.clone();
         vstack! {
             hstack! {
-                TextField::new(self.query.clone()).placeholder("Find (match case)").autofocus(true)
+                TextField::new(self.query.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).border_color(theme.colors().border).placeholder("Find (match case)").autofocus(true)
                     .on_submit(move || submit.find(false)).frame_width(f32::INFINITY),
-                Button::new("Previous").header_style().on_click(move || previous.find(true)),
-                Button::new("Next").header_style().on_click(move || next.find(false)),
-                Button::new("×").header_style().on_click(move || close.find_open.set(false)),
+                Button::new("Previous").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || previous.find(true)),
+                Button::new("Next").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || next.find(false)),
+                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || close.find_open.set(false)),
             }.spacing(6.0),
             hstack! {
-                TextField::new(self.replacement.clone()).placeholder("Replace with").frame_width(f32::INFINITY),
-                Button::new("Replace").header_style().on_click(move || replace.replace_match()),
-                Button::new("Replace All").header_style().on_click(move || all.replace_all()),
+                TextField::new(self.replacement.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).border_color(theme.colors().border).placeholder("Replace with").frame_width(f32::INFINITY),
+                Button::new("Replace").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || replace.replace_match()),
+                Button::new("Replace All").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || all.replace_all()),
             }.spacing(6.0),
-            Text::from_state(self.search_status.clone()).font_size(11.0),
-        }.alignment(Alignment::Leading).spacing(4.0).padding(8.0).background(ColorPalette::default().surface_variant())
+            Text::from_state(self.search_status.clone()).font_size(11.0).color(theme.colors().muted),
+        }.alignment(Alignment::Leading).spacing(4.0).padding(8.0).background(theme.colors().surface)
     }
     pub(super) fn confirmation_view(&self) -> impl View + Clone + use<> {
+        let theme = self.theme.get();
         let save = self.clone();
         let discard = self.clone();
         let cancel = self.clone();
         vstack! {
             Text::from_state(self.confirmation.clone()).font_size(18.0),
             Text::new("Your changes will be lost if you discard them.").font_size(13.0),
-            Text::from_state(self.status.clone()).font_size(11.0),
+            Text::from_state(self.status.clone()).font_size(11.0).color(theme.colors().foreground),
             Spacer::new(),
             hstack! {
                 Button::new("Cancel").on_click(move || cancel.cancel_close()),
@@ -302,6 +375,11 @@ impl App {
     }
     fn item(&self, id: &str, label: &str, shortcut: &str, action: fn(&App)) -> MenuEntry {
         let app = self.clone();
+        let shortcut = if cfg!(target_os = "macos") && id != "completion" {
+            shortcut.replacen("Ctrl+", "Cmd+", 1)
+        } else {
+            shortcut.into()
+        };
         MenuEntry::Item(
             MenuItemModel::new(id, label)
                 .shortcut(shortcut)
@@ -346,11 +424,45 @@ impl App {
                 self.item("select-all", "Select All", "Ctrl+A", App::select_all),
                 MenuEntry::Separator,
                 self.item("find", "Find…", "Ctrl+F", App::show_find),
-                self.item("replace", "Replace…", "Ctrl+H", App::show_find),
+                self.item(
+                    "replace",
+                    "Replace…",
+                    if cfg!(target_os = "macos") {
+                        "Cmd+Alt+F"
+                    } else {
+                        "Ctrl+H"
+                    },
+                    App::show_find,
+                ),
                 self.item("find-next", "Find Next", "F3", |a| a.find(false)),
                 self.item("find-previous", "Find Previous", "Shift+F3", |a| {
                     a.find(true)
                 }),
+            ]),
+            MenuItemModel::new("view", "View").children(vec![
+                self.item("theme-light", "Color Theme: Light", "", |a| {
+                    a.set_theme(kureha_code::theme::Theme::Light)
+                }),
+                self.item("theme-dark", "Color Theme: Dark", "", |a| {
+                    a.set_theme(kureha_code::theme::Theme::Dark)
+                }),
+                MenuEntry::Separator,
+                self.item(
+                    "minimap",
+                    if self.minimap_visible.get() {
+                        "Hide Minimap"
+                    } else {
+                        "Show Minimap"
+                    },
+                    "",
+                    App::toggle_minimap,
+                ),
+                self.item(
+                    "terminal",
+                    "Toggle Terminal",
+                    "Ctrl+J",
+                    App::toggle_terminal,
+                ),
             ]),
             MenuItemModel::new("code", "Code").children(vec![
                 self.item("completion", "Completion", "Ctrl+Space", |a| {
@@ -359,7 +471,7 @@ impl App {
                 self.item("definition", "Go to Definition", "F12", |a| {
                     a.language_request("textDocument/definition")
                 }),
-                self.item("hover", "Hover", "Ctrl+K", |a| {
+                self.item("hover", "Show Hover", "", |a| {
                     a.language_request("textDocument/hover")
                 }),
                 self.item("problems", "Problems", "", App::show_problems),

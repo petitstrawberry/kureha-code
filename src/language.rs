@@ -55,6 +55,8 @@ struct Pending {
     method: String,
     attempts: u8,
     started: Instant,
+    params: Value,
+    hover_generation: Option<u64>,
 }
 struct OpenDocument {
     id: DocumentId,
@@ -87,6 +89,13 @@ pub(super) struct Service {
     last_status: String,
     snapshots: BTreeMap<DocumentId, Snapshot>,
     last_poll: Option<Instant>,
+    selected_completion: usize,
+    hover_generation: u64,
+    hover_target: Option<(DocumentId, usize, Point, Instant)>,
+    completion_due: Option<(DocumentId, u64, usize, Instant)>,
+    hover_sent: bool,
+    hover_hide: Option<Instant>,
+    chord: Option<Instant>,
 }
 
 fn language(path: &Path) -> Option<&'static str> {
@@ -485,7 +494,7 @@ impl App {
                         {
                             params["identifier"] = json!(identifier);
                         }
-                        if let Ok(id) = client.request("textDocument/diagnostic", params) {
+                        if let Ok(id) = client.request("textDocument/diagnostic", params.clone()) {
                             session.pending.insert(
                                 id,
                                 Pending {
@@ -496,6 +505,8 @@ impl App {
                                         navigation: self.navigation.load(Ordering::Relaxed),
                                     },
                                     method: "textDocument/diagnostic".into(),
+                                    params,
+                                    hover_generation: None,
                                     attempts: 0,
                                     started: Instant::now(),
                                 },
@@ -695,27 +706,32 @@ impl App {
                         && (request.method == "textDocument/diagnostic" || doc.caret == guard.caret)
                 }) && (request.method == "textDocument/diagnostic"
                     || self.navigation.load(Ordering::Relaxed) == guard.navigation);
-                if !valid {
+                if !valid
+                    || request
+                        .hover_generation
+                        .is_some_and(|generation| generation != rt.language.hover_generation)
+                {
                     return false;
                 }
                 if let Some(error) = error {
                     if matches!(error.code, -32800 | -32801 | -32802) {
                         if request.method != "textDocument/diagnostic" && request.attempts < 2 {
-                            if let Some(doc) = snapshots.iter().find(|doc| doc.id == guard.id) {
-                                let session = rt.language.sessions.get_mut(key).unwrap();
-                                let params = json!({"textDocument":{"uri":uri(&doc.path)},"position":position(&doc.text,guard.caret),"context":{"triggerKind":1}});
-                                if let Some(client) = &session.client {
-                                    if let Ok(id) = client.request(&request.method, params) {
-                                        session.pending.insert(
-                                            id,
-                                            Pending {
-                                                guard,
-                                                method: request.method,
-                                                attempts: request.attempts + 1,
-                                                started: Instant::now(),
-                                            },
-                                        );
-                                    }
+                            let session = rt.language.sessions.get_mut(key).unwrap();
+                            if let Some(client) = &session.client {
+                                if let Ok(id) =
+                                    client.request(&request.method, request.params.clone())
+                                {
+                                    session.pending.insert(
+                                        id,
+                                        Pending {
+                                            guard,
+                                            method: request.method,
+                                            params: request.params,
+                                            hover_generation: request.hover_generation,
+                                            attempts: request.attempts + 1,
+                                            started: Instant::now(),
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -775,15 +791,24 @@ impl App {
                                 .unwrap_or(&item.label)
                                 .to_string()
                         });
-                        rt.language.panel = Panel::Completion(guard, items);
+                        rt.language.selected_completion = 0;
+                        rt.language.panel = if items.is_empty() {
+                            Panel::Closed
+                        } else {
+                            Panel::Completion(guard, items)
+                        };
                     }
                     "textDocument/hover" => {
-                        rt.language.panel = Panel::Hover(
-                            markup(result.get("contents").unwrap_or(&Value::Null))
-                                .chars()
-                                .take(5000)
-                                .collect(),
-                        );
+                        rt.language.selected_completion = 0;
+                        let text: String = markup(result.get("contents").unwrap_or(&Value::Null))
+                            .chars()
+                            .take(5000)
+                            .collect();
+                        rt.language.panel = if text.is_empty() {
+                            Panel::Closed
+                        } else {
+                            Panel::Hover(text)
+                        };
                     }
                     "textDocument/definition" => {
                         let location = result.as_array().and_then(|v| v.first()).unwrap_or(&result);
@@ -817,6 +842,18 @@ impl App {
         }
     }
     pub(super) fn language_request(&self, method: &str) {
+        let rect = self.caret_rect.get();
+        self.language_anchor
+            .set(Point::new(rect.origin.x, rect.origin.y + rect.size.height));
+        self.language_request_at(method, None, None, false);
+    }
+    fn language_request_at(
+        &self,
+        method: &str,
+        byte: Option<usize>,
+        hover_generation: Option<u64>,
+        quiet: bool,
+    ) {
         if self.blocked() {
             return;
         }
@@ -826,8 +863,10 @@ impl App {
         let navigation = self.navigation.load(Ordering::Relaxed);
         let snapshots = self.language_snapshots();
         let Some(doc) = snapshots.iter().find(|doc| doc.id == id) else {
-            self.status
-                .set("Save this file before using a language server".into());
+            if !quiet {
+                self.status
+                    .set("Save this file before using a language server".into());
+            }
             return;
         };
         let root = self
@@ -839,8 +878,10 @@ impl App {
             .clone()
             .unwrap_or_else(|| doc.path.parent().unwrap_or(Path::new("/")).into());
         let Some(lang) = language(&doc.path) else {
-            self.status
-                .set("No language server configured for this file type".into());
+            if !quiet {
+                self.status
+                    .set("No language server configured for this file type".into());
+            }
             return;
         };
         let mut rt = self.runtime.lock().unwrap();
@@ -849,8 +890,10 @@ impl App {
         };
         if !session.ready {
             drop(rt);
-            self.status
-                .set("Language server is not ready; see its status".into());
+            if !quiet {
+                self.status
+                    .set("Language server is not ready; see its status".into());
+            }
             return;
         }
         let capability = match method {
@@ -864,12 +907,18 @@ impl App {
             .is_none_or(|v| v.is_null() || v == &Value::Bool(false))
         {
             drop(rt);
-            self.status
-                .set("The server does not support this command".into());
+            if !quiet {
+                self.status
+                    .set("The server does not support this command".into());
+            }
             return;
         }
-        let params = json!({"textDocument":{"uri":uri(&doc.path)},"position":position(&doc.text,doc.caret),"context":{"triggerKind":1}});
-        let result = session.client.as_mut().unwrap().request(method, params);
+        let params = json!({"textDocument":{"uri":uri(&doc.path)},"position":position(&doc.text,byte.unwrap_or(doc.caret).min(doc.text.len())),"context":{"triggerKind":1}});
+        let result = session
+            .client
+            .as_mut()
+            .unwrap()
+            .request(method, params.clone());
         match result {
             Ok(request) => {
                 session.pending.insert(
@@ -882,6 +931,8 @@ impl App {
                             navigation,
                         },
                         method: method.into(),
+                        params,
+                        hover_generation,
                         attempts: 0,
                         started: Instant::now(),
                     },
@@ -892,6 +943,214 @@ impl App {
                 self.status.set(error);
             }
         }
+    }
+    pub(super) fn schedule_completion(&self, id: DocumentId, delta: &EditDelta) {
+        let mut rt = self.runtime.lock().unwrap();
+        let next = rt.workspace.get(id).map(|doc| {
+            (
+                doc.editor.revision(),
+                doc.bindings.selection.get().caret.byte,
+            )
+        });
+        rt.language.hover_generation = rt.language.hover_generation.wrapping_add(1);
+        rt.language.hover_target = None;
+        if !matches!(rt.language.panel, Panel::Problems) {
+            rt.language.panel = Panel::Closed;
+        }
+        rt.language.completion_due = next
+            .filter(|_| {
+                delta
+                    .inserted
+                    .chars()
+                    .last()
+                    .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '.' | ':'))
+            })
+            .map(|(rev, caret)| (id, rev, caret, Instant::now()));
+    }
+    pub(super) fn pointer_hover(&self, id: DocumentId, hit: Option<(usize, Point)>) {
+        let mut rt = self.runtime.lock().unwrap();
+        let hit = hit.and_then(|(byte, point)| {
+            let doc = rt.workspace.get(id)?;
+            let text = doc.editor.document.as_str();
+            let ch = text.get(byte..)?.chars().next()?;
+            if !ch.is_alphanumeric() && ch != '_' {
+                return None;
+            }
+            let start = text[..byte]
+                .char_indices()
+                .rev()
+                .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_')
+                .last()
+                .map_or(byte, |(start, _)| start);
+            Some((start, point))
+        });
+        if rt
+            .language
+            .hover_target
+            .as_ref()
+            .map(|(doc, byte, _, _)| (*doc, *byte))
+            == hit.map(|(byte, _)| (id, byte))
+        {
+            return;
+        }
+        rt.language.hover_generation = rt.language.hover_generation.wrapping_add(1);
+        rt.language.hover_target = hit.map(|(byte, point)| (id, byte, point, Instant::now()));
+        rt.language.hover_sent = false;
+        rt.language.hover_hide = if hit.is_none() {
+            Some(Instant::now())
+        } else {
+            None
+        };
+        if hit.is_some() && matches!(rt.language.panel, Panel::Hover(_)) {
+            rt.language.panel = Panel::Closed;
+            drop(rt);
+            self.changed();
+        }
+    }
+    pub(super) fn keep_hover_open(&self) {
+        self.runtime.lock().unwrap().language.hover_hide = None;
+    }
+    pub(super) fn definition_at(&self, id: DocumentId, byte: usize) {
+        if id != self.active_id() {
+            return;
+        }
+        let Some(bindings) = self.bindings(id) else {
+            return;
+        };
+        let document = bindings.document.get();
+        if byte > document.len() || !document.as_str().is_char_boundary(byte) {
+            return;
+        }
+        bindings.selection.set(TextSelection::collapsed(byte));
+        self.language_request("textDocument/definition");
+    }
+    pub(super) fn poll_language_interactions(&self) {
+        let active = self.active_id();
+        let hide = {
+            let mut rt = self.runtime.lock().unwrap();
+            if rt
+                .language
+                .hover_hide
+                .is_some_and(|at| at.elapsed() > Duration::from_millis(300))
+            {
+                rt.language.hover_hide = None;
+                if matches!(rt.language.panel, Panel::Hover(_)) {
+                    rt.language.panel = Panel::Closed;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if hide {
+            self.changed();
+        }
+        let (completion, hover) = {
+            let mut rt = self.runtime.lock().unwrap();
+            let completion = rt
+                .language
+                .completion_due
+                .filter(|(_, _, _, at)| at.elapsed() >= Duration::from_millis(200));
+            if completion.is_some() {
+                rt.language.completion_due = None;
+            }
+            let completion = completion.filter(|(id, rev, caret, _)| {
+                *id == active
+                    && rt.workspace.get(*id).is_some_and(|doc| {
+                        doc.editor.revision() == *rev
+                            && doc.bindings.selection.get().caret.byte == *caret
+                    })
+            });
+            let hover = rt.language.hover_target.filter(|(id, _, _, at)| {
+                !rt.language.hover_sent
+                    && *id == active
+                    && at.elapsed() >= Duration::from_millis(500)
+            });
+            if hover.is_some() {
+                rt.language.hover_sent = true;
+            }
+            (
+                completion,
+                hover.map(|(_, byte, point, _)| (byte, point, rt.language.hover_generation)),
+            )
+        };
+        if completion.is_some() {
+            let rect = self.caret_rect.get();
+            self.language_anchor
+                .set(Point::new(rect.origin.x, rect.origin.y + rect.size.height));
+            self.language_request_at("textDocument/completion", None, None, true);
+        }
+        if let Some((byte, point, generation)) = hover {
+            if !matches!(
+                self.runtime.lock().unwrap().language.panel,
+                Panel::Completion(..)
+            ) {
+                self.language_anchor
+                    .set(Point::new(point.x, point.y + 18.0));
+                self.language_request_at("textDocument/hover", Some(byte), Some(generation), true);
+            }
+        }
+    }
+    pub(super) fn language_key(
+        &self,
+        key: KeyCode,
+        modifiers: scarlet_ui::event::KeyModifiers,
+    ) -> bool {
+        let mut rt = self.runtime.lock().unwrap();
+        if let Panel::Completion(_, items) = &rt.language.panel {
+            let count = items.len();
+            let selected = rt.language.selected_completion.min(count.saturating_sub(1));
+            if count > 0
+                && matches!(
+                    key,
+                    KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Tab
+                )
+                && !modifiers.shift
+                && !modifiers.primary()
+            {
+                match key {
+                    KeyCode::Up => rt.language.selected_completion = (selected + count - 1) % count,
+                    KeyCode::Down => rt.language.selected_completion = (selected + 1) % count,
+                    _ => {
+                        drop(rt);
+                        self.accept_completion(selected);
+                        return true;
+                    }
+                }
+                drop(rt);
+                self.changed();
+                return true;
+            }
+        }
+        if modifiers.primary() && matches!(key, KeyCode::Char('k' | 'K')) {
+            rt.language.chord = Some(Instant::now());
+            return true;
+        }
+        let chord = rt
+            .language
+            .chord
+            .take()
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(2));
+        drop(rt);
+        if chord && modifiers.primary() && matches!(key, KeyCode::Char('t' | 'T')) {
+            self.set_theme(self.theme.get().toggle());
+            return true;
+        }
+        if chord && modifiers.primary() && matches!(key, KeyCode::Char('m' | 'M')) {
+            self.toggle_minimap();
+            return true;
+        }
+        if modifiers.primary() && matches!(key, KeyCode::Char('i' | 'I')) {
+            self.language_request(if chord {
+                "textDocument/hover"
+            } else {
+                "textDocument/completion"
+            });
+            return true;
+        }
+        false
     }
     pub(super) fn restart_language_server(&self) {
         self.runtime.lock().unwrap().language = Service::default();
@@ -906,6 +1165,9 @@ impl App {
         let mut rt = self.runtime.lock().unwrap();
         let open = !matches!(rt.language.panel, Panel::Closed);
         rt.language.panel = Panel::Closed;
+        rt.language.completion_due = None;
+        rt.language.hover_generation = rt.language.hover_generation.wrapping_add(1);
+        rt.language.hover_target = None;
         drop(rt);
         if open {
             self.changed();
@@ -1085,12 +1347,104 @@ impl App {
             })
             .collect()
     }
+    pub(super) fn language_popup(&self) -> impl View + Clone + use<> {
+        let (panel, selected) = {
+            let rt = self.runtime.lock().unwrap();
+            (rt.language.panel.clone(), rt.language.selected_completion)
+        };
+        let colors = self.theme.get().colors();
+        let (rows, height) = match panel {
+            Panel::Completion(_, items) => {
+                let len = items.len();
+                (
+                    items
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, choice)| {
+                            let app = self.clone();
+                            Either::A(
+                                Button::new(format!("{}   {}", choice.label, choice.detail))
+                                    .header_style()
+                                    .font_size(13.0)
+                                    .text_color(colors.foreground)
+                                    .background_color(if selected == index {
+                                        colors.selection
+                                    } else {
+                                        colors.elevated
+                                    })
+                                    .on_click(move || app.accept_completion(index))
+                                    .padding(5.0)
+                                    .frame(420.0, 26.0),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                    (len.min(8) as f32 * 26.0).max(26.0),
+                )
+            }
+            Panel::Hover(text) => {
+                let mut lines = Vec::new();
+                for line in text.lines().take(80) {
+                    let chars = line.chars().collect::<Vec<_>>();
+                    if chars.is_empty() {
+                        lines.push(String::new());
+                    }
+                    for chunk in chars.chunks(52) {
+                        lines.push(chunk.iter().collect::<String>());
+                    }
+                }
+                let height = (lines.len() as f32 * 19.0).clamp(19.0, 220.0);
+                (
+                    lines
+                        .into_iter()
+                        .map(|line| {
+                            Either::B(
+                                Text::new(line)
+                                    .font_size(13.0)
+                                    .color(colors.foreground)
+                                    .frame(420.0, 19.0),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                    height,
+                )
+            }
+            _ => (Vec::new(), 0.0),
+        };
+        let shown = !rows.is_empty();
+        let hovered = self.clone();
+        let scroll = ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0))
+            .scroll_to_vertical_range(selected as f32 * 26.0, (selected + 1) as f32 * 26.0)
+            .frame(420.0, height);
+        if_view!(
+            shown,
+            super::popup::Anchored::new(
+                Surface::floating(scroll)
+                    .fill(colors.elevated)
+                    .border_color(colors.border)
+                    .corner_radius(4.0),
+                self.language_anchor.clone()
+            )
+            .on_event_capture(move |event| {
+                if matches!(
+                    event,
+                    Event::Mouse(
+                        scarlet_ui::event::MouseEvent::Moved { .. }
+                            | scarlet_ui::event::MouseEvent::Entered { .. }
+                    )
+                ) {
+                    hovered.keep_hover_open();
+                }
+                false
+            }),
+            VStack::new(())
+        )
+    }
     pub(super) fn language_panel(&self) -> impl View + Clone + use<> {
         let (panel, problems) = {
             let rt = self.runtime.lock().unwrap();
             (rt.language.panel.clone(), rt.language.problems.clone())
         };
-        let is_open = !matches!(panel, Panel::Closed);
+        let is_open = matches!(panel, Panel::Problems);
         let close = self.clone();
         let (title, entries): (
             String,
@@ -1154,7 +1508,7 @@ impl App {
                 }
             }).frame_width(f32::INFINITY)
         }).collect::<Vec<_>>();
-        if_view!(is_open,vstack!{hstack!{Text::new(title).font_size(12.0),Spacer::new(),Button::new("×").header_style().on_click(move ||{close.dismiss_language_panel();}),}.spacing(8.0),ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0)).frame(f32::INFINITY,120.0),}.spacing(4.0).padding(8.0).background(ColorPalette::default().surface_variant()),VStack::new(()))
+        if_view!(is_open,vstack!{hstack!{Text::new(title).font_size(12.0),Spacer::new(),Button::new("×").header_style().on_click(move ||{close.dismiss_language_panel();}),}.spacing(8.0),ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0)).frame(f32::INFINITY,120.0),}.spacing(4.0).padding(8.0).background(self.theme.get().colors().surface),VStack::new(()))
     }
 }
 

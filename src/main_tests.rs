@@ -790,3 +790,293 @@ fn workbench_lays_out_without_a_window_at_normal_and_minimum_sizes() {
         }
     }
 }
+
+#[test]
+fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
+    use scarlet_ui::event::{MouseButton, MouseEvent, ScrollSource, WheelPhase};
+    use scarlet_ui::pipeline::RenderingPipeline;
+    let app = App::new();
+    app.runtime.lock().unwrap().explorer.root = Some(PathBuf::from("/project"));
+    app.tree_rows.set(
+        (0..100)
+            .map(|i| Row {
+                key: format!("file-{i}"),
+                path: Some(PathBuf::from(format!("/project/sample-{i:03}.rs"))),
+                label: format!("sample-{i:03}.rs"),
+                depth: 0,
+                directory: false,
+                expanded: false,
+            })
+            .collect(),
+    );
+    let window = || {
+        Window::new("Editor", app.content())
+            .decorated(false)
+            .size(Size::new(1100.0, 760.0))
+    };
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_paint_enabled(false);
+    pipeline.set_root(window().create_element());
+    pipeline.layout_initial();
+    pipeline.render();
+    fn sidebar(
+        e: &dyn Element,
+        origin: Point,
+    ) -> Option<(scarlet_ui::element::ElementId, f32, f32)> {
+        let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
+        if e.type_name_debug().contains("ScrollViewRenderObject")
+            && p.x < 100.0
+            && e.bounds().size.height > 200.0
+        {
+            return Some((e.id(), e.bounds().size.width, e.children()[0].position().y));
+        }
+        e.children()
+            .iter()
+            .find_map(|child| sidebar(child.as_ref(), p))
+    }
+    let state = |p: &RenderingPipeline| {
+        sidebar(p.element_tree().root().unwrap(), Point::ZERO).expect("explorer scroll view")
+    };
+    for event in [
+        MouseEvent::ButtonPressed {
+            button: MouseButton::Left,
+            x: 245,
+            y: 350,
+            click_count: 1,
+        },
+        MouseEvent::Moved { x: 330, y: 350 },
+        MouseEvent::ButtonReleased {
+            button: MouseButton::Left,
+            x: 330,
+            y: 350,
+            click_count: 1,
+        },
+    ] {
+        pipeline.handle_event(&Event::Mouse(event));
+        pipeline.render();
+        if matches!(event, MouseEvent::Moved { .. }) {
+            pipeline
+                .element_tree_mut()
+                .root_mut()
+                .unwrap()
+                .update(&window());
+            pipeline.layout_initial();
+            pipeline.render();
+        }
+    }
+    let resized = state(&pipeline);
+    assert!(resized.1 > 300.0, "sidebar drag: {resized:?}");
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Moved { x: 400, y: 350 }));
+    pipeline.render();
+    assert_eq!(
+        state(&pipeline),
+        resized,
+        "released divider kept following the pointer"
+    );
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Wheel {
+        delta_x: 0,
+        delta_y: -243,
+        x: 100,
+        y: 300,
+        phase: WheelPhase::Moved,
+        source: ScrollSource::Trackpad,
+    }));
+    pipeline.render();
+    let scrolled = state(&pipeline);
+    assert!(scrolled.2 < -30.0, "sidebar wheel: {scrolled:?}");
+    for index in 0..3 {
+        app.position.set(format!("Ln {}, Col 1", index + 2));
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.layout_initial();
+        pipeline.render();
+        assert_eq!(
+            state(&pipeline),
+            scrolled,
+            "workbench rebuild reset user state"
+        );
+    }
+    let x = scrolled.1 as i32 + 3;
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+        button: MouseButton::Left,
+        x,
+        y: 350,
+        click_count: 1,
+    }));
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Moved { x: x + 25, y: 350 }));
+    pipeline.render();
+    let before_blur = state(&pipeline);
+    pipeline.handle_event(&Event::Focus(scarlet_ui::event::FocusEvent::Lost));
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Moved { x: x + 100, y: 350 }));
+    pipeline.render();
+    assert_eq!(
+        state(&pipeline),
+        before_blur,
+        "focus loss left the divider dragging"
+    );
+    pipeline.teardown();
+}
+
+#[test]
+fn selection_and_find_overlay_preserve_document_viewport_and_scroll() {
+    use scarlet_ui::event::{MouseButton, MouseEvent, ScrollSource, WheelPhase};
+    use scarlet_ui::pipeline::RenderingPipeline;
+    let app = test_app(
+        &("fn example() { let value = 123; }\n".repeat(250)),
+        None,
+        false,
+    );
+    let window = || {
+        Window::new("Editor", app.content())
+            .decorated(false)
+            .size(Size::new(1100.0, 760.0))
+    };
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_paint_enabled(false);
+    pipeline.set_root(window().create_element());
+    pipeline.layout_initial();
+    pipeline.render();
+    fn document(e: &dyn Element, origin: Point) -> Option<(scarlet_ui::element::ElementId, Rect)> {
+        let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
+        if e.type_name_debug().contains("TextViewRenderObject") {
+            return Some((e.id(), Rect::new(p, e.bounds().size)));
+        }
+        e.children().iter().find_map(|c| document(c.as_ref(), p))
+    }
+    let original = document(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
+    let x = (original.1.origin.x + 110.0) as i32;
+    let y = (original.1.origin.y + 80.0) as i32;
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Wheel {
+        delta_x: 0,
+        delta_y: -3000,
+        x,
+        y,
+        phase: WheelPhase::Moved,
+        source: ScrollSource::Trackpad,
+    }));
+    pipeline.render();
+    let bindings = app.bindings(app.active_id()).unwrap();
+    let scroll = bindings.scroll.get();
+    assert!(scroll.y > 1000.0);
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+        button: MouseButton::Left,
+        x,
+        y,
+        click_count: 1,
+    }));
+    let anchor = bindings.selection.get().anchor;
+    for offset in [20, 45, 70, 45, 20] {
+        pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
+            x: x + offset,
+            y: y + offset,
+        }));
+        app.position.set(format!(
+            "Ln {}, Col {}",
+            bindings.selection.get().caret.byte,
+            offset
+        ));
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.layout_initial();
+        pipeline.render();
+        assert_eq!(
+            document(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap(),
+            original
+        );
+        assert_eq!(
+            bindings.scroll.get(),
+            scroll,
+            "selection rebuild moved the document"
+        );
+        assert_eq!(bindings.selection.get().anchor, anchor);
+    }
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+        button: MouseButton::Left,
+        x,
+        y,
+        click_count: 1,
+    }));
+    for open in [true, false, true] {
+        app.find_open.set(open);
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.layout_initial();
+        pipeline.render();
+        assert_eq!(
+            document(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap(),
+            original,
+            "Find changed document height or identity"
+        );
+        assert_eq!(bindings.scroll.get(), scroll);
+    }
+    app.find_open.set(false);
+    pipeline
+        .element_tree_mut()
+        .root_mut()
+        .unwrap()
+        .update(&window());
+    pipeline.layout_initial();
+    pipeline.render();
+    let mut primary = scarlet_ui::event::KeyModifiers::empty();
+    if cfg!(target_os = "macos") {
+        primary.super_key = true;
+    } else {
+        primary.control = true;
+    }
+    pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+        keycode: KeyCode::Char('a'),
+        modifiers: primary,
+    }));
+    pipeline.render();
+    assert_eq!(
+        bindings.selection.get().normalized_range(),
+        Some(0..bindings.document.get().len()),
+        "closing Find did not return keyboard focus to the document"
+    );
+    pipeline.teardown();
+}
+
+#[test]
+fn changing_theme_updates_existing_button_text_and_editor_surfaces() {
+    use scarlet_ui::element::LayoutConstraints;
+    use scarlet_ui::renderer::{PaintCommand, PaintContext};
+    let app = test_app("fn main() {}", None, false);
+    let mut root = app.content().create_element();
+    root.layout(LayoutConstraints::tight(1100.0, 760.0));
+    app.set_theme(kureha_code::theme::Theme::Dark);
+    root.update(&app.content());
+    root.layout(LayoutConstraints::tight(1100.0, 760.0));
+    fn inspect(e: &dyn Element, expected: Color, found: &mut bool) {
+        if let Some(render) = e.render_object() {
+            let mut ctx = PaintContext::new();
+            render.paint(&mut ctx, Point::ZERO);
+            for c in ctx.commands() {
+                if let PaintCommand::DrawText { text, color, .. } = c {
+                    if text == "Open Folder" {
+                        assert_eq!(*color, expected);
+                        *found = true;
+                    }
+                }
+            }
+        }
+        for child in e.children() {
+            inspect(child.as_ref(), expected, found);
+        }
+    }
+    let mut found = false;
+    inspect(
+        root.as_ref(),
+        kureha_code::theme::Theme::Dark.colors().foreground,
+        &mut found,
+    );
+    assert!(found);
+}

@@ -23,6 +23,7 @@ use std::{
     thread,
 };
 mod language;
+mod popup;
 mod ui;
 
 #[derive(Clone, Copy)]
@@ -65,6 +66,10 @@ struct ClipboardTarget {
     selection: TextSelection,
 }
 enum ClipboardJob {
+    TerminalPaste {
+        handle: ClipboardHandle<Option<String>>,
+        generation: u64,
+    },
     Copy {
         handle: ClipboardHandle<()>,
         cut: bool,
@@ -90,15 +95,22 @@ struct Runtime {
     clipboard_job: Option<ClipboardJob>,
     menu_actions: Vec<fn(&App)>,
     language: language::Service,
+    minimap: kureha_code::minimap::MinimapCache,
 }
 #[derive(Clone)]
 struct App {
     editor_font: Option<FontStack>,
+    theme: State<kureha_code::theme::Theme>,
+    minimap_visible: State<bool>,
+    terminal_visible: State<bool>,
+    terminal: kureha_code::terminal::Terminal,
     active: State<usize>,
     chrome: State<u64>,
     status: State<String>,
     position: State<String>,
     language_status: State<String>,
+    language_anchor: State<Point>,
+    caret_rect: State<Rect>,
     tree_rows: State<Vec<Row>>,
     tree_selected: State<Option<usize>>,
     confirmation: State<String>,
@@ -119,7 +131,13 @@ impl App {
         }));
         Self {
             editor_font: kureha_code::fonts::editor_stack(),
+            theme: State::new(generate_state_id(), kureha_code::theme::Theme::Light),
+            minimap_visible: State::new(generate_state_id(), true),
+            terminal_visible: State::new(generate_state_id(), false),
+            terminal: kureha_code::terminal::Terminal::new(),
             language_status: State::new(generate_state_id(), "Plain text".into()),
+            language_anchor: State::new(generate_state_id(), Point::new(60.0, 30.0)),
+            caret_rect: State::new(generate_state_id(), Rect::from_xywh(60.0, 10.0, 1.0, 20.0)),
             active,
             navigation,
             chrome: State::new(generate_state_id(), 0),
@@ -133,6 +151,44 @@ impl App {
             replacement: State::new(generate_state_id(), String::new()),
             search_status: State::new(generate_state_id(), "Literal search · Match case".into()),
             runtime: Arc::new(Mutex::new(Runtime::default())),
+        }
+    }
+    fn set_theme(&self, theme: kureha_code::theme::Theme) {
+        self.theme.set(theme);
+        kureha_code::syntax::set_theme(theme);
+        self.runtime.lock().unwrap().minimap.clear();
+        self.changed();
+    }
+    fn toggle_minimap(&self) {
+        self.minimap_visible.update(|shown| *shown = !*shown);
+    }
+    fn show_terminal(&self) {
+        if !self.terminal.is_running() {
+            let id = self.active_id();
+            let root = {
+                let rt = self.runtime.lock().unwrap();
+                rt.explorer.root.clone().or_else(|| {
+                    rt.workspace.get(id).and_then(|doc| {
+                        doc.path
+                            .as_ref()
+                            .and_then(|p| p.parent().map(Path::to_path_buf))
+                    })
+                })
+            }
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("/"));
+            self.terminal.open(root);
+        }
+        self.terminal_visible.set(true);
+        self.terminal.focus();
+        self.dismiss_language_panel();
+    }
+    fn toggle_terminal(&self) {
+        if self.terminal_visible.get() {
+            self.terminal_visible.set(false);
+            self.terminal.blur();
+        } else {
+            self.show_terminal();
         }
     }
     fn changed(&self) {
@@ -748,6 +804,16 @@ impl App {
         self.runtime.lock().unwrap().clipboard_job = Some(ClipboardJob::Paste { handle, target });
         self.status.set("Reading desktop clipboard…".into());
     }
+    fn paste_terminal(&self) {
+        let Some(service) = self.clipboard_service() else {
+            return;
+        };
+        let handle = service.read_text();
+        self.runtime.lock().unwrap().clipboard_job = Some(ClipboardJob::TerminalPaste {
+            handle,
+            generation: self.terminal.generation(),
+        });
+    }
     fn apply_clipboard(&self, target: ClipboardTarget, text: &str) -> bool {
         if self.active_id() != target.id
             || !self.editable(target.id)
@@ -786,7 +852,8 @@ impl App {
                 Some(ClipboardJob::Copy { handle, .. }) => {
                     handle.try_take().map(|r| r.map(|()| None))
                 }
-                Some(ClipboardJob::Paste { handle, .. }) => handle.try_take(),
+                Some(ClipboardJob::Paste { handle, .. })
+                | Some(ClipboardJob::TerminalPaste { handle, .. }) => handle.try_take(),
                 None => None,
             };
             result.map(|r| (rt.clipboard_job.take().unwrap(), r))
@@ -811,6 +878,20 @@ impl App {
                 }
             }
             (ClipboardJob::Paste { .. }, Ok(_)) => "Desktop clipboard is empty",
+            (ClipboardJob::TerminalPaste { generation, .. }, Ok(Some(text)))
+                if !text.is_empty() =>
+            {
+                if self.terminal_visible.get()
+                    && self.terminal.focused()
+                    && self.terminal.generation() == generation
+                    && self.terminal.paste(&text)
+                {
+                    "Pasted into terminal"
+                } else {
+                    "Terminal paste cancelled"
+                }
+            }
+            (ClipboardJob::TerminalPaste { .. }, Ok(_)) => "Desktop clipboard is empty",
             (_, Err(error)) => {
                 self.status.set(error.to_string());
                 return;
@@ -1012,7 +1093,14 @@ impl View for App {
         self.content().create_element()
     }
     fn listenables(&self) -> Vec<&dyn Listenable> {
-        vec![&self.chrome, &self.active, &self.find_open]
+        vec![
+            &self.chrome,
+            &self.active,
+            &self.find_open,
+            &self.theme,
+            &self.minimap_visible,
+            &self.terminal_visible,
+        ]
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -1022,7 +1110,7 @@ impl Application for App {
     fn scenes(&self) -> impl Scene {
         scenes! {
             Window::new(self.window_title(), self.content()).scene_key("main")
-                .app_id(env!("APP_ID")).menu_bar(self.menu()).size(Size::new(1100.0, 760.0)).min_size(Size::new(720.0, 400.0)),
+                .app_id(env!("APP_ID")).background_color(self.theme.get().colors().background).menu_bar(self.menu()).size(Size::new(1100.0, 760.0)).min_size(Size::new(720.0, 400.0)),
             Window::new("Unsaved Changes", self.confirmation_view()).scene_key("confirm")
                 .app_id(env!("APP_ID")).open_at_launch(false).size(Size::new(560.0, 240.0)),
         }
@@ -1066,10 +1154,12 @@ impl Application for App {
         }
     }
     fn on_idle(&mut self) {
+        self.terminal.poll();
         self.poll_menu();
         self.poll();
         self.poll_clipboard();
         self.poll_language();
+        self.poll_language_interactions();
         if kureha_code::syntax::poll() {
             self.changed();
         }

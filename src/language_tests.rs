@@ -124,6 +124,8 @@ fn cancelled_background_diagnostics_keep_the_user_status() {
             navigation: 0,
         },
         method: method.into(),
+        params: Value::Null,
+        hover_generation: None,
         attempts: 0,
         started: Instant::now(),
     };
@@ -327,4 +329,64 @@ fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
     }
     assert!(!app.language_diagnostics(id).is_empty());
     eprintln!("APP_DIAGNOSTICS_OK {}", app.language_status.get());
+}
+
+#[test]
+fn completion_keys_choose_and_insert_without_adding_a_tab_or_newline() {
+    let app = App::new();
+    let id = app.active_id();
+    app.edit(
+        id,
+        &EditDelta {
+            replaced_range: 0..0,
+            inserted: "gre".into(),
+        },
+    );
+    {
+        let mut rt = app.runtime.lock().unwrap();
+        let doc = rt.workspace.get(id).unwrap();
+        let guard = Guard {
+            id,
+            revision: doc.editor.revision(),
+            caret: 3,
+            navigation: app.navigation.load(Ordering::Relaxed),
+        };
+        rt.language.panel = Panel::Completion(
+            guard,
+            ["green", "greet"]
+                .into_iter()
+                .map(|label| Choice {
+                    label: label.into(),
+                    detail: String::new(),
+                    item: json!({"label":label}),
+                })
+                .collect(),
+        );
+    }
+    assert!(app.language_key(KeyCode::Down, Default::default()));
+    assert!(app.language_key(KeyCode::Tab, Default::default()));
+    assert_eq!(app.bindings(id).unwrap().document.get().as_str(), "greet");
+    app.undo(false);
+    assert_eq!(app.bindings(id).unwrap().document.get().as_str(), "gre");
+}
+
+#[test]
+fn pointer_hover_keeps_the_caret_and_invalidates_old_pointer_targets() {
+    let app = App::new();
+    let id = app.active_id();
+    app.edit(
+        id,
+        &EditDelta {
+            replaced_range: 0..0,
+            inserted: "fn greet() {}".into(),
+        },
+    );
+    let selection = app.bindings(id).unwrap().selection.get();
+    app.pointer_hover(id, Some((4, Point::new(80.0, 40.0))));
+    let generation = app.runtime.lock().unwrap().language.hover_generation;
+    assert_eq!(app.bindings(id).unwrap().selection.get(), selection);
+    app.pointer_hover(id, None);
+    let rt = app.runtime.lock().unwrap();
+    assert!(rt.language.hover_target.is_none());
+    assert!(rt.language.hover_generation > generation);
 }
