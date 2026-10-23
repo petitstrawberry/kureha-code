@@ -5,7 +5,7 @@ use floem_editor_core::{
     cursor::CursorMode,
     editor::EditType,
     selection::Selection,
-    xi_rope::RopeDelta,
+    xi_rope::{RopeDelta, Transformer},
 };
 use scarlet_ui::prelude::{EditDelta, TextDocument, TextPosition, TextSelection};
 
@@ -13,6 +13,7 @@ pub struct Editor {
     buffer: Buffer,
     pub document: TextDocument,
     pub selection: TextSelection,
+    pending_delta: Option<RopeDelta>,
 }
 
 impl Default for Editor {
@@ -32,6 +33,7 @@ impl Editor {
             document: TextDocument::from_str(&text),
             buffer,
             selection: TextSelection::default(),
+            pending_delta: None,
         }
     }
 
@@ -84,6 +86,41 @@ impl Editor {
         self.edit(edit);
         self.buffer.reset_edit_type();
     }
+    pub fn edit_plan(&mut self, plan: &crate::editing::EditPlan) {
+        let parts = if plan.parts.is_empty() {
+            std::slice::from_ref(&plan.edit)
+        } else {
+            &plan.parts
+        };
+        self.edit_parts(parts, plan.selection);
+    }
+
+    /// Keep disjoint edits disjoint in history so other views can track their
+    /// original text through both the command and its inverse.
+    pub fn edit_parts(&mut self, parts: &[EditDelta], after: TextSelection) {
+        self.buffer.reset_edit_type();
+        let before = self.selection;
+        let (_, delta, _) = self.buffer.edit(
+            parts.iter().map(|edit| {
+                (
+                    Selection::region(edit.replaced_range.start, edit.replaced_range.end),
+                    edit.inserted.as_str(),
+                )
+            }),
+            EditType::Other,
+        );
+        self.buffer
+            .set_cursor_before(CursorMode::Insert(to_engine(before)));
+        self.selection = after;
+        self.buffer
+            .set_cursor_after(CursorMode::Insert(to_engine(after)));
+        self.apply(&delta);
+        self.buffer.reset_edit_type();
+    }
+
+    pub fn take_view_delta(&mut self) -> Option<RopeDelta> {
+        self.pending_delta.take()
+    }
 
     pub fn undo(&mut self, redo: bool) {
         let result = if redo {
@@ -105,6 +142,7 @@ impl Editor {
     }
 
     fn apply(&mut self, delta: &RopeDelta) {
+        self.pending_delta = Some(delta.clone());
         let (range, length) = delta.summary();
         let inserted = self
             .buffer
@@ -113,6 +151,14 @@ impl Editor {
             .document
             .replace(range.start()..range.end(), &inserted)
             .0;
+    }
+}
+
+pub fn transform_selection(delta: &RopeDelta, selection: TextSelection) -> TextSelection {
+    let mut transform = Transformer::new(delta);
+    TextSelection {
+        anchor: TextPosition::new(transform.transform(selection.anchor.byte, true)),
+        caret: TextPosition::new(transform.transform(selection.caret.byte, true)),
     }
 }
 

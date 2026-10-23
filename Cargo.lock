@@ -982,6 +982,7 @@ version = "0.1.0"
 dependencies = [
  "floem-editor-core",
  "libc",
+ "regex",
  "scarlet-fs",
  "scarlet-os",
  "scarlet-sys 1.0.0 (git+https://github.com/petitstrawberry/Scarlet?rev=74b92fe8c43ba71467dd70083411c4574de01079)",
@@ -1956,7 +1957,7 @@ dependencies = [
 [[package]]
 name = "scarlet-scroll-motion"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=8fb4c6715379e18b7266764f748ff0ba14602dc6#8fb4c6715379e18b7266764f748ff0ba14602dc6"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=01bc36e6326b19f118cbf4dc1e56f3bcb6786631#01bc36e6326b19f118cbf4dc1e56f3bcb6786631"
 dependencies = [
  "libm",
 ]
@@ -1980,7 +1981,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=8fb4c6715379e18b7266764f748ff0ba14602dc6#8fb4c6715379e18b7266764f748ff0ba14602dc6"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=01bc36e6326b19f118cbf4dc1e56f3bcb6786631#01bc36e6326b19f118cbf4dc1e56f3bcb6786631"
 dependencies = [
  "scarlet-ui-core",
  "scarlet-ui-platform-sws",
@@ -1990,7 +1991,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-core"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=8fb4c6715379e18b7266764f748ff0ba14602dc6#8fb4c6715379e18b7266764f748ff0ba14602dc6"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=01bc36e6326b19f118cbf4dc1e56f3bcb6786631#01bc36e6326b19f118cbf4dc1e56f3bcb6786631"
 dependencies = [
  "ab_glyph",
  "bitflags 2.13.2",
@@ -2009,7 +2010,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-icons-tabler"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=8fb4c6715379e18b7266764f748ff0ba14602dc6#8fb4c6715379e18b7266764f748ff0ba14602dc6"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=01bc36e6326b19f118cbf4dc1e56f3bcb6786631#01bc36e6326b19f118cbf4dc1e56f3bcb6786631"
 dependencies = [
  "svgtypes",
 ]
@@ -2017,7 +2018,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-macros"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=8fb4c6715379e18b7266764f748ff0ba14602dc6#8fb4c6715379e18b7266764f748ff0ba14602dc6"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=01bc36e6326b19f118cbf4dc1e56f3bcb6786631#01bc36e6326b19f118cbf4dc1e56f3bcb6786631"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2027,7 +2028,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-platform-sws"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=8fb4c6715379e18b7266764f748ff0ba14602dc6#8fb4c6715379e18b7266764f748ff0ba14602dc6"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=01bc36e6326b19f118cbf4dc1e56f3bcb6786631#01bc36e6326b19f118cbf4dc1e56f3bcb6786631"
 dependencies = [
  "sbus-client",
  "scarlet-desktop-config",
@@ -2041,7 +2042,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-platform-winit"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=8fb4c6715379e18b7266764f748ff0ba14602dc6#8fb4c6715379e18b7266764f748ff0ba14602dc6"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=01bc36e6326b19f118cbf4dc1e56f3bcb6786631#01bc36e6326b19f118cbf4dc1e56f3bcb6786631"
 dependencies = [
  "block2",
  "objc2 0.5.3",
@@ -2051,6 +2052,8 @@ dependencies = [
  "raw-window-handle",
  "scarlet-ui-core",
  "scarlet-ui-renderer-sgfx",
+ "serde",
+ "serde_json",
  "sgfx",
  "softbuffer",
  "winit",
@@ -2059,7 +2062,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-renderer-sgfx"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=8fb4c6715379e18b7266764f748ff0ba14602dc6#8fb4c6715379e18b7266764f748ff0ba14602dc6"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=01bc36e6326b19f118cbf4dc1e56f3bcb6786631#01bc36e6326b19f118cbf4dc1e56f3bcb6786631"
 dependencies = [
  "libm",
  "scarlet-ui-core",
@@ -2104,6 +2107,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
+ "serde_derive",
 ]
 
 [[package]]

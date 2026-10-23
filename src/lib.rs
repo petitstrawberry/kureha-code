@@ -1,7 +1,10 @@
+pub mod editing;
 pub mod editor;
 pub mod explorer;
 pub mod files;
 pub mod fonts;
+pub mod navigation;
+pub mod project_search;
 pub mod search;
 pub mod workspace;
 

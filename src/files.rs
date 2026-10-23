@@ -25,7 +25,39 @@ pub fn read(path: &Path) -> io::Result<String> {
 /// Stage and sync beside the destination before replacing it. Resolve symlinks
 /// so saving through one does not replace the link itself.
 pub fn save(path: &Path, text: &str, crlf: bool) -> io::Result<()> {
+    save_inner(path, text, crlf, None)
+}
+/// Refuse a stale save instead of overwriting edits from another application.
+/// Recheck after staging too; portable filesystems have no compare-and-rename
+/// operation, so this is conflict detection, not a cross-process lock.
+pub fn save_checked(path: &Path, text: &str, crlf: bool, expected: Option<&str>) -> io::Result<()> {
+    save_inner(path, text, crlf, Some(expected))
+}
+fn verify(path: &Path, expected: Option<&str>) -> io::Result<()> {
+    let matches = match expected {
+        Some(expected) => read(path).is_ok_and(|actual| actual == expected),
+        None => {
+            matches!(fs::symlink_metadata(path), Err(error) if error.kind() == io::ErrorKind::NotFound)
+        }
+    };
+    if matches {
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            "File changed on disk. Your edits were kept; use Save As to preserve a separate copy, or reopen the file after closing this tab.",
+        ))
+    }
+}
+fn save_inner(
+    path: &Path,
+    text: &str,
+    crlf: bool,
+    expected: Option<Option<&str>>,
+) -> io::Result<()> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
+    if let Some(expected) = expected {
+        verify(path, expected)?;
+    }
     let target = match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => fs::canonicalize(path)?,
         Ok(meta) if !meta.is_file() => {
@@ -78,12 +110,35 @@ pub fn save(path: &Path, text: &str, crlf: bool) -> io::Result<()> {
     }
     file.sync_all()?;
     drop(file);
+    if let Some(expected) = expected {
+        verify(path, expected)?;
+    }
     fs::rename(&temporary, &target)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_save_preserves_external_changes_and_deleted_files() {
+        let root =
+            std::env::temp_dir().join(format!("kureha-conflict-test-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("source.rs");
+        save_checked(&path, "first\n", true, None).unwrap();
+        fs::write(&path, "external\r\n").unwrap();
+        assert!(save_checked(&path, "mine\n", true, Some("first\r\n")).is_err());
+        assert_eq!(read(&path).unwrap(), "external\r\n");
+        assert!(save_checked(&path, "mine", false, None).is_err());
+        save_checked(&path, "merged\n", true, Some("external\r\n")).unwrap();
+        assert_eq!(read(&path).unwrap(), "merged\r\n");
+        fs::remove_file(&path).unwrap();
+        assert!(save_checked(&path, "mine", false, Some("merged\r\n")).is_err());
+        assert!(!path.exists());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir(root).unwrap();
+    }
 
     #[test]
     fn repeated_save_preserves_crlf_and_failed_save_keeps_destination() {

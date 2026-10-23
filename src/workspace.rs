@@ -43,12 +43,31 @@ impl Bindings {
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
     }
+    /// A second editor shares text, but owns its caret, selection and viewport.
+    pub fn another_view(&self) -> Self {
+        let document = self.document.clone();
+        let selection = State::new(generate_state_id(), self.selection.get());
+        let generation = Arc::new(AtomicU64::new(0));
+        for state in [&document as &dyn Listenable, &selection as &dyn Listenable] {
+            let changed = generation.clone();
+            state.subscribe_any(Arc::new(move || {
+                changed.fetch_add(1, Ordering::Relaxed);
+            }));
+        }
+        Self {
+            document,
+            selection,
+            scroll: State::new(generate_state_id(), self.scroll.get()),
+            generation,
+        }
+    }
 }
 
 pub struct Document {
     pub id: DocumentId,
     pub path: Option<PathBuf>,
     pub crlf: bool,
+    pub disk_text: Option<Arc<str>>,
     pub editor: Editor,
     pub bindings: Bindings,
 }
@@ -59,6 +78,7 @@ impl Document {
         let bindings = Bindings::new(&editor);
         Self {
             id,
+            disk_text: path.as_ref().map(|_| Arc::from(text)),
             path,
             crlf: text.contains("\r\n"),
             editor,
