@@ -4,6 +4,7 @@
 //! call `poll` from the app idle hook to request a view update after completion.
 //! A cache miss returns plain text, never offsets from another revision. One
 //! worker owns the grammars; pending revisions coalesce by stable document ID.
+use crate::theme::Theme as EditorTheme;
 use scarlet_ui::prelude::{Color, TextStyleSpan};
 use std::{
     collections::{HashMap, VecDeque},
@@ -16,7 +17,7 @@ use std::{
 };
 use syntect::{
     easy::HighlightLines,
-    highlighting::{Color as SyntaxColor, StyleModifier, Theme, ThemeItem},
+    highlighting::Theme,
     parsing::{SyntaxDefinition, SyntaxReference, SyntaxSet},
     util::LinesWithEndings,
 };
@@ -58,13 +59,15 @@ struct Entry {
     key: Key,
     cancel: Arc<AtomicBool>,
     used: u64,
-    highlight: Highlight,
+    highlight: Arc<Highlight>,
+    generation: u64,
 }
 struct Request {
     id: u64,
     key: Key,
     cancel: Arc<AtomicBool>,
     text: String,
+    theme: EditorTheme,
 }
 #[derive(Default)]
 struct Cache {
@@ -72,8 +75,23 @@ struct Cache {
     pending: VecDeque<Request>,
     clock: u64,
     changed: bool,
+    theme: EditorTheme,
 }
 impl Cache {
+    fn set_theme(&mut self, theme: EditorTheme) -> bool {
+        if self.theme == theme {
+            return false;
+        }
+        for entry in self.entries.values() {
+            entry.cancel.store(true, Ordering::Relaxed);
+        }
+        self.entries.clear();
+        self.pending.clear();
+        self.theme = theme;
+        self.changed = true;
+        true
+    }
+
     fn remove(&mut self, id: u64) {
         if let Some(entry) = self.entries.remove(&id) {
             entry.cancel.store(true, Ordering::Relaxed);
@@ -121,6 +139,7 @@ impl Cache {
                 key: key.clone(),
                 cancel: cancel.clone(),
                 text: text.to_owned(),
+                theme: self.theme,
             });
             Highlight::default()
         };
@@ -130,7 +149,8 @@ impl Cache {
                 key,
                 cancel,
                 used: self.clock,
-                highlight,
+                highlight: Arc::new(highlight),
+                generation: self.clock,
             },
         );
         Vec::new()
@@ -148,7 +168,9 @@ impl Cache {
         {
             return false;
         }
-        entry.highlight = highlight;
+        self.clock = self.clock.wrapping_add(1);
+        entry.highlight = Arc::new(highlight);
+        entry.generation = self.clock;
         self.changed = true;
         true
     }
@@ -217,6 +239,51 @@ pub fn poll() -> bool {
         .is_some_and(|service| std::mem::take(&mut service.shared.0.lock().unwrap().changed))
 }
 
+/// Select the shared syntax theme. A change cancels queued/in-flight work and
+/// drops all old colors under the cache lock. Old requests cannot publish even
+/// after Light -> Dark -> Light; identity tokens protect that round trip.
+/// Returns whether the theme changed; the existing `poll` also reports it.
+/// The next `spans` call for each document requests its new colors.
+pub fn set_theme(theme: EditorTheme) -> bool {
+    let service = SERVICE.get_or_init(Service::new);
+    service.shared.0.lock().unwrap().set_theme(theme)
+}
+
+pub fn theme() -> EditorTheme {
+    SERVICE.get().map_or(EditorTheme::default(), |service| {
+        service.shared.0.lock().unwrap().theme
+    })
+}
+
+/// Shared, immutable colors for a minimap or another decoration consumer.
+/// An empty snapshot can mean parsing is pending or a documented fallback.
+#[derive(Clone)]
+pub struct Snapshot {
+    highlight: Arc<Highlight>,
+    pub generation: u64,
+    pub theme: EditorTheme,
+}
+impl Snapshot {
+    pub fn spans(&self) -> &[TextStyleSpan] {
+        &self.highlight.spans
+    }
+}
+
+/// Read without copying spans or source, starting work, or updating LRU usage.
+/// Request `spans` first and refresh after `poll` reports completion.
+pub fn cached(id: u64, revision: u64, path: Option<&Path>) -> Option<Snapshot> {
+    let cache = SERVICE.get()?.shared.0.lock().unwrap();
+    let entry = cache.entries.get(&id)?;
+    if !entry.key.matches(revision, path) {
+        return None;
+    }
+    Some(Snapshot {
+        highlight: entry.highlight.clone(),
+        generation: entry.generation,
+        theme: cache.theme,
+    })
+}
+
 /// User-visible explanation for an explicit plain-text fallback, if any.
 pub fn fallback_reason(id: u64, revision: u64, path: Option<&Path>) -> Option<&'static str> {
     let service = SERVICE.get()?;
@@ -233,7 +300,7 @@ pub fn fallback_reason(id: u64, revision: u64, path: Option<&Path>) -> Option<&'
 
 struct Catalog {
     syntaxes: SyntaxSet,
-    theme: Theme,
+    themes: [Theme; 2],
 }
 impl Catalog {
     fn new() -> Self {
@@ -244,41 +311,12 @@ impl Catalog {
                     .expect("built-in Kureha grammar must be valid"),
             );
         }
-        // Explicit, high-contrast colors for ScarletUI's light palette. Some
-        // bundled themes leave JSON values neutral, hiding useful distinctions.
-        let mut theme = Theme::default();
-        theme.settings.foreground = Some(SyntaxColor {
-            r: 36,
-            g: 41,
-            b: 47,
-            a: 255,
-        });
-        for (scopes, [r, g, b]) in [
-            ("comment", [93, 112, 96]),
-            ("string", [163, 21, 21]),
-            ("constant, support.constant", [0, 92, 197]),
-            ("constant.numeric", [9, 115, 83]),
-            ("keyword, storage", [119, 41, 163]),
-            ("entity.name.function, support.function", [121, 94, 38]),
-            (
-                "entity.name.type, support.type, entity.name.class",
-                [38, 111, 137],
-            ),
-            ("entity.name.tag, entity.name.section", [0, 92, 157]),
-            ("markup.heading, markup.bold", [119, 41, 163]),
-            ("markup.inline.raw, markup.raw", [163, 21, 21]),
-        ] {
-            theme.scopes.push(ThemeItem {
-                scope: scopes.parse().expect("built-in syntax scope selector"),
-                style: StyleModifier {
-                    foreground: Some(SyntaxColor { r, g, b, a: 255 }),
-                    ..StyleModifier::default()
-                },
-            });
-        }
         Self {
             syntaxes: builder.build(),
-            theme,
+            themes: [
+                EditorTheme::Light.syntect_theme(),
+                EditorTheme::Dark.syntect_theme(),
+            ],
         }
     }
 
@@ -309,8 +347,12 @@ impl Catalog {
         if syntax.name == "Plain Text" {
             return Highlight::default();
         }
-        let mut parser = HighlightLines::new(syntax, &self.theme);
-        let neutral = self.theme.settings.foreground;
+        let theme = &self.themes[match request.theme {
+            EditorTheme::Light => 0,
+            EditorTheme::Dark => 1,
+        }];
+        let mut parser = HighlightLines::new(syntax, theme);
+        let neutral = theme.settings.foreground;
         let started = Instant::now();
         let mut result = Highlight::default();
         let mut offset = 0;
@@ -528,6 +570,7 @@ mod tests {
             },
             cancel: Arc::new(AtomicBool::new(false)),
             text: text.into(),
+            theme: EditorTheme::Light,
         }
     }
     fn highlight(name: &str, text: &str) -> Highlight {
@@ -768,6 +811,48 @@ mod tests {
             assert!(result.fallback.is_some());
         }
     }
+    #[test]
+    fn theme_switch_cancels_pending_and_inflight_and_rejects_roundtrip_results() {
+        let mut cache = Cache::default();
+        cache.request(1, 1, Some(Path::new("main.rs")), "fn main() {}");
+        let in_flight = cache.pending.pop_front().unwrap();
+        cache.request(2, 1, None, "pending");
+        let pending = cache.pending.front().unwrap().cancel.clone();
+        assert!(cache.set_theme(EditorTheme::Dark));
+        assert!(cache.entries.is_empty() && cache.pending.is_empty());
+        assert!(cache.changed);
+        assert!(pending.load(Ordering::Relaxed));
+        assert!(in_flight.cancel.load(Ordering::Relaxed));
+        assert!(!cache.publish(&in_flight, Highlight::default()));
+        cache.changed = false;
+        assert!(!cache.set_theme(EditorTheme::Dark));
+        assert!(!cache.changed);
+        assert!(cache.set_theme(EditorTheme::Light));
+        cache.request(1, 1, Some(Path::new("main.rs")), "fn main() {}");
+        assert!(!cache.publish(&in_flight, Highlight::default()));
+        let current = cache.pending.pop_front().unwrap();
+        assert_eq!(current.theme, EditorTheme::Light);
+        assert!(cache.publish(&current, Highlight::default()));
+    }
+
+    #[test]
+    fn actual_syntax_colors_change_in_both_themes_without_changing_offsets() {
+        let text = "// comment\nfn greet() { let value = \"hello 猫\"; let n = 42; }\n";
+        let light = catalog().highlight(&request(1, 1, "main.rs", text));
+        let mut dark_request = request(1, 1, "main.rs", text);
+        dark_request.theme = EditorTheme::Dark;
+        let dark = catalog().highlight(&dark_request);
+        assert!(dark.fallback.is_none());
+        for token in ["comment", "fn greet", "hello", "42"] {
+            assert!(color_of(&dark, text, token).is_some());
+            assert_ne!(color_of(&light, text, token), color_of(&dark, text, token));
+        }
+        assert_eq!(
+            light.spans.iter().map(|s| &s.range).collect::<Vec<_>>(),
+            dark.spans.iter().map(|s| &s.range).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn asynchronous_completion_wakes_poll_and_never_reuses_previous_revision() {
         let id = u64::MAX - 100;

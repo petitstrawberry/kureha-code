@@ -8,3 +8,7 @@ pub mod workspace;
 pub mod file_icons;
 pub mod lsp;
 pub mod syntax;
+
+pub mod minimap;
+pub mod terminal;
+pub mod theme;
