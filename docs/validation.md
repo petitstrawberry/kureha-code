@@ -218,3 +218,23 @@ corresponding `terminal-rendering.png` and `cursor-{moved,hidden,shown}.png`
 captures confirm the immediate visible updates. These are host UI observations,
 not a Scarlet-native UI performance measurement. TextGrid still represents a
 cell with one scalar, so combining-mark/emoji shaping is not claimed complete.
+
+## Flat explorer and command-palette rows — 2026-10-24
+
+Explorer and navigation candidates use text/icon rows, with selection and hover
+color spanning the entire row. There are no nested filename/candidate Buttons.
+Pointer release must complete inside the row; keyboard activation and focus
+survive a workbench rebuild. Input state is retained by stable row key and
+pruned when the corresponding model changes.
+
+The binary test suite passed 62 tests (2 existing ignored cases), including
+full-width label/detail/blank-area activation, outside-release cancellation,
+retained keyboard focus, navigation and editor-focus regressions. Actual macOS
+interaction opened `backend.rs` from the explorer row's trailing blank area and
+activated Quick Open from the right edge of its command-palette row. Arrow-key
+selection used the same full-row highlight. Captures are `sidebar-flat.png` and
+`palette-flat.png` in `../Scarlet/artifacts/kureha-terminal-20261024/`.
+
+This Finder-launched host verification instance could not locate rust-analyzer
+on its inherited PATH. That is distinct from the AArch64 full distribution's
+`/bin/rust-analyzer`; host LSP success is not claimed for this GUI run.

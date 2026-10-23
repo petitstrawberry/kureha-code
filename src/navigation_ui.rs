@@ -74,6 +74,7 @@ pub(crate) struct Navigation {
     selected: State<Option<usize>>,
     hint: State<String>,
     service: Arc<Mutex<Service>>,
+    pub(super) row_inputs: super::ui::RowInputs,
 }
 impl Navigation {
     /// The old editor can receive another queued event before the overlay is
@@ -117,6 +118,7 @@ impl Navigation {
             selected: State::initial(generate_state_id()),
             hint: State::new(generate_state_id(), String::new()),
             service: Arc::new(Mutex::new(Service::default())),
+            row_inputs: Default::default(),
         }
     }
     pub(crate) fn is_open(&self) -> bool {
@@ -155,6 +157,7 @@ impl Navigation {
         }
     }
     fn show_rows(&self, rows: Vec<Row>) {
+        self.row_inputs.retain("palette:", std::iter::empty());
         self.selected
             .set(if rows.is_empty() { None } else { Some(0) });
         self.rows.set(rows);
@@ -801,18 +804,18 @@ impl App {
                 ListView::new(self.nav.rows.clone(), self.nav.selected.clone(), 34.0, move |index, row: Row, selected| {
                     let app = rows.clone();
                     let query = expected_query.clone();
-                    let background = if selected == Some(index) { colors.selection } else { colors.elevated };
-                    hstack! {
-                        Button::new(row.label).header_style().font_size(13.0).padding(6.0)
-                            .text_color(colors.foreground).background_color(background)
-                            .on_click(move || {
-                                if app.nav.query.get() == query {
-                                    app.nav.selected.set(Some(index)); app.accept_navigation();
-                                }
-                            }).frame_width(260.0).clip(),
+                    let input = app.nav.row_inputs.get(format!("palette:{}", row.key));
+                    super::ui::list_row(hstack! {
+                        Text::new(row.label).font_size(13.0).color(colors.foreground).padding(6.0)
+                            .frame_width(260.0).clip(),
                         Text::new(row.detail).font_size(11.0).color(colors.muted).frame_width(300.0).clip(),
                         Spacer::new(),
-                    }.spacing(8.0).frame(f32::INFINITY, 34.0).background(background)
+                    }.spacing(8.0).frame(f32::INFINITY, 34.0), input, selected == Some(index), true, colors,
+                        move || {
+                            if app.nav.query.get() == query {
+                                app.nav.selected.set(Some(index)); app.accept_navigation();
+                            }
+                        })
                 }).item_key(|row| row.key.clone().into()).frame(f32::INFINITY, height),
                 Text::from_state(self.nav.hint.clone()).font_size(11.0).color(colors.muted)
                     .frame_width(f32::INFINITY),
@@ -1061,6 +1064,138 @@ mod tests {
             Some(0..bindings.document.get().len())
         );
         pipeline.teardown();
+    }
+
+    #[test]
+    fn palette_rows_are_flat_and_activate_across_their_full_width() {
+        use scarlet_ui::{
+            event::{MouseButton, MouseEvent},
+            pipeline::RenderingPipeline,
+            renderer::{PaintCommand, PaintContext},
+            views::modifiers::OnEventRenderObject,
+        };
+
+        fn row(e: &dyn Element, origin: Point) -> Option<(&dyn Element, Rect)> {
+            let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
+            if e.render_object()
+                .is_some_and(|r| r.as_any().is::<OnEventRenderObject>())
+            {
+                return Some((e, Rect::new(p, e.bounds().size)));
+            }
+            e.children().iter().find_map(|child| row(child.as_ref(), p))
+        }
+
+        fn assert_flat(e: &dyn Element) {
+            if let Some(render) = e.render_object() {
+                let mut paint = PaintContext::new();
+                render.paint(&mut paint, Point::ZERO);
+                assert!(
+                    !paint.commands().iter().any(|command| matches!(
+                        command,
+                        PaintCommand::StrokeRect { .. }
+                            | PaintCommand::StrokeRoundedRect { .. }
+                            | PaintCommand::FillRoundedRect { .. }
+                            | PaintCommand::FillVerticalGradientRoundedRect { .. }
+                    )),
+                    "row painted button or focus chrome"
+                );
+            }
+            for child in e.children() {
+                assert_flat(child.as_ref());
+            }
+        }
+
+        for theme in kureha_code::theme::Theme::ALL {
+            // Label, detail column, and trailing blank space are one target.
+            for offset in [20.0, 400.0, 590.0] {
+                let app = app_with_text("source");
+                app.set_theme(theme);
+                app.show_commands();
+                app.nav.query.set("minimap".into());
+                app.poll_navigation();
+                assert_eq!(app.nav.rows.get().len(), 1);
+                let visible = app.minimap_visible.get();
+                let window = || {
+                    Window::new("Palette row", app.navigation_overlay())
+                        .decorated(false)
+                        .size(Size::new(700.0, 300.0))
+                };
+                let mut pipeline = RenderingPipeline::new();
+                pipeline.set_paint_enabled(false);
+                pipeline.set_root(window().create_element());
+                pipeline.layout_initial();
+                pipeline.render();
+                let (element, bounds) =
+                    row(pipeline.element_tree().root().unwrap(), Point::ZERO).expect("palette row");
+                assert!(bounds.size.width > 590.0);
+                assert_flat(element);
+                let x = (bounds.origin.x + offset) as i32;
+                let y = (bounds.origin.y + bounds.size.height / 2.0) as i32;
+                let outside = (bounds.origin.x + bounds.size.width + 15.0) as i32;
+                for event in [
+                    MouseEvent::Moved { x, y },
+                    MouseEvent::ButtonPressed {
+                        button: MouseButton::Left,
+                        x,
+                        y,
+                        click_count: 1,
+                    },
+                    MouseEvent::Moved { x: outside, y },
+                    MouseEvent::ButtonReleased {
+                        button: MouseButton::Left,
+                        x: outside,
+                        y,
+                        click_count: 1,
+                    },
+                ] {
+                    pipeline.handle_event(&Event::Mouse(event));
+                    pipeline.render();
+                }
+                assert_eq!(
+                    app.minimap_visible.get(),
+                    visible,
+                    "release outside must cancel"
+                );
+                assert!(app.nav.is_open());
+                for event in [
+                    MouseEvent::Moved { x, y },
+                    MouseEvent::ButtonPressed {
+                        button: MouseButton::Left,
+                        x,
+                        y,
+                        click_count: 1,
+                    },
+                ] {
+                    pipeline.handle_event(&Event::Mouse(event));
+                    pipeline.render();
+                    let (element, _) =
+                        row(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
+                    assert_flat(element);
+                    assert_eq!(
+                        app.minimap_visible.get(),
+                        visible,
+                        "press must not activate"
+                    );
+                }
+                // An ordinary workbench rebuild must retain the pending press.
+                pipeline
+                    .element_tree_mut()
+                    .root_mut()
+                    .unwrap()
+                    .update(&window());
+                pipeline.layout_initial();
+                pipeline.render();
+                pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+                    button: MouseButton::Left,
+                    x,
+                    y,
+                    click_count: 1,
+                }));
+                assert_eq!(app.minimap_visible.get(), !visible);
+                assert!(!app.nav.is_open());
+                pipeline.teardown();
+            }
+        }
     }
     #[test]
     fn navigation_modes_accept_prefixes_and_close_cancels_inflight_work() {

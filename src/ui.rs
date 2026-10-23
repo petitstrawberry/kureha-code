@@ -2,6 +2,307 @@
 use super::*;
 use kureha_code::{file_icons, syntax};
 use scarlet_ui::views::containers::ViewTuple;
+use scarlet_ui::{
+    element::ComponentElement,
+    event::{MouseButton, MouseEvent, TouchGesture},
+};
+use std::{any::Any, rc::Rc};
+
+// State belongs to the workbench navigation model, not transient View values.
+// Each list prunes keys when its model changes, including virtualized rows.
+#[derive(Clone, Default)]
+pub(super) struct RowInputs(Arc<Mutex<BTreeMap<String, RowInput>>>);
+impl RowInputs {
+    pub(super) fn retain(&self, prefix: &str, keys: impl Iterator<Item = String>) {
+        let keys: BTreeSet<_> = keys.map(|key| format!("{prefix}{key}")).collect();
+        self.0
+            .lock()
+            .unwrap()
+            .retain(|key, _| !key.starts_with(prefix) || keys.contains(key));
+    }
+    pub(super) fn get(&self, key: String) -> RowInput {
+        self.0
+            .lock()
+            .unwrap()
+            .entry(key)
+            .or_insert_with(|| RowInput {
+                focused: State::new(generate_state_id(), false),
+                pressed: State::new(generate_state_id(), false),
+                key: State::new(generate_state_id(), None),
+            })
+            .clone()
+    }
+}
+#[derive(Clone)]
+pub(super) struct RowInput {
+    focused: State<bool>,
+    pressed: State<bool>,
+    key: State<Option<KeyCode>>,
+}
+
+/// Flat, full-width list interaction. Keep focus and pending presses in the
+/// mounted row so ordinary workbench rebuilds do not interrupt an activation.
+pub(super) fn list_row<V: View + Clone>(
+    content: V,
+    input: RowInput,
+    selected: bool,
+    enabled: bool,
+    colors: kureha_code::theme::WorkbenchColors,
+    activate: impl Fn() + 'static,
+) -> impl View + Clone {
+    ListRow {
+        content,
+        selected,
+        enabled,
+        colors,
+        activate: Rc::new(activate),
+        input,
+    }
+}
+
+#[derive(Clone)]
+struct ListRow<V: View + Clone> {
+    content: V,
+    selected: bool,
+    enabled: bool,
+    colors: kureha_code::theme::WorkbenchColors,
+    activate: Rc<dyn Fn()>,
+    input: RowInput,
+}
+
+impl<V: View + Clone> View for ListRow<V> {
+    fn create_element(&self) -> Box<dyn Element> {
+        Box::new(ComponentElement::new_with_builder(
+            self.clone(),
+            build_list_row::<V>,
+        ))
+    }
+    fn listenables(&self) -> Vec<&dyn Listenable> {
+        let mut states = self.content.listenables();
+        states.push(&self.input.focused);
+        states
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+fn build_list_row<V: View + Clone>(row: &ListRow<V>) -> Box<dyn View> {
+    let background = if row.selected {
+        row.colors.selection
+    } else if row.enabled && row.input.focused.get() {
+        row.colors.current_line
+    } else {
+        Color::TRANSPARENT
+    };
+    let content = row
+        .content
+        .clone()
+        .background(background)
+        .hover_color(if row.selected {
+            row.colors.selection
+        } else if row.enabled {
+            row.colors.current_line
+        } else {
+            Color::TRANSPARENT
+        });
+    if !row.enabled {
+        row.input.focused.set(false);
+        row.input.pressed.set(false);
+        row.input.key.set(None);
+        return Box::new(content);
+    }
+    if !row.input.focused.get() {
+        row.input.key.set(None);
+    }
+    let pressed = row.input.pressed.clone();
+    let key = row.input.key.clone();
+    let activate = row.activate.clone();
+    Box::new(
+        content
+            .focusable(row.input.focused.clone())
+            .on_event(move |event| {
+                let fire = match event {
+                    Event::Mouse(MouseEvent::ButtonPressed {
+                        button: MouseButton::Left,
+                        ..
+                    }) => {
+                        pressed.set(true);
+                        return true;
+                    }
+                    Event::Mouse(
+                        MouseEvent::Exited { .. } | MouseEvent::ButtonCancelled { .. },
+                    ) => {
+                        pressed.set(false);
+                        return false;
+                    }
+                    Event::Mouse(MouseEvent::ButtonReleased {
+                        button: MouseButton::Left,
+                        ..
+                    }) => {
+                        let was_pressed = pressed.get();
+                        pressed.set(false);
+                        was_pressed
+                    }
+                    Event::TouchGesture(TouchGesture::Tap { .. }) => true,
+                    Event::Keyboard(KeyEvent::Pressed {
+                        keycode: k @ (KeyCode::Enter | KeyCode::Space),
+                        modifiers,
+                    }) if !modifiers.control && !modifiers.alt && !modifiers.super_key => {
+                        if key.get().is_none() {
+                            key.set(Some(*k));
+                        }
+                        return true;
+                    }
+                    Event::Keyboard(KeyEvent::Released {
+                        keycode: k @ (KeyCode::Enter | KeyCode::Space),
+                        ..
+                    }) => {
+                        let matches = key.get() == Some(*k);
+                        if matches {
+                            key.set(None);
+                        }
+                        matches
+                    }
+                    Event::Keyboard(KeyEvent::Char {
+                        c: ' ' | '\r' | '\n',
+                    }) => return true,
+                    _ => return false,
+                };
+                if fire {
+                    activate();
+                }
+                true
+            }),
+    )
+}
+
+#[cfg(test)]
+mod row_tests {
+    use super::*;
+    use scarlet_ui::{
+        event::KeyModifiers, pipeline::RenderingPipeline, views::modifiers::OnEventRenderObject,
+    };
+
+    fn first_row(e: &dyn Element, origin: Point) -> Option<Rect> {
+        let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
+        if e.render_object()
+            .is_some_and(|r| r.as_any().is::<OnEventRenderObject>())
+        {
+            return Some(Rect::new(p, e.bounds().size));
+        }
+        e.children()
+            .iter()
+            .find_map(|child| first_row(child.as_ref(), p))
+    }
+
+    #[test]
+    fn explorer_selected_row_clicks_blank_space_cancels_outside_and_retains_keyboard_focus() {
+        for theme in kureha_code::theme::Theme::ALL {
+            for offset in [35.0, 280.0] {
+                let app = App::new();
+                app.set_theme(theme);
+                assert!(app.runtime.lock().unwrap().explorer.set_root(
+                    0,
+                    PathBuf::from("/project/artifacts"),
+                    Listing {
+                        entries: vec![],
+                        truncated: false
+                    }
+                ));
+                app.refresh_tree();
+                app.tree_selected.set(Some(0));
+                let window = || {
+                    Window::new("Explorer row", app.explorer_view())
+                        .decorated(false)
+                        .size(Size::new(320.0, 250.0))
+                };
+                let mut pipeline = RenderingPipeline::new();
+                pipeline.set_paint_enabled(false);
+                pipeline.set_root(window().create_element());
+                pipeline.layout_initial();
+                pipeline.render();
+                let bounds =
+                    first_row(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
+                assert!(bounds.size.width > 280.0);
+                let x = (bounds.origin.x + offset) as i32;
+                let y = (bounds.origin.y + bounds.size.height / 2.0) as i32;
+                for event in [
+                    MouseEvent::Moved { x, y },
+                    MouseEvent::ButtonPressed {
+                        button: MouseButton::Left,
+                        x,
+                        y,
+                        click_count: 1,
+                    },
+                    MouseEvent::Moved { x: 340, y },
+                    MouseEvent::ButtonReleased {
+                        button: MouseButton::Left,
+                        x: 340,
+                        y,
+                        click_count: 1,
+                    },
+                ] {
+                    pipeline.handle_event(&Event::Mouse(event));
+                    pipeline.render();
+                }
+                assert!(
+                    app.tree_rows.get()[0].expanded,
+                    "outside release toggled the folder"
+                );
+                for event in [
+                    MouseEvent::Moved { x, y },
+                    MouseEvent::ButtonPressed {
+                        button: MouseButton::Left,
+                        x,
+                        y,
+                        click_count: 1,
+                    },
+                    MouseEvent::ButtonReleased {
+                        button: MouseButton::Left,
+                        x,
+                        y,
+                        click_count: 1,
+                    },
+                ] {
+                    pipeline.handle_event(&Event::Mouse(event));
+                    pipeline.render();
+                }
+                assert!(
+                    !app.tree_rows.get()[0].expanded,
+                    "full-row click did not collapse folder"
+                );
+                assert_eq!(app.tree_selected.get(), Some(0));
+                pipeline
+                    .element_tree_mut()
+                    .root_mut()
+                    .unwrap()
+                    .update(&window());
+                pipeline.layout_initial();
+                pipeline.render();
+                for keycode in [KeyCode::Enter, KeyCode::Space] {
+                    let expanded = app.tree_rows.get()[0].expanded;
+                    pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+                        keycode,
+                        modifiers: KeyModifiers::empty(),
+                    }));
+                    assert_eq!(app.tree_rows.get()[0].expanded, expanded);
+                    pipeline.handle_event(&Event::Keyboard(KeyEvent::Released {
+                        keycode,
+                        modifiers: KeyModifiers::empty(),
+                    }));
+                    pipeline.render();
+                    assert_eq!(
+                        app.tree_rows.get()[0].expanded,
+                        !expanded,
+                        "row lost keyboard activation after rebuilding"
+                    );
+                }
+                pipeline.teardown();
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct ViewCollection<V: View + Clone>(pub(super) Vec<V>);
@@ -357,8 +658,10 @@ impl App {
         let open = self.clone();
         let refresh = self.clone();
         let rows = self.clone();
-        let selected_color = theme.colors().selection;
         let has_root = self.runtime.lock().unwrap().explorer.root.is_some();
+        self.nav
+            .row_inputs
+            .retain("tree:", self.tree_rows.get().into_iter().map(|row| row.key));
         vstack! {
             hstack! {
                 Text::new("EXPLORER").font_size(11.0).color(theme.colors().muted),
@@ -373,16 +676,19 @@ impl App {
                 ListView::new(self.tree_rows.clone(), self.tree_selected.clone(), 27.0, move |index, row: Row, selected| {
                     let app = rows.clone();
                     let enabled = row.path.is_some();
+                    let input = app.nav.row_inputs.get(format!("tree:{}", row.key));
                     let icon = if row.directory { file_icons::folder(row.expanded) }
                         else { file_icons::for_path(row.path.as_deref()) };
-                    hstack! {
+                    list_row(hstack! {
                         Spacer::new().frame(row.depth as f32 * 14.0, 1.0),
-                        Button::new(row.label.clone()).header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).font_size(13.0).padding(4.0).enabled(enabled)
-                            .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Small)
-                            .on_click(move || app.open_tree_row(row.clone(), index)),
+                        hstack! {
+                            icon.view(),
+                            Text::new(row.label.clone()).font_size(13.0).color(if enabled { theme.colors().foreground } else { theme.colors().muted }),
+                        }.spacing(6.0).padding(4.0),
                         Spacer::new(),
                     }.spacing(0.0).frame(f32::INFINITY, 27.0)
-                        .background(if selected == Some(index) { selected_color } else { Color::TRANSPARENT })
+                        .clip(), input, selected == Some(index), enabled, theme.colors(),
+                        move || app.open_tree_row(row.clone(), index))
                 }).item_key(|row| row.key.clone().into())
                   .frame(f32::INFINITY, f32::INFINITY),
                 vstack! {
