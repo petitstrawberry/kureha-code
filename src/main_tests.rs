@@ -1080,3 +1080,55 @@ fn changing_theme_updates_existing_button_text_and_editor_surfaces() {
     );
     assert!(found);
 }
+
+#[test]
+fn clicking_document_returns_shortcuts_from_terminal_to_editor() {
+    use scarlet_ui::event::{MouseButton, MouseEvent};
+    use scarlet_ui::pipeline::RenderingPipeline;
+    let app = test_app("fn main() {}", None, false);
+    app.terminal_visible.set(true);
+    app.terminal.focus();
+    let window = || {
+        Window::new("Focus", app.content())
+            .decorated(false)
+            .size(Size::new(1100.0, 760.0))
+    };
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_paint_enabled(false);
+    pipeline.set_root(window().create_element());
+    pipeline.layout_initial();
+    pipeline.render();
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+        button: MouseButton::Left,
+        x: 500,
+        y: 160,
+        click_count: 1,
+    }));
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+        button: MouseButton::Left,
+        x: 500,
+        y: 160,
+        click_count: 1,
+    }));
+    pipeline.render();
+    assert!(
+        !app.terminal.focused(),
+        "terminal kept focus after document click"
+    );
+    let mut modifiers = scarlet_ui::event::KeyModifiers::empty();
+    if cfg!(target_os = "macos") {
+        modifiers.super_key = true;
+    } else {
+        modifiers.control = true;
+    }
+    pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+        keycode: KeyCode::Char('f'),
+        modifiers,
+    }));
+    pipeline.render();
+    assert!(
+        app.find_open.get(),
+        "Find shortcut did not reach document after leaving terminal"
+    );
+    pipeline.teardown();
+}

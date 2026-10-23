@@ -58,9 +58,8 @@ Open Folder mapping was compile-checked and policy-tested, but its final AppKit
 panel has not been manually verified.
 
 ScarletUI's winit backend currently does not install the app's File/Edit menu
-model into the macOS menu bar. Keyboard commands remain available and currently
-use the framework's Control-based primary modifier. This is not complete macOS
-menu/Command-key integration.
+model into the macOS menu bar. Keyboard commands remain available. This early observation predates the Command
+modifier support verified below; the macOS menu-bar integration remains absent.
 
 ## Remaining scope
 
@@ -90,4 +89,50 @@ The LSP client supports stdio servers configured by the user. No language server
 is bundled with Scarlet. The native build and syntax rendering were verified;
 running rust-analyzer inside Scarlet was not verified and requires a compatible
 server executable. The successful rust-analyzer integration test ran on macOS.
-The existing macOS menu/primary-modifier limitations above remain.
+The macOS menu-bar limitation above remains; primary-key behavior was updated as
+recorded below.
+
+
+## Workbench interaction refinement
+
+ScarletUI 8fb4c671 preserves committed TextView scroll offsets across intermediate
+parent measurements and suppresses pointer-hover callbacks during selection drags.
+Its text-view suite passed 96 tests (four optional benchmarks ignored), with a
+separate hover-drag regression also passing. The temporary-viewport regression
+failed before the fix by changing vertical scroll from 933 to zero.
+
+The published dependency is used directly by Kureha, without local Cargo patches.
+The host suite passed 56 library and 26 application tests (one optional real-server
+test in each binary ignored). The real rust-analyzer application test also passed
+explicitly, including definition, accepting completion, and pull diagnostics.
+
+A mounted workbench regression scrolls a 250-line document, drags a multiline
+selection while updating the position status and rebuilding the tree, then opens
+and closes Find. Document identity, rectangle, scroll offset and selection anchor
+remain stable. On macOS, a separate disposable fixture was scrolled to line 106;
+forward and reverse multiline drags retained that top line and text positions.
+Find appeared at the upper right without changing editor height or scroll.
+Screenshots are in Scarlet/artifacts/kureha-code-20261023.
+
+Earlier macOS interaction in this refinement also verified Command+A, F12 to a
+real Rust definition, a rust-analyzer hover popover, theme switching, and an
+interactive PTY `pwd` returning the fixture’s source directory. These observations
+do not establish Windows/Linux runtime support or a native Scarlet language server.
+
+
+The Scarlet AArch64 `.app` was rebuilt with the same published UI pin. A native
+QEMU run scrolled to line 132, selected lines 138–146, and opened the Find overlay;
+the first visible line and editor height remained unchanged. The integrated PTY
+launched `/bin/sh`, accepted commands, and `/bin/ls` listed the fixture’s root
+folder. A service launch without PATH exposed failed command-name lookup; the
+native backend now supplies `/bin:/usr/bin` only when PATH is missing or empty.
+The native language status correctly reports that rust-analyzer is absent.
+Evidence is in `native-refinement-final/`, separate from the macOS screenshots.
+
+A focus regression additionally confirms that clicking the document after using
+the terminal returns Find shortcuts to the editor. Closing the Find overlay
+returns Command+A to the document instead of a removed search field.
+
+A fresh native run of the PATH fallback accepted plain `ls` from the integrated
+terminal and displayed the fixture directory, without setting PATH in the service
+or shell. The final application suite passed 26 tests and the library suite 56.

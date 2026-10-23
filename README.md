@@ -17,8 +17,9 @@ demand. Listings are capped at 512 entries per directory, 4,096 cached entries,
 is labelled, and Open File can open files beyond the listing. Directory symlinks
 are not traversed. Refresh reloads the current root.
 
-Find/Replace is literal, case-sensitive, wraps in either direction, and works on
-the active document. LF is used internally; CRLF input is saved as CRLF. Opened
+Find/Replace is an overlay at the editor’s upper right: opening it preserves the
+document viewport and scroll position. Search is literal, case-sensitive, wraps
+in either direction, and works on the active document. LF is used internally; CRLF input is saved as CRLF. Opened
 files and Replace All results are limited to 16 MiB. The editor provides syntax colors, file-kind icons, language-server diagnostics, completion, definition navigation and hover information. Extensions are not implemented.
 
 ## Desktop development
@@ -38,10 +39,11 @@ Open Folder uses ScarletUI’s common file-dialog API: the existing Files folder
 chooser on Scarlet and the system folder panel on macOS. Find/Replace uses local literal-search helpers;
 TextView does not currently expose find helpers.
 
-The File/Edit menus expose the commands. Primary shortcuts use ScarletUI's
-Control modifier: N/O/S for New/Open/Save; Shift+O for Open Folder; Shift+S for
-Save As; W for Close Tab; Shift+W for Close Window; Tab/Shift+Tab to switch tabs;
-F/H for Find/Replace. F3 and Shift+F3 select the next/previous match. Standard
+The File/Edit menus expose the commands on Scarlet. Primary shortcuts use Command
+on macOS and Control on other platforms: N/O/S for New/Open/Save; Shift+O for Open Folder; Shift+S for
+Save As; W for Close Tab; Shift+W for Close Window; Control+Tab/Shift+Tab to switch tabs;
+F for Find/Replace (also Control+H off macOS). F3/Shift+F3 and primary G/Shift+G
+select the next/previous match. Standard
 Z/Shift+Z, X/C/V and A handle Undo/Redo, clipboard and Select All in the editor.
 
 Editor text uses a 14 px `TextView.font_stack(...)`: JetBrains Mono Nerd Font
@@ -107,7 +109,12 @@ Explorer and tabs use 16 px file-kind icons, including language accents and sepa
 
 Syntax parsing uses Syntect's pure Rust regex backend on one background worker. Rust, Python, JavaScript/TypeScript, JSON, TOML, Markdown and the included language grammars receive colors, including multiline strings and comments. Results are keyed by stable tab ID, engine revision and path; pending revisions coalesce and stale results are discarded. Documents above 1 MiB, 20,000 lines or a 16 KiB line fall back to plain text with a visible reason; parsing also has span/time bounds. Editing remains available.
 
-The Code menu exposes Completion (Ctrl+Space), Go to Definition (F12), Hover (Ctrl+K), Problems, and Restart Language Server. Completion candidates appear below the editor and apply as one undo step, including compatible additional text edits. Snippet-form completions are not advertised or inserted as raw template text. Problems select their document range; error/warning underlines track the current revision. Escape closes the language panel.
+The Code menu exposes Completion (Control+Space or primary I), Go to Definition
+(F12 or primary-click), Hover (primary K then primary I), Problems, and Restart
+Language Server. Typing an identifier or member accessor schedules completion;
+hovering a symbol schedules a server hover request. Completion and hover appear
+in bounded editor overlays. Up/Down select a candidate and Enter/Tab accepts it
+as one undo step, including compatible additional text edits. Snippet-form completions are not advertised or inserted as raw template text. Problems select their document range; error/warning underlines track the current revision. Escape closes the language panel.
 
 Language servers are separate executables, not bundled or downloaded by Kureha. Defaults are `rust-analyzer`, `pylsp`, `typescript-language-server --stdio`, `vscode-json-language-server --stdio`, and `clangd`. They must be runnable on the platform hosting the editor. A host language server executable is not a Scarlet executable. Missing servers and initialization failures are reported in the status bar; the editor continues to work.
 
@@ -124,3 +131,20 @@ args = []
 ```
 
 `KUREHA_LSP_CONFIG` selects another user configuration file. `KUREHA_LSP_RUST` and corresponding uppercase language IDs override just the executable. Project folders do not supply executable commands. Files must be saved to a path before language services can identify them. Communication uses bounded JSON-RPC over stdio with UTF-16 positions; edits and tab switches invalidate stale completion/navigation responses.
+
+
+## Themes, minimap and terminal
+
+View offers Light/Dark, minimap visibility and the integrated terminal. The editor
+surface is flat and borderless; themes include syntax colors and subdued selection
+and separators. Primary K then primary T switches theme; primary K then primary M
+toggles the minimap. The overview has fixed two-pixel row spacing, clips and scrolls
+with the document, and uses a translucent neutral viewport. Source and paint work
+are bounded; very large documents use at most 768 sampled rows.
+
+Primary J or Control+backtick toggles the terminal. It runs a real PTY shell in the
+explorer root (otherwise the file’s directory), with ANSI colors, resizing,
+scrollback and asynchronous output. macOS/Unix uses openpty; Scarlet uses /dev/ptmx
+and /bin/sh. Clipboard paste is session-bound. Windows ConPTY is not implemented;
+opening the terminal there reports unsupported. Terminal text selection/copy and
+shell integration beyond the PTY are not implemented.

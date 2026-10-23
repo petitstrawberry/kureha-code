@@ -41,7 +41,7 @@ impl Pty {
             ((size.0 as usize) << 16) | size.1 as usize,
         )?;
         master.set_nonblocking(true).map_err(error)?;
-        let environment: Vec<CString> = std::env::vars_os()
+        let mut environment: Vec<CString> = std::env::vars_os()
             .filter(|(key, _)| key != "TERM" && key != "COLORTERM")
             .map(|(key, value)| {
                 let mut bytes = key.as_encoded_bytes().to_vec();
@@ -54,6 +54,12 @@ impl Pty {
                 CString::new("COLORTERM=truecolor"),
             ])
             .collect::<Result<_, _>>()?;
+        // Graphical service launches can have no PATH; shells still need the
+        // distribution’s command directories. Preserve any explicit user PATH.
+        if std::env::var_os("PATH").is_none_or(|path| path.is_empty()) {
+            environment.retain(|entry| !entry.as_bytes().starts_with(b"PATH="));
+            environment.push(CString::new("PATH=/bin:/usr/bin").unwrap());
+        }
         let mut envp: Vec<*const u8> = environment
             .iter()
             .map(|value| value.as_ptr().cast())
