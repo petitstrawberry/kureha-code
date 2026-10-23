@@ -295,6 +295,9 @@ impl App {
         let editor = editor
             .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {
+                if keys.nav.capture_editor_input(event) {
+                    return true;
+                }
                 if matches!(
                     event,
                     Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })

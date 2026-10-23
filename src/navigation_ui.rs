@@ -76,6 +76,39 @@ pub(crate) struct Navigation {
     service: Arc<Mutex<Service>>,
 }
 impl Navigation {
+    /// The old editor can receive another queued event before the overlay is
+    /// mounted. Route text to the query instead of modifying source code.
+    pub(super) fn capture_editor_input(&self, event: &Event) -> bool {
+        if !self.is_open() {
+            return false;
+        }
+        match event {
+            Event::Keyboard(KeyEvent::Char { c }) => {
+                if !c.is_control() {
+                    self.query.update(|text| text.push(*c));
+                }
+                true
+            }
+            Event::Keyboard(KeyEvent::Pressed {
+                keycode: KeyCode::Backspace,
+                modifiers,
+            }) if !modifiers.primary() && !modifiers.alt => {
+                self.query.update(|text| {
+                    text.pop();
+                });
+                true
+            }
+            Event::TextInputCommit { text, .. } => {
+                self.query.update(|query| query.push_str(text));
+                true
+            }
+            Event::Keyboard(_)
+            | Event::TextInputPreedit { .. }
+            | Event::TextInputDeleteSurroundingText { .. }
+            | Event::TextInputDone { .. } => true,
+            _ => false,
+        }
+    }
     pub(crate) fn new() -> Self {
         Self {
             mode: State::new(generate_state_id(), Mode::Closed),
@@ -966,6 +999,15 @@ mod tests {
         let bindings = app.bindings(app.active_id()).unwrap();
         for mode in [Mode::Commands, Mode::Line, Mode::Files] {
             app.show_navigation(mode);
+            // Input can arrive in the same platform batch before the overlay
+            // has mounted and taken focus from the previous editor.
+            pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c: 'R' }));
+            assert_eq!(app.nav.query.get(), "R");
+            assert_eq!(
+                bindings.document.get().as_str(),
+                "line of source code\n".repeat(80)
+            );
+            app.nav.query.set(String::new());
             pipeline
                 .element_tree_mut()
                 .root_mut()

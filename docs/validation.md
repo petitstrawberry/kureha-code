@@ -184,3 +184,12 @@ A subsequent native check exposed focus remaining on the disabled workspace
 Replace All button. The fix returns focus after replacement and explicit editor
 or tab activation; a mounted interaction regression clicks Replace All and then
 verifies that Save All reaches the filesystem through its keyboard shortcut.
+
+Final native focus verification at 547bbbb confirmed replacement followed
+immediately by Control+Alt+S, Command Palette theme changes, both split directions,
+and closing/reopening the saved README with its replaced contents intact. Evidence
+is in Scarlet/artifacts/kureha-workbench-20261023/native-focus-final/.
+Rapid typing after Quick Open exposed one remaining queued-input race: the first
+character could reach the previous editor before the overlay mounted. An editor
+capture guard now routes that queued text into the navigation query. The mounted
+regression fails before this fix and passes after it, without changing the document.
