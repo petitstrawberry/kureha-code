@@ -238,3 +238,20 @@ selection used the same full-row highlight. Captures are `sidebar-flat.png` and
 This Finder-launched host verification instance could not locate rust-analyzer
 on its inherited PATH. That is distinct from the AArch64 full distribution's
 `/bin/rust-analyzer`; host LSP success is not claimed for this GUI run.
+
+## Stable line-number gutter — 2026-10-24
+
+ScarletUI `4cbad1e9` reserves four widest-digit cells before editing begins.
+The text origin stays fixed through 9/10, 99/100 and 999/1000 lines and while
+deleting back across those boundaries. Documents over 9999 lines can expand
+the gutter to fit their line numbers. Both Kureha editor groups use this layout.
+
+The TextView suite passed 93 tests (4 existing ignored cases), including a
+regression that failed at 10 lines before the fix and now checks text/caret
+coordinates, viewport width and hit testing up to 9999 lines, plus expansion
+at 10000. Kureha's binary suite passed 62 tests (2 existing ignored cases).
+Actual macOS editing from 9 to 10 lines preserved the text's horizontal origin;
+captures are `9-lines.png` and `10-lines.png` in
+`../Scarlet/artifacts/kureha-gutter-20261024/`. The fixture was opened via the
+startup file argument after native file-dialog automation did not complete.
+This observation is host UI verification, not a Scarlet-native UI run.
