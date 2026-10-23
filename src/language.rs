@@ -53,6 +53,7 @@ impl Default for Panel {
 struct Pending {
     guard: Guard,
     method: String,
+    attempts: u8,
     started: Instant,
 }
 struct OpenDocument {
@@ -495,6 +496,7 @@ impl App {
                                         navigation: self.navigation.load(Ordering::Relaxed),
                                     },
                                     method: "textDocument/diagnostic".into(),
+                                    attempts: 0,
                                     started: Instant::now(),
                                 },
                             );
@@ -697,8 +699,31 @@ impl App {
                     return false;
                 }
                 if let Some(error) = error {
+                    if matches!(error.code, -32800 | -32801 | -32802) {
+                        if request.method != "textDocument/diagnostic" && request.attempts < 2 {
+                            if let Some(doc) = snapshots.iter().find(|doc| doc.id == guard.id) {
+                                let session = rt.language.sessions.get_mut(key).unwrap();
+                                let params = json!({"textDocument":{"uri":uri(&doc.path)},"position":position(&doc.text,guard.caret),"context":{"triggerKind":1}});
+                                if let Some(client) = &session.client {
+                                    if let Ok(id) = client.request(&request.method, params) {
+                                        session.pending.insert(
+                                            id,
+                                            Pending {
+                                                guard,
+                                                method: request.method,
+                                                attempts: request.attempts + 1,
+                                                started: Instant::now(),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        return false;
+                    }
                     drop(rt);
-                    self.status.set(format!("Language server: {error:?}"));
+                    self.status
+                        .set(format!("Language server: {}", error.message));
                     return true;
                 }
                 match request.method.as_str() {
@@ -857,6 +882,7 @@ impl App {
                             navigation,
                         },
                         method: method.into(),
+                        attempts: 0,
                         started: Instant::now(),
                     },
                 );

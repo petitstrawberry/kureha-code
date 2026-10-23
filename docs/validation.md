@@ -64,8 +64,30 @@ menu/Command-key integration.
 
 ## Remaining scope
 
-Syntax highlighting, language services, completion and extensions are absent.
+Extensions are not implemented. Syntax and language-service validation added later on the same date is recorded below.
 Large-file rendering speed, IME composition, every platform, every close/save
 error path, and tab-scroll retention under sustained editing are not claimed
 verified. The editor engine integration does not by itself improve ScarletUI
 TextDocument layout performance.
+
+## Syntax, icons and language services — later validation
+
+ScarletUI 9ddf4be adds text style spans and diagnostic underlines without changing
+font metrics. Kureha now uses background syntax parsing, per-language file icons
+and a dedicated packaged application icon. Actual AArch64 screenshots of Rust
+coloring and the folder explorer are preserved in
+`../Scarlet/artifacts/kureha-code-20261023/native-qa/`.
+
+The final host suite passed 55 tests; two optional real-server tests are excluded
+from that default run. The application integration test was also run explicitly
+against rust-analyzer and passed definition navigation, accepting a completion
+with an undoable edit, and pull diagnostics. macOS GUI observation confirmed
+colored source, file icons and diagnostic underlines. A transient cancellation
+observed while indexing no longer replaces the user's status with protocol data;
+a regression test covers this behavior.
+
+The LSP client supports stdio servers configured by the user. No language server
+is bundled with Scarlet. The native build and syntax rendering were verified;
+running rust-analyzer inside Scarlet was not verified and requires a compatible
+server executable. The successful rust-analyzer integration test ran on macOS.
+The existing macOS menu/primary-modifier limitations above remain.

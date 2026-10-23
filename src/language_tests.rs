@@ -104,6 +104,81 @@ fn stale_completion_does_not_replace_newer_text() {
 }
 
 #[test]
+fn cancelled_background_diagnostics_keep_the_user_status() {
+    let app = App::new();
+    let id = app.active_id();
+    let snapshot = Snapshot {
+        id,
+        path: PathBuf::from("/tmp/main.rs"),
+        revision: 0,
+        text: Arc::new(String::new()),
+        caret: 0,
+        saved: true,
+    };
+    app.status.set("Saved main.rs".into());
+    let pending = |method: &str| Pending {
+        guard: Guard {
+            id,
+            revision: 0,
+            caret: 0,
+            navigation: 0,
+        },
+        method: method.into(),
+        attempts: 0,
+        started: Instant::now(),
+    };
+    app.runtime.lock().unwrap().language.sessions.insert(
+        "fixture".into(),
+        Session {
+            client: None,
+            starting: None,
+            initialize: None,
+            ready: true,
+            capabilities: Value::Null,
+            pending: BTreeMap::from([
+                (1, pending("textDocument/diagnostic")),
+                (2, pending("textDocument/hover")),
+            ]),
+            documents: BTreeMap::new(),
+            root: PathBuf::from("/tmp"),
+            language: "rust".into(),
+            label: "fixture".into(),
+            failure: None,
+            started: Instant::now(),
+            diagnostic_requests: BTreeMap::new(),
+        },
+    );
+    assert!(!app.language_event(
+        "fixture",
+        LspEvent::Response {
+            id: 1,
+            result: Value::Null,
+            error: Some(lsp::ResponseError {
+                code: -32802,
+                message: "server cancelled while indexing".into(),
+                data: Some(json!({"retriggerRequest":true})),
+            }),
+        },
+        &[snapshot.clone()]
+    ));
+    assert_eq!(app.status.get(), "Saved main.rs");
+    assert!(app.language_event(
+        "fixture",
+        LspEvent::Response {
+            id: 2,
+            result: Value::Null,
+            error: Some(lsp::ResponseError {
+                code: -32603,
+                message: "Hover unavailable".into(),
+                data: None,
+            }),
+        },
+        &[snapshot]
+    ));
+    assert_eq!(app.status.get(), "Language server: Hover unavailable");
+}
+
+#[test]
 #[ignore = "requires installed rust-analyzer; run explicitly for integration validation"]
 fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
     struct Fixture(PathBuf);
