@@ -27,6 +27,28 @@ const MAX_EVENTS: usize = 256;
 const MAX_OUTGOING: usize = 32;
 const MAX_STDERR_BYTES: usize = 16 * 1024;
 
+/// Configure only the child. Graphical launches need not source /etc/profile.sh.
+#[cfg(any(target_os = "scarlet", test))]
+fn configure_scarlet_child(
+    command: &mut Command,
+    program: &str,
+    inherited: impl Fn(&str) -> Option<std::ffi::OsString>,
+) {
+    const TOOLCHAIN: &str = "/opt/scarlet/toolchains/rust/current/bin";
+    if inherited("PATH").is_none_or(|path| path.is_empty()) {
+        command.env("PATH", format!("{TOOLCHAIN}:/bin:/usr/bin"));
+    }
+    // Init supplies /bin:/usr/bin even to GUI services. Preserve that PATH and
+    // explicit tool overrides; don't configure a user's alternate server/wrapper.
+    if matches!(program, "rust-analyzer" | "/bin/rust-analyzer") {
+        for (key, tool) in [("CARGO", "cargo"), ("RUSTC", "rustc")] {
+            if inherited(key).is_none() {
+                command.env(key, format!("{TOOLCHAIN}/{tool}"));
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResponseError {
     pub code: i64,
@@ -102,7 +124,10 @@ impl Client {
     /// PATH lookup and process creation happen here; callers may spawn on their
     /// own startup worker if even that latency is unsuitable for their UI.
     pub fn spawn(program: &str, args: &[String], cwd: &Path) -> Result<Self, String> {
-        let child = Command::new(program)
+        let mut command = Command::new(program);
+        #[cfg(target_os = "scarlet")]
+        configure_scarlet_child(&mut command, program, |key| std::env::var_os(key));
+        let child = command
             .args(args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
@@ -249,6 +274,15 @@ impl Client {
     /// Latest 16 KiB, including output arriving after a failure was polled.
     pub fn stderr_tail(&self) -> String {
         self.shared.stderr_tail()
+    }
+
+    /// Nonblocking process status, for lifecycle owners verifying shutdown/exit.
+    pub fn try_wait(&self) -> Result<Option<std::process::ExitStatus>, String> {
+        self.child
+            .lock()
+            .unwrap()
+            .try_wait()
+            .map_err(|error| format!("Cannot inspect LSP server exit: {error}"))
     }
 }
 

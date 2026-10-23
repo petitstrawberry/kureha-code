@@ -604,7 +604,15 @@ impl App {
                     match receiver.try_recv() {
                         Ok(Ok(client)) => {
                             let root_uri = uri(&session.root);
-                            let params = json!({"processId":std::process::id(),"clientInfo":{"name":"Kureha Code","version":env!("CARGO_PKG_VERSION")},"rootUri":root_uri,"initializationOptions":if cfg!(test) {json!({"checkOnSave":false,"cargo":{"buildScripts":{"enable":false}},"procMacro":{"enable":false}})} else {Value::Null},"workspaceFolders":[{"uri":root_uri,"name":session.root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false},"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"publishDiagnostics":{"versionSupport":true},"hover":{"contentFormat":["plaintext"]},"rename":{"prepareSupport":true,"honorsChangeAnnotations":false}},"workspace":{"configuration":true,"workspaceFolders":true}}});
+                            let options = if cfg!(test) {
+                                json!({"checkOnSave":false,"cargo":{"buildScripts":{"enable":false}},"procMacro":{"enable":false}})
+                            } else if cfg!(target_os = "scarlet") && session.language == "rust" {
+                                // The native toolchain does not yet support proc macros.
+                                json!({"procMacro":{"enable":false},"cachePriming":{"enable":false}})
+                            } else {
+                                Value::Null
+                            };
+                            let params = json!({"processId":std::process::id(),"clientInfo":{"name":"Kureha Code","version":env!("CARGO_PKG_VERSION")},"rootUri":root_uri,"initializationOptions":options,"workspaceFolders":[{"uri":root_uri,"name":session.root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false},"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"publishDiagnostics":{"versionSupport":true},"hover":{"contentFormat":["plaintext"]},"rename":{"prepareSupport":true,"honorsChangeAnnotations":false}},"workspace":{"configuration":true,"workspaceFolders":true}}});
                             match client.request("initialize", params) {
                                 Ok(id) => session.initialize = Some(id),
                                 Err(e) => session.failure = Some(e),

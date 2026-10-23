@@ -1,6 +1,70 @@
 use super::*;
 use std::{fs, io::Cursor, time::Instant};
 
+#[test]
+fn scarlet_child_tool_discovery_preserves_explicit_environment_and_custom_servers() {
+    use std::ffi::OsString;
+    let configured = |program: &str, values: &[(&str, &str)]| {
+        let mut command = Command::new(program);
+        configure_scarlet_child(&mut command, program, |key| {
+            values
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| OsString::from(value))
+        });
+        command
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.unwrap().to_owned()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let tools = "/opt/scarlet/toolchains/rust/current/bin";
+    for program in ["rust-analyzer", "/bin/rust-analyzer"] {
+        for environment in [vec![], vec![("PATH", "")]] {
+            let env = configured(program, &environment);
+            assert_eq!(
+                env[&OsString::from("PATH")],
+                OsString::from(format!("{tools}:/bin:/usr/bin"))
+            );
+            assert_eq!(
+                env[&OsString::from("CARGO")],
+                OsString::from(format!("{tools}/cargo"))
+            );
+            assert_eq!(
+                env[&OsString::from("RUSTC")],
+                OsString::from(format!("{tools}/rustc"))
+            );
+        }
+        let env = configured(program, &[("PATH", "/bin:/usr/bin")]);
+        assert!(!env.contains_key(&OsString::from("PATH")));
+        assert_eq!(env.len(), 2);
+        for override_value in ["/custom/tool", ""] {
+            assert!(
+                configured(
+                    program,
+                    &[
+                        ("PATH", "/custom/bin"),
+                        ("CARGO", override_value),
+                        ("RUSTC", override_value)
+                    ]
+                )
+                .is_empty()
+            );
+        }
+        let env = configured(
+            program,
+            &[("PATH", "/bin:/usr/bin"), ("CARGO", "/custom/cargo")],
+        );
+        assert_eq!(env.len(), 1);
+        assert!(env.contains_key(&OsString::from("RUSTC")));
+    }
+    for program in ["/custom/rust-analyzer", "rust-wrapper", "pylsp"] {
+        assert!(configured(program, &[("PATH", "/bin:/usr/bin")]).is_empty());
+        let env = configured(program, &[]);
+        assert_eq!(env.len(), 1);
+        assert!(env.contains_key(&OsString::from("PATH")));
+    }
+}
+
 struct Fragmented<R> {
     inner: R,
     chunk: usize,
