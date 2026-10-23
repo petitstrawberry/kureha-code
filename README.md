@@ -9,7 +9,10 @@ and a status bar below. Each document retains its own undo history, dirty state,
 caret, selection and scroll position. New/Open add tabs without replacing
 unsaved work; closing a dirty tab or the window offers Save, Discard and Cancel.
 Cut/Copy/Paste use ScarletUI's asynchronous platform clipboard. Paste, Cut and
-Replace All each have independent undo steps.
+Replace All each have independent undo steps. View can split the editor right or
+down into two resizable groups with separate tab lists. A document opened in both
+groups shares text and history while keeping separate selections and viewports.
+Closing a group keeps its unsaved documents in the remaining group.
 
 Open Folder loads a shallow tree asynchronously, expanding directories only on
 demand. Listings are capped at 512 entries per directory, 4,096 cached entries,
@@ -18,8 +21,9 @@ is labelled, and Open File can open files beyond the listing. Directory symlinks
 are not traversed. Refresh reloads the current root.
 
 Find/Replace is an overlay at the editor’s upper right: opening it preserves the
-document viewport and scroll position. Search is literal, case-sensitive, wraps
-in either direction, and works on the active document. LF is used internally; CRLF input is saved as CRLF. Opened
+document viewport and scroll position. Search offers case, whole-word and regular
+expression modes, wraps in either direction, and works on the active document.
+Regular-expression replacements support capture groups. LF is used internally; CRLF input is saved as CRLF. Opened
 files and Replace All results are limited to 16 MiB. The editor provides syntax colors, file-kind icons, language-server diagnostics, completion, definition navigation and hover information. Extensions are not implemented.
 
 ## Desktop development
@@ -36,15 +40,44 @@ platform-specific replacement editor. Platform portability beyond builds
 actually recorded in `docs/validation.md` remains unverified.
 
 Open Folder uses ScarletUI’s common file-dialog API: the existing Files folder
-chooser on Scarlet and the system folder panel on macOS. Find/Replace uses local literal-search helpers;
+chooser on Scarlet and the system folder panel on macOS. Find/Replace uses shared bounded search helpers;
 TextView does not currently expose find helpers.
 
-The File/Edit menus expose the commands on Scarlet. Primary shortcuts use Command
+The File/Edit/View/Code menus expose the commands on Scarlet and in the native
+macOS menu bar. Primary shortcuts use Command
 on macOS and Control on other platforms: N/O/S for New/Open/Save; Shift+O for Open Folder; Shift+S for
 Save As; W for Close Tab; Shift+W for Close Window; Control+Tab/Shift+Tab to switch tabs;
 F for Find/Replace (also Control+H off macOS). F3/Shift+F3 and primary G/Shift+G
 select the next/previous match. Standard
 Z/Shift+Z, X/C/V and A handle Undo/Redo, clipboard and Select All in the editor.
+
+| Action | Shortcut (primary is Command on macOS, Control elsewhere) |
+| --- | --- |
+| Quick Open / Command Palette | Primary P / Primary Shift P (or F1) |
+| Go to line and optional column | Control G |
+| Search project | Primary Shift F |
+| Save all dirty documents | Primary Alt S |
+| Split right / down | Primary \\ / Primary Shift \\ |
+| Focus first / second group | Primary 1 / Primary 2 |
+| Toggle line comments | Primary / |
+| Indent / outdent | Primary ] / Primary [, or Tab / Shift Tab on selected lines |
+| Move / copy line up or down | Alt Up/Down / Alt Shift Up/Down |
+| Format / references / rename | Alt Shift F / Shift F12 / F2 |
+
+Quick Open fuzzy-matches names and paths in a background index; `:line:column`
+switches to line navigation and `>command` switches to the command palette.
+Navigation overlays leave the editor's height unchanged. The bounded index skips
+build/vendor directories and symlinks, supports an exclusion-only subset of root
+ignore files, and reports incomplete scans; it is not a full Git ignore engine.
+
+Project search includes unsaved buffers and shows file/line previews in the
+sidebar. It is cancellable and bounded to 1 MiB per file, 64 MiB total and 2,000
+matches. Replace All first checks that every source still matches its snapshot,
+then opens changed files as unsaved buffers with one undo transaction per file.
+It does not write files automatically. Incomplete results and replacement sets
+over 128 files cannot be applied. Save All processes documents sequentially and
+stops on cancellation or conflict. A file changed externally since opening or
+saving is not silently overwritten; the changed buffer remains available.
 
 Editor text uses a 14 px `TextView.font_stack(...)`: JetBrains Mono Nerd Font
 Mono Regular, then Mplus 1 and Noto Sans CJK JP. UI chrome keeps ScarletUI's
@@ -111,7 +144,11 @@ Syntax parsing uses Syntect's pure Rust regex backend on one background worker. 
 
 The Code menu exposes Completion (Control+Space or primary I), Go to Definition
 (F12 or primary-click), Hover (primary K then primary I), Problems, and Restart
-Language Server. Typing an identifier or member accessor schedules completion;
+Language Server. Formatting applies server edits as one undo transaction;
+references can navigate to unopened files. F2 opens an inline rename input.
+Rename currently accepts only edits to the current file: cross-file renames and
+resource operations are rejected as a whole, with an explanation. Unsupported
+server capabilities disable the corresponding request. Typing an identifier or member accessor schedules completion;
 hovering a symbol schedules a server hover request. Completion and hover appear
 in bounded editor overlays. Up/Down select a candidate and Enter/Tab accepts it
 as one undo step, including compatible additional text edits. Snippet-form completions are not advertised or inserted as raw template text. Problems select their document range; error/warning underlines track the current revision. Escape closes the language panel.
@@ -148,3 +185,7 @@ scrollback and asynchronous output. macOS/Unix uses openpty; Scarlet uses /dev/p
 and /bin/sh. Clipboard paste is session-bound. Windows ConPTY is not implemented;
 opening the terminal there reports unsupported. Terminal text selection/copy and
 shell integration beyond the PTY are not implemented.
+
+This is not yet VS Code feature parity. Arbitrarily nested editor groups,
+multi-cursor editing, code folding, workspace-wide symbol rename, Git/diff tools,
+debugging, extension hosting, and persistent workspace restoration remain open.

@@ -57,9 +57,9 @@ NSOpenPanel. Further GUI checks stopped when the Mac was locked. The updated
 Open Folder mapping was compile-checked and policy-tested, but its final AppKit
 panel has not been manually verified.
 
-ScarletUI's winit backend currently does not install the app's File/Edit menu
+At this earlier checkpoint, ScarletUI's winit backend did not install the app's File/Edit menu
 model into the macOS menu bar. Keyboard commands remain available. This early observation predates the Command
-modifier support verified below; the macOS menu-bar integration remains absent.
+modifier support verified below. Native menu integration was added in the later workbench checkpoint below.
 
 ## Remaining scope
 
@@ -89,8 +89,7 @@ The LSP client supports stdio servers configured by the user. No language server
 is bundled with Scarlet. The native build and syntax rendering were verified;
 running rust-analyzer inside Scarlet was not verified and requires a compatible
 server executable. The successful rust-analyzer integration test ran on macOS.
-The macOS menu-bar limitation above remains; primary-key behavior was updated as
-recorded below.
+Primary-key behavior and the later native menu integration are recorded below.
 
 
 ## Workbench interaction refinement
@@ -136,3 +135,45 @@ returns Command+A to the document instead of a removed search field.
 A fresh native run of the PATH fallback accepted plain `ls` from the integrated
 terminal and displayed the fixture directory, without setting PATH in the service
 or shell. The final application suite passed 26 tests and the library suite 56.
+
+## Two editor groups and workspace commands — 2026-10-23
+
+The workbench now provides Quick Open, Command Palette, line/column navigation,
+workspace search and buffered replacement, code-edit commands, two editor groups,
+Save All, formatting, references and current-file symbol rename. Kureha references
+published ScarletUI 01bc36e6326b19f118cbf4dc1e56f3bcb6786631 directly. That version
+adds AppKit menus and a themed placeholder API; no sibling Cargo patch is used.
+
+The host suites passed 93 library tests and 60 application tests. Three optional
+real-server tests are excluded from that default run. The two application tests
+were also run explicitly against rust-analyzer: definition, completion, diagnostics,
+formatting and single-file rename with one-step undo, unopened reference navigation,
+and atomic rejection of cross-file rename all passed. Code paths for unavailable
+capabilities and stale responses are covered separately.
+
+Review found and corrected split-view lifecycle errors: closing background tabs
+must preserve each group's active document; a delayed file read must target its
+originating group without taking focus; disjoint edits and undo/redo must transform
+the other view's selection through the engine's real delta. Regressions cover
+paste, multiline indentation, undo/redo and closing either group's last tab.
+A save-conflict regression also covers canonical path aliases on macOS.
+
+Actual macOS interaction verified the native View menu, Split Editor Down, Quick
+Open input with Command+A, and independent group views. Further macOS operations
+stopped when the screen locked. This is not a claim that every latest operation
+was checked on macOS. The native menu backend's separate focus/shortcut/Quit-veto
+probe is recorded in ScarletUI/artifacts/native-menu-20261023/verification.txt.
+
+Actual Scarlet AArch64 QEMU interaction verified Quick Open, right split, independent
+line navigation (left at line 1, right at line 145), theme selection, workspace
+search (113 matches in three fixture files), navigation to an unopened result,
+returning Select All to the editor, and buffered replacement across three files.
+A stale search snapshot was rejected without applying changes. These runs used
+real fixture files and the packaged `.app`, not a host preview. The native status
+correctly reports the missing rust-analyzer executable; native LSP execution is
+not claimed. Native evidence and build/test logs are in
+Scarlet/artifacts/kureha-workbench-20261023/.
+
+Remaining product scope includes more than two/nested groups, multi-cursor editing,
+code folding, cross-file rename, Git/diff and debugging integration, extension
+hosting and workspace restoration. The current result is not full VS Code parity.
