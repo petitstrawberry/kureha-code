@@ -44,11 +44,18 @@ enum Panel {
     Problems,
     Hover(String),
     Completion(Guard, Vec<Choice>),
+    References(Vec<Location>, bool),
+    Rename(Guard, State<String>),
 }
 impl Default for Panel {
     fn default() -> Self {
         Self::Closed
     }
+}
+#[derive(Clone)]
+struct Location {
+    path: PathBuf,
+    range: Value,
 }
 struct Pending {
     guard: Guard,
@@ -57,6 +64,7 @@ struct Pending {
     started: Instant,
     params: Value,
     hover_generation: Option<u64>,
+    document_version: Option<i32>,
 }
 struct OpenDocument {
     id: DocumentId,
@@ -248,6 +256,236 @@ fn parse_diagnostics(path: &Path, revision: u64, text: &str, items: &Value) -> V
         })
         .collect()
 }
+const MAX_LANGUAGE_EDITS: usize = 4096;
+const MAX_LANGUAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_REFERENCES: usize = 1000;
+
+fn symbol_at(text: &str, caret: usize) -> Option<&str> {
+    if !text.is_char_boundary(caret) {
+        return None;
+    }
+    let identifier = |ch: char| ch.is_alphanumeric() || matches!(ch, '_' | '$');
+    let start = text[..caret]
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| identifier(*ch))
+        .last()
+        .map_or(caret, |(i, _)| i);
+    let end = text[caret..]
+        .char_indices()
+        .take_while(|(_, ch)| identifier(*ch))
+        .last()
+        .map_or(caret, |(i, ch)| caret + i + ch.len_utf8());
+    (start < end).then(|| &text[start..end])
+}
+fn valid_symbol_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    name.len() <= 256
+        && chars
+            .next()
+            .is_some_and(|ch| ch.is_alphabetic() || matches!(ch, '_' | '$'))
+        && chars.all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'))
+}
+fn locations(result: &Value) -> Result<(Vec<Location>, bool), String> {
+    if result.is_null() {
+        return Ok((vec![], false));
+    }
+    let items = result.as_array().ok_or("Invalid reference response")?;
+    let mut found = Vec::new();
+    for item in items.iter().take(MAX_REFERENCES) {
+        let path = item
+            .get("uri")
+            .and_then(Value::as_str)
+            .ok_or("Reference is missing its URI")?;
+        let path = lsp::uri_to_path(path).map_err(|_| "Reference uses an unsupported URI")?;
+        let range = item.get("range").ok_or("Reference is missing its range")?;
+        for endpoint in ["start", "end"] {
+            let point = range.get(endpoint).ok_or("Invalid reference range")?;
+            if point.get("line").and_then(Value::as_u64).is_none()
+                || point.get("character").and_then(Value::as_u64).is_none()
+            {
+                return Err("Invalid reference position".into());
+            }
+        }
+        found.push(Location {
+            path,
+            range: range.clone(),
+        });
+    }
+    found.sort_by_key(|location| {
+        (
+            location.path.clone(),
+            location
+                .range
+                .pointer("/start/line")
+                .and_then(Value::as_u64),
+            location
+                .range
+                .pointer("/start/character")
+                .and_then(Value::as_u64),
+        )
+    });
+    found.dedup_by(|a, b| a.path == b.path && a.range == b.range);
+    Ok((found, items.len() > MAX_REFERENCES))
+}
+
+/// Refuse the entire WorkspaceEdit when it reaches outside the active document.
+/// No file writes or partial cross-file rename can occur through this path.
+fn rename_edits(value: &Value, path: &Path, version: Option<i32>) -> Result<Vec<Value>, String> {
+    if value.is_null() {
+        return Ok(vec![]);
+    }
+    if !value.is_object() {
+        return Err("Invalid rename response; no changes applied".into());
+    }
+    if value.get("changes").is_some() && value.get("documentChanges").is_some() {
+        return Err("Ambiguous rename response; no changes applied".into());
+    }
+    let mut edits = Vec::new();
+    let mut collect = |document_uri: &str, list: &Value| -> Result<(), String> {
+        if lsp::uri_to_path(document_uri).ok().as_deref() != Some(path) {
+            return Err("Rename affects other files. Only current-file rename is supported; no changes applied".into());
+        }
+        let list = list
+            .as_array()
+            .ok_or("Invalid rename edits; no changes applied")?;
+        if edits.len().saturating_add(list.len()) > MAX_LANGUAGE_EDITS {
+            return Err("Rename exceeds 4096 edits; no changes applied".into());
+        }
+        if list.iter().any(|edit| edit.get("annotationId").is_some()) {
+            return Err("Rename requires change annotations; no changes applied".into());
+        }
+        edits.extend(list.iter().cloned());
+        Ok(())
+    };
+    if let Some(changes) = value.get("changes") {
+        for (document_uri, list) in changes.as_object().ok_or("Invalid rename changes")? {
+            collect(document_uri, list)?;
+        }
+    }
+    if let Some(changes) = value.get("documentChanges") {
+        for document in changes
+            .as_array()
+            .ok_or("Invalid rename document changes")?
+        {
+            if document.get("kind").is_some() {
+                return Err("Rename requires file operations; no changes applied".into());
+            }
+            let target = document
+                .get("textDocument")
+                .ok_or("Missing rename target")?;
+            let document_uri = target
+                .get("uri")
+                .and_then(Value::as_str)
+                .ok_or("Missing rename URI")?;
+            if lsp::uri_to_path(document_uri).ok().as_deref() != Some(path) {
+                return Err("Rename affects other files. Only current-file rename is supported; no changes applied".into());
+            }
+            if let Some(server_version) = target.get("version").filter(|v| !v.is_null()) {
+                if server_version.as_i64() != version.map(i64::from) {
+                    return Err("Rename document version changed; no changes applied".into());
+                }
+            }
+            collect(
+                target
+                    .get("uri")
+                    .and_then(Value::as_str)
+                    .ok_or("Missing rename URI")?,
+                document.get("edits").ok_or("Missing rename edits")?,
+            )?;
+        }
+    }
+    if value.get("changes").is_none() && value.get("documentChanges").is_none() {
+        return Err("Rename response contains no supported changes".into());
+    }
+    Ok(edits)
+}
+
+fn prepare_edits(
+    text: &str,
+    edits: &[Value],
+    selection: TextSelection,
+) -> Result<(kureha_code::editing::EditPlan, Vec<EditDelta>), String> {
+    if edits.len() > MAX_LANGUAGE_EDITS {
+        return Err("Language edit exceeds 4096 changes".into());
+    }
+    let mut parts = Vec::new();
+    let mut inserted_bytes = 0usize;
+    for edit in edits {
+        let replaced_range = range(text, edit.get("range").ok_or("Missing edit range")?)
+            .ok_or("Invalid edit range")?;
+        let inserted = edit
+            .get("newText")
+            .and_then(Value::as_str)
+            .ok_or("Missing edit text")?;
+        inserted_bytes = inserted_bytes.saturating_add(inserted.len());
+        if inserted_bytes > MAX_LANGUAGE_BYTES {
+            return Err("Language edit exceeds 16 MiB".into());
+        }
+        parts.push(EditDelta {
+            replaced_range,
+            inserted: inserted.replace("\r\n", "\n").replace('\r', "\n"),
+        });
+    }
+    parts.sort_by_key(|edit| (edit.replaced_range.start, edit.replaced_range.end));
+    if parts.windows(2).any(|pair| {
+        pair[0].replaced_range.end > pair[1].replaced_range.start
+            || pair[0].replaced_range.start == pair[1].replaced_range.start
+    }) {
+        return Err("Overlapping language edits; no changes applied".into());
+    }
+    let output_size = parts.iter().fold(text.len(), |size, edit| {
+        size - edit.replaced_range.len() + edit.inserted.len()
+    });
+    if output_size > MAX_LANGUAGE_BYTES {
+        return Err("Language edit exceeds the 16 MiB document limit".into());
+    }
+    let start = parts.first().map_or(0, |edit| edit.replaced_range.start);
+    let end = parts.last().map_or(0, |edit| edit.replaced_range.end);
+    let mut inserted = text[start..end].to_string();
+    for edit in parts.iter().rev() {
+        inserted.replace_range(
+            edit.replaced_range.start - start..edit.replaced_range.end - start,
+            &edit.inserted,
+        );
+    }
+    let map = |byte: usize| {
+        let mut shift = 0isize;
+        for edit in &parts {
+            if byte < edit.replaced_range.start {
+                break;
+            }
+            if byte <= edit.replaced_range.end {
+                let mut within = if byte == edit.replaced_range.end {
+                    edit.inserted.len()
+                } else {
+                    (byte - edit.replaced_range.start).min(edit.inserted.len())
+                };
+                while !edit.inserted.is_char_boundary(within) {
+                    within -= 1;
+                }
+                return (edit.replaced_range.start as isize + shift) as usize + within;
+            }
+            shift += edit.inserted.len() as isize - edit.replaced_range.len() as isize;
+        }
+        (byte as isize + shift) as usize
+    };
+    let selection = TextSelection {
+        anchor: TextPosition::new(map(selection.anchor.byte)),
+        caret: TextPosition::new(map(selection.caret.byte)),
+    };
+    Ok((
+        kureha_code::editing::EditPlan {
+            parts: parts.clone(),
+            edit: EditDelta {
+                replaced_range: start..end,
+                inserted,
+            },
+            selection,
+        },
+        parts,
+    ))
+}
 impl Service {
     fn ensure(&mut self, language: &str, root: &Path) -> String {
         let key = session_key(language, root);
@@ -311,7 +549,17 @@ impl App {
                     path,
                     revision: doc.editor.revision(),
                     text,
-                    caret: doc.bindings.selection.get().caret.byte,
+                    caret: if self.focused_group.get() == 1 {
+                        rt.second_bindings
+                            .get(&doc.id)
+                            .unwrap_or(&doc.bindings)
+                            .selection
+                            .get()
+                            .caret
+                            .byte
+                    } else {
+                        doc.bindings.selection.get().caret.byte
+                    },
                     saved: !doc.editor.dirty(),
                 })
             })
@@ -356,7 +604,7 @@ impl App {
                     match receiver.try_recv() {
                         Ok(Ok(client)) => {
                             let root_uri = uri(&session.root);
-                            let params = json!({"processId":std::process::id(),"clientInfo":{"name":"Kureha Code","version":env!("CARGO_PKG_VERSION")},"rootUri":root_uri,"initializationOptions":if cfg!(test) {json!({"checkOnSave":false,"cargo":{"buildScripts":{"enable":false}},"procMacro":{"enable":false}})} else {Value::Null},"workspaceFolders":[{"uri":root_uri,"name":session.root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false},"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"publishDiagnostics":{"versionSupport":true},"hover":{"contentFormat":["plaintext"]}},"workspace":{"configuration":true,"workspaceFolders":true}}});
+                            let params = json!({"processId":std::process::id(),"clientInfo":{"name":"Kureha Code","version":env!("CARGO_PKG_VERSION")},"rootUri":root_uri,"initializationOptions":if cfg!(test) {json!({"checkOnSave":false,"cargo":{"buildScripts":{"enable":false}},"procMacro":{"enable":false}})} else {Value::Null},"workspaceFolders":[{"uri":root_uri,"name":session.root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false},"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"publishDiagnostics":{"versionSupport":true},"hover":{"contentFormat":["plaintext"]},"rename":{"prepareSupport":true,"honorsChangeAnnotations":false}},"workspace":{"configuration":true,"workspaceFolders":true}}});
                             match client.request("initialize", params) {
                                 Ok(id) => session.initialize = Some(id),
                                 Err(e) => session.failure = Some(e),
@@ -507,6 +755,7 @@ impl App {
                                     method: "textDocument/diagnostic".into(),
                                     params,
                                     hover_generation: None,
+                                    document_version: None,
                                     attempts: 0,
                                     started: Instant::now(),
                                 },
@@ -699,11 +948,22 @@ impl App {
                 let Some(request) = session.pending.remove(&id) else {
                     return false;
                 };
+                if matches!(rt.language.panel, Panel::Rename(..))
+                    && matches!(
+                        request.method.as_str(),
+                        "textDocument/completion" | "textDocument/hover"
+                    )
+                {
+                    return false;
+                }
                 let guard = request.guard;
                 let valid = snapshots.iter().any(|doc| {
                     doc.id == guard.id
                         && doc.revision == guard.revision
-                        && (request.method == "textDocument/diagnostic" || doc.caret == guard.caret)
+                        && (matches!(
+                            request.method.as_str(),
+                            "textDocument/diagnostic" | "textDocument/formatting"
+                        ) || doc.caret == guard.caret)
                 }) && (request.method == "textDocument/diagnostic"
                     || self.navigation.load(Ordering::Relaxed) == guard.navigation);
                 if !valid
@@ -711,6 +971,14 @@ impl App {
                         .hover_generation
                         .is_some_and(|generation| generation != rt.language.hover_generation)
                 {
+                    if matches!(
+                        request.method.as_str(),
+                        "textDocument/formatting" | "textDocument/rename"
+                    ) {
+                        drop(rt);
+                        self.status
+                            .set("Language edit discarded because the document changed".into());
+                    }
                     return false;
                 }
                 if let Some(error) = error {
@@ -728,6 +996,7 @@ impl App {
                                             method: request.method,
                                             params: request.params,
                                             hover_generation: request.hover_generation,
+                                            document_version: request.document_version,
                                             attempts: request.attempts + 1,
                                             started: Instant::now(),
                                         },
@@ -743,6 +1012,72 @@ impl App {
                     return true;
                 }
                 match request.method.as_str() {
+                    "textDocument/formatting" | "textDocument/rename" => {
+                        let is_rename = request.method == "textDocument/rename";
+                        let edits = if is_rename {
+                            let Some(doc) = snapshots.iter().find(|doc| doc.id == guard.id) else {
+                                return false;
+                            };
+                            rename_edits(&result, &doc.path, request.document_version)
+                        } else if result.is_null() {
+                            Ok(vec![])
+                        } else {
+                            result
+                                .as_array()
+                                .cloned()
+                                .ok_or_else(|| "Invalid formatting response".into())
+                        };
+                        drop(rt);
+                        match edits {
+                            Ok(edits) => self.apply_language_edits(
+                                &guard,
+                                &edits,
+                                if is_rename { "Rename" } else { "Format" },
+                            ),
+                            Err(error) => {
+                                self.status.set(error);
+                                self.dismiss_language_panel();
+                            }
+                        }
+                        return true;
+                    }
+                    "textDocument/prepareRename" => {
+                        let Some(doc) = snapshots.iter().find(|doc| doc.id == guard.id) else {
+                            return false;
+                        };
+                        let prepared = result.get("range").unwrap_or(&result);
+                        let text = range(&doc.text, prepared)
+                            .and_then(|r| doc.text.get(r))
+                            .or_else(|| {
+                                result
+                                    .get("defaultBehavior")
+                                    .and_then(Value::as_bool)
+                                    .filter(|yes| *yes)
+                                    .and_then(|_| symbol_at(&doc.text, doc.caret))
+                            });
+                        let Some(text) = text else {
+                            drop(rt);
+                            self.status.set("This symbol cannot be renamed".into());
+                            return true;
+                        };
+                        let name = result
+                            .get("placeholder")
+                            .and_then(Value::as_str)
+                            .unwrap_or(text);
+                        rt.language.panel =
+                            Panel::Rename(guard, State::new(generate_state_id(), name.to_string()));
+                    }
+                    "textDocument/references" => match locations(&result) {
+                        Ok((items, truncated)) => {
+                            rt.language.selected_completion = 0;
+                            rt.language.panel = Panel::References(items, truncated);
+                        }
+                        Err(error) => {
+                            drop(rt);
+                            self.status.set(error);
+                            return true;
+                        }
+                    },
                     "textDocument/diagnostic" => {
                         let Some(doc) = snapshots.iter().find(|doc| doc.id == guard.id) else {
                             return false;
@@ -854,6 +1189,16 @@ impl App {
         hover_generation: Option<u64>,
         quiet: bool,
     ) {
+        self.language_send(method, byte, hover_generation, quiet, None);
+    }
+    fn language_send(
+        &self,
+        method: &str,
+        byte: Option<usize>,
+        hover_generation: Option<u64>,
+        quiet: bool,
+        rename_name: Option<&str>,
+    ) {
         if self.blocked() {
             return;
         }
@@ -899,6 +1244,9 @@ impl App {
         let capability = match method {
             "textDocument/completion" => "completionProvider",
             "textDocument/definition" => "definitionProvider",
+            "textDocument/references" => "referencesProvider",
+            "textDocument/formatting" => "documentFormattingProvider",
+            "textDocument/rename" | "textDocument/prepareRename" => "renameProvider",
             _ => "hoverProvider",
         };
         if session
@@ -913,7 +1261,38 @@ impl App {
             }
             return;
         }
-        let params = json!({"textDocument":{"uri":uri(&doc.path)},"position":position(&doc.text,byte.unwrap_or(doc.caret).min(doc.text.len())),"context":{"triggerKind":1}});
+        let mut params = json!({"textDocument":{"uri":uri(&doc.path)},"position":position(&doc.text,byte.unwrap_or(doc.caret).min(doc.text.len()))});
+        match method {
+            "textDocument/completion" => params["context"] = json!({"triggerKind":1}),
+            "textDocument/references" => params["context"] = json!({"includeDeclaration":true}),
+            "textDocument/formatting" => {
+                params.as_object_mut().unwrap().remove("position");
+                params["options"] = json!({"tabSize":4,"insertSpaces":true});
+            }
+            "textDocument/rename" => params["newName"] = json!(rename_name.unwrap_or_default()),
+            "textDocument/prepareRename"
+                if !session
+                    .capabilities
+                    .pointer("/renameProvider/prepareProvider")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false) =>
+            {
+                let name = symbol_at(&doc.text, doc.caret)
+                    .unwrap_or_default()
+                    .to_string();
+                let guard = Guard {
+                    id,
+                    revision: doc.revision,
+                    caret: doc.caret,
+                    navigation,
+                };
+                rt.language.panel = Panel::Rename(guard, State::new(generate_state_id(), name));
+                drop(rt);
+                self.changed();
+                return;
+            }
+            _ => {}
+        }
         let result = session
             .client
             .as_mut()
@@ -933,6 +1312,7 @@ impl App {
                         method: method.into(),
                         params,
                         hover_generation,
+                        document_version: session.documents.get(&doc.path).map(|doc| doc.version),
                         attempts: 0,
                         started: Instant::now(),
                     },
@@ -944,17 +1324,120 @@ impl App {
             }
         }
     }
-    pub(super) fn schedule_completion(&self, id: DocumentId, delta: &EditDelta) {
+    pub(super) fn format_document(&self) {
+        self.language_request("textDocument/formatting");
+    }
+    pub(super) fn find_references(&self) {
+        self.language_request("textDocument/references");
+    }
+    pub(super) fn show_rename(&self) {
+        self.dismiss_language_panel();
+        self.runtime.lock().unwrap().language.completion_due = None;
+        self.language_request("textDocument/prepareRename");
+    }
+    pub(super) fn language_rename_open(&self) -> bool {
+        matches!(
+            self.runtime.lock().unwrap().language.panel,
+            Panel::Rename(..)
+        )
+    }
+    fn submit_rename(&self) {
+        let (guard, name) = {
+            let rt = self.runtime.lock().unwrap();
+            let Panel::Rename(guard, name) = &rt.language.panel else {
+                return;
+            };
+            (guard.clone(), name.get())
+        };
+        if !valid_symbol_name(&name) {
+            self.status.set("Use an identifier up to 256 bytes, with letters, digits, _ or $; the first character cannot be a digit".into());
+            return;
+        }
+        let id = self.active_id();
+        let caret = self
+            .bindings(id)
+            .map(|bindings| bindings.selection.get().caret.byte);
+        let valid = id == guard.id
+            && caret == Some(guard.caret)
+            && self.navigation.load(Ordering::Relaxed) == guard.navigation
+            && self
+                .runtime
+                .lock()
+                .unwrap()
+                .workspace
+                .get(id)
+                .is_some_and(|doc| doc.editor.revision() == guard.revision);
+        if !valid {
+            self.dismiss_language_panel();
+            self.status
+                .set("Rename cancelled because the document changed".into());
+            return;
+        }
+        self.dismiss_language_panel();
+        self.language_send("textDocument/rename", None, None, false, Some(&name));
+    }
+    fn apply_language_edits(&self, guard: &Guard, edits: &[Value], label: &str) {
+        let id = self.active_id();
+        if id != guard.id
+            || !self.editable(id)
+            || self.navigation.load(Ordering::Relaxed) != guard.navigation
+        {
+            self.status.set(format!(
+                "{label} discarded because the active editor changed"
+            ));
+            return;
+        }
+        let Some(bindings) = self.bindings(id) else {
+            return;
+        };
+        let selection = bindings.selection.get();
         let mut rt = self.runtime.lock().unwrap();
-        let next = rt.workspace.get(id).map(|doc| {
-            (
-                doc.editor.revision(),
-                doc.bindings.selection.get().caret.byte,
-            )
-        });
+        let Some(doc) = rt.workspace.get_mut(id) else {
+            return;
+        };
+        if doc.editor.revision() != guard.revision {
+            drop(rt);
+            self.status
+                .set(format!("{label} discarded because the document changed"));
+            return;
+        }
+        let original = doc.editor.document.as_str();
+        match prepare_edits(&original, edits, selection) {
+            Ok((plan, _parts)) => {
+                if original[plan.edit.replaced_range.clone()] == plan.edit.inserted {
+                    drop(rt);
+                    self.status.set(format!("{label}: no changes needed"));
+                    return;
+                }
+                doc.editor.moved(selection);
+                doc.editor.edit_plan(&plan);
+                rt.language.panel = Panel::Closed;
+                rt.language.completion_due = None;
+                drop(rt);
+                self.sync_editor(id);
+                self.changed();
+                self.status
+                    .set(format!("{label} applied · Undo restores the previous text"));
+            }
+            Err(error) => {
+                drop(rt);
+                self.status.set(error);
+            }
+        }
+    }
+    pub(super) fn schedule_completion(&self, id: DocumentId, delta: &EditDelta) {
+        let caret = self
+            .bindings(id)
+            .map(|b| b.selection.get().caret.byte)
+            .unwrap_or(0);
+        let mut rt = self.runtime.lock().unwrap();
+        let next = rt
+            .workspace
+            .get(id)
+            .map(|doc| (doc.editor.revision(), caret));
         rt.language.hover_generation = rt.language.hover_generation.wrapping_add(1);
         rt.language.hover_target = None;
-        if !matches!(rt.language.panel, Panel::Problems) {
+        if !matches!(rt.language.panel, Panel::Problems | Panel::References(..)) {
             rt.language.panel = Panel::Closed;
         }
         rt.language.completion_due = next
@@ -1026,6 +1509,10 @@ impl App {
     }
     pub(super) fn poll_language_interactions(&self) {
         let active = self.active_id();
+        let active_caret = self
+            .bindings(active)
+            .map(|b| b.selection.get().caret.byte)
+            .unwrap_or(0);
         let hide = {
             let mut rt = self.runtime.lock().unwrap();
             if rt
@@ -1058,10 +1545,10 @@ impl App {
             }
             let completion = completion.filter(|(id, rev, caret, _)| {
                 *id == active
-                    && rt.workspace.get(*id).is_some_and(|doc| {
-                        doc.editor.revision() == *rev
-                            && doc.bindings.selection.get().caret.byte == *caret
-                    })
+                    && rt
+                        .workspace
+                        .get(*id)
+                        .is_some_and(|doc| doc.editor.revision() == *rev && active_caret == *caret)
             });
             let hover = rt.language.hover_target.filter(|(id, _, _, at)| {
                 !rt.language.hover_sent
@@ -1076,7 +1563,7 @@ impl App {
                 hover.map(|(_, byte, point, _)| (byte, point, rt.language.hover_generation)),
             )
         };
-        if completion.is_some() {
+        if completion.is_some() && !self.language_rename_open() {
             let rect = self.caret_rect.get();
             self.language_anchor
                 .set(Point::new(rect.origin.x, rect.origin.y + rect.size.height));
@@ -1085,7 +1572,7 @@ impl App {
         if let Some((byte, point, generation)) = hover {
             if !matches!(
                 self.runtime.lock().unwrap().language.panel,
-                Panel::Completion(..)
+                Panel::Completion(..) | Panel::Rename(..)
             ) {
                 self.language_anchor
                     .set(Point::new(point.x, point.y + 18.0));
@@ -1123,6 +1610,33 @@ impl App {
                 self.changed();
                 return true;
             }
+        }
+        if matches!(rt.language.panel, Panel::Rename(..)) {
+            drop(rt);
+            if key == KeyCode::Enter {
+                self.submit_rename();
+                return true;
+            }
+            if key == KeyCode::Escape {
+                self.dismiss_language_panel();
+                return true;
+            }
+            return false;
+        }
+        if key == KeyCode::F(2) {
+            drop(rt);
+            self.show_rename();
+            return true;
+        }
+        if key == KeyCode::F(12) && modifiers.shift {
+            drop(rt);
+            self.find_references();
+            return true;
+        }
+        if modifiers.alt && modifiers.shift && matches!(key, KeyCode::Char('f' | 'F')) {
+            drop(rt);
+            self.format_document();
+            return true;
         }
         if modifiers.primary() && matches!(key, KeyCode::Char('k' | 'K')) {
             rt.language.chord = Some(Instant::now());
@@ -1163,7 +1677,22 @@ impl App {
     }
     pub(super) fn dismiss_language_panel(&self) -> bool {
         let mut rt = self.runtime.lock().unwrap();
-        let open = !matches!(rt.language.panel, Panel::Closed);
+        let mut open = !matches!(rt.language.panel, Panel::Closed);
+        for session in rt.language.sessions.values_mut() {
+            let cancelled: Vec<_> = session
+                .pending
+                .iter()
+                .filter(|(_, request)| request.method == "textDocument/prepareRename")
+                .map(|(id, _)| *id)
+                .collect();
+            open |= !cancelled.is_empty();
+            for id in cancelled {
+                session.pending.remove(&id);
+                if let Some(client) = &session.client {
+                    let _ = client.notify("$/cancelRequest", json!({"id":id}));
+                }
+            }
+        }
         rt.language.panel = Panel::Closed;
         rt.language.completion_due = None;
         rt.language.hover_generation = rt.language.hover_generation.wrapping_add(1);
@@ -1174,7 +1703,7 @@ impl App {
         }
         open
     }
-    fn language_navigate(&self, path: PathBuf, target: Value) {
+    pub(super) fn language_navigate(&self, path: PathBuf, target: Value) {
         let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
         if let Some(id) = existing {
             self.activate(id);
@@ -1185,12 +1714,23 @@ impl App {
                     .set("Finish the file operation before navigating".into());
                 return;
             }
-            let navigation = self.navigation.load(Ordering::Relaxed);
             self.open(path.clone());
-            self.runtime.lock().unwrap().language.navigation = Some((path, target, navigation));
+            // Starting the file worker invalidates navigation. Record its new
+            // generation, otherwise every unopened-file target is discarded.
+            let navigation = self.navigation.load(Ordering::Relaxed);
+            let mut rt = self.runtime.lock().unwrap();
+            if matches!(
+                rt.job.as_ref().map(|job| &job.operation),
+                Some(FileOperation::Open { .. })
+            ) {
+                rt.language.navigation = Some((path, target, navigation));
+            }
         }
     }
     fn language_select(&self, id: DocumentId, target: &Value) {
+        let Some(active_bindings) = self.bindings(id) else {
+            return;
+        };
         let bindings = {
             let mut rt = self.runtime.lock().unwrap();
             let Some(doc) = rt.workspace.get_mut(id) else {
@@ -1204,11 +1744,16 @@ impl App {
                 caret: TextPosition::new(range.end),
             };
             doc.editor.moved(selection);
-            (doc.bindings.clone(), selection)
+            (active_bindings, selection)
         };
         bindings.0.selection.set(bindings.1);
-        self.dismiss_language_panel();
-        self.status.set("Definition opened".into());
+        if !matches!(
+            self.runtime.lock().unwrap().language.panel,
+            Panel::References(..)
+        ) {
+            self.dismiss_language_panel();
+        }
+        self.status.set("Location opened".into());
         self.changed();
     }
     pub(super) fn language_opened(&self, path: &Path, id: DocumentId) {
@@ -1230,6 +1775,10 @@ impl App {
     }
     fn accept_completion(&self, index: usize) {
         let id = self.active_id();
+        let caret = self
+            .bindings(id)
+            .map(|b| b.selection.get().caret.byte)
+            .unwrap_or(0);
         if !self.editable(id) {
             return;
         }
@@ -1245,7 +1794,7 @@ impl App {
         };
         if guard.id != id
             || guard.revision != doc.editor.revision()
-            || guard.caret != doc.bindings.selection.get().caret.byte
+            || guard.caret != caret
             || guard.navigation != self.navigation.load(Ordering::Relaxed)
         {
             rt.language.panel = Panel::Closed;
@@ -1304,16 +1853,15 @@ impl App {
             .filter(|(range, _)| range.end <= primary.0.start && range != &primary.0)
             .map(|(range, text)| text.len() as isize - range.len() as isize)
             .sum();
-        let mut text = original.to_string();
-        for (range, inserted) in edits.into_iter().rev() {
-            text.replace_range(range, &inserted);
-        }
         let end = (primary.0.start as isize + shift).max(0) as usize + primary.1.len();
-        doc.editor.edit_transaction(&EditDelta {
-            replaced_range: 0..original.len(),
-            inserted: text,
-        });
-        doc.editor.moved(TextSelection::collapsed(end));
+        let parts: Vec<_> = edits
+            .into_iter()
+            .map(|(replaced_range, inserted)| EditDelta {
+                replaced_range,
+                inserted,
+            })
+            .collect();
+        doc.editor.edit_parts(&parts, TextSelection::collapsed(end));
         rt.language.panel = Panel::Closed;
         drop(rt);
         self.sync_editor(id);
@@ -1353,6 +1901,24 @@ impl App {
             (rt.language.panel.clone(), rt.language.selected_completion)
         };
         let colors = self.theme.get().colors();
+        let rename = match &panel {
+            Panel::Rename(_, name) => Some(name.clone()),
+            _ => None,
+        };
+        let rename_input = rename
+            .clone()
+            .unwrap_or_else(|| State::new(generate_state_id(), String::new()));
+        let submit = self.clone();
+        let cancel = self.clone();
+        let rename_view = if_view!(rename.is_some(), super::popup::Anchored::new(
+            Surface::floating(vstack! {
+                TextField::new(rename_input).font_size(13.0).autofocus(true)
+                    .text_color(colors.foreground).background_color(colors.elevated)
+                    .border_color(colors.border).focused_border_color(colors.accent)
+                    .on_submit(move || submit.submit_rename())
+                    .on_cancel(move || { cancel.dismiss_language_panel(); }).frame(320.0, 30.0),
+                Text::new("Current file only · Enter apply · Esc cancel").font_size(11.0).color(colors.muted),
+            }.spacing(5.0).padding(8.0)).fill(colors.elevated).border_color(colors.border).corner_radius(4.0), self.language_anchor.clone()), VStack::new(()));
         let (rows, height) = match panel {
             Panel::Completion(_, items) => {
                 let len = items.len();
@@ -1415,7 +1981,7 @@ impl App {
         let scroll = ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0))
             .scroll_to_vertical_range(selected as f32 * 26.0, (selected + 1) as f32 * 26.0)
             .frame(420.0, height);
-        if_view!(
+        let information = if_view!(
             shown,
             super::popup::Anchored::new(
                 Surface::floating(scroll)
@@ -1437,78 +2003,72 @@ impl App {
                 false
             }),
             VStack::new(())
-        )
+        );
+        ZStack::new((information, rename_view)).alignment(Alignment::TopLeading)
     }
     pub(super) fn language_panel(&self) -> impl View + Clone + use<> {
-        let (panel, problems) = {
+        let (panel, problems, root) = {
             let rt = self.runtime.lock().unwrap();
-            (rt.language.panel.clone(), rt.language.problems.clone())
+            (
+                rt.language.panel.clone(),
+                rt.language.problems.clone(),
+                rt.explorer.root.clone(),
+            )
         };
-        let is_open = matches!(panel, Panel::Problems);
+        let colors = self.theme.get().colors();
+        let is_open = matches!(panel, Panel::Problems | Panel::References(..));
         let close = self.clone();
-        let (title, entries): (
-            String,
-            Vec<(
-                String,
-                Option<usize>,
-                Option<(PathBuf, std::ops::Range<usize>)>,
-            )>,
-        ) = match panel {
-            Panel::Closed => (String::new(), vec![]),
-            Panel::Completion(_, items) => (
-                if items.is_empty() {
-                    "No completions"
-                } else {
-                    "Completions · choose to insert"
-                }
-                .into(),
-                items
-                    .iter()
-                    .enumerate()
-                    .map(|(i, c)| (format!("{}  {}", c.label, c.detail), Some(i), None))
-                    .collect(),
-            ),
-            Panel::Hover(text) => (
-                "Symbol information".into(),
-                vec![(
-                    if text.is_empty() {
-                        "No information".into()
-                    } else {
-                        text
-                    },
-                    None,
-                    None,
-                )],
-            ),
-            Panel::Problems => (
-                format!("Problems ({})", problems.len()),
-                problems
-                    .iter()
-                    .take(100)
-                    .map(|p| {
-                        (
-                            format!(
-                                "{} · {} · {}",
-                                p.path.file_name().unwrap_or_default().to_string_lossy(),
-                                if p.severity == 1 { "Error" } else { "Warning" },
-                                p.message
-                            ),
-                            None,
-                            Some((p.path.clone(), p.range.clone())),
-                        )
+        let (title, entries): (String, Vec<(String, Option<Location>)>) = match panel {
+            Panel::References(locations, truncated) => {
+                let title = format!("References ({}){}", locations.len(), if truncated {" · first 1000 shown"} else {""});
+                let entries = locations.into_iter().map(|location| {
+                    let display = root.as_deref().and_then(|root| location.path.strip_prefix(root).ok()).unwrap_or(&location.path);
+                    let line = location.range.pointer("/start/line").and_then(Value::as_u64).unwrap_or(0).saturating_add(1);
+                    let column = location.range.pointer("/start/character").and_then(Value::as_u64).unwrap_or(0).saturating_add(1);
+                    (format!("{}:{line}:{column}", display.display()), Some(location))
+                }).collect();
+                (title, entries)
+            }
+            Panel::Problems => (format!("Problems ({})", problems.len()), problems.iter().take(100).map(|problem| {
+                let label = format!("{} · {} · {}", problem.path.file_name().unwrap_or_default().to_string_lossy(), if problem.severity == 1 {"Error"} else {"Warning"}, problem.message);
+                let target = {
+                    let rt = self.runtime.lock().unwrap();
+                    rt.workspace.find_path(&problem.path).and_then(|id| rt.workspace.get(id)).map(|doc| {
+                        let text = doc.editor.document.as_str();
+                        Location { path:problem.path.clone(), range:json!({"start":position(&text, problem.range.start),"end":position(&text, problem.range.end)}) }
                     })
-                    .collect(),
-            ),
+                };
+                (label, target)
+            }).collect()),
+            _ => (String::new(), vec![]),
         };
-        let rows=entries.into_iter().map(|(label,completion,target)|{
-            let app=self.clone();Button::new(label).header_style().font_size(12.0).padding(5.0).on_click(move ||{
-                if let Some(index)=completion {app.accept_completion(index);} else if let Some((path,range))=&target {
-                    let text={let rt=app.runtime.lock().unwrap();rt.workspace.find_path(path).and_then(|id|rt.workspace.get(id)).map(|doc|doc.editor.document.as_str().to_string())};
-                    if let Some(text)=text {app.language_navigate(path.clone(),json!({"start":position(&text,range.start),"end":position(&text,range.end)}));}
-                }
-            }).frame_width(f32::INFINITY)
-        }).collect::<Vec<_>>();
-        if_view!(is_open,vstack!{hstack!{Text::new(title).font_size(12.0),Spacer::new(),Button::new("×").header_style().on_click(move ||{close.dismiss_language_panel();}),}.spacing(8.0),ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0)).frame(f32::INFINITY,120.0),}.spacing(4.0).padding(8.0).background(self.theme.get().colors().surface),VStack::new(()))
+        let entries = if entries.is_empty() {
+            vec![("No results".into(), None)]
+        } else {
+            entries
+        };
+        let rows = entries
+            .into_iter()
+            .map(|(label, target)| {
+                let app = self.clone();
+                Button::new(label)
+                    .header_style()
+                    .font_size(12.0)
+                    .text_color(colors.foreground)
+                    .background_color(colors.surface)
+                    .padding(5.0)
+                    .on_click(move || {
+                        if let Some(location) = &target {
+                            app.language_navigate(location.path.clone(), location.range.clone());
+                        }
+                    })
+                    .frame(f32::INFINITY, 26.0)
+            })
+            .collect::<Vec<_>>();
+        if_view!(is_open, vstack! {
+            hstack! { Text::new(title).font_size(12.0).color(colors.foreground), Spacer::new(), Button::new("×").header_style().text_color(colors.foreground).on_click(move || { close.dismiss_language_panel(); }), }.spacing(8.0),
+            ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0)).frame(f32::INFINITY, 140.0),
+        }.spacing(4.0).padding(8.0).background(colors.surface), VStack::new(()))
     }
 }
 

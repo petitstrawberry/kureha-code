@@ -8,18 +8,28 @@ use std::any::Any;
 pub struct Anchored<V: View + Clone> {
     content: V,
     anchor: Option<State<Point>>,
+    centered: bool,
 }
 impl<V: View + Clone> Anchored<V> {
     pub fn new(content: V, anchor: State<Point>) -> Self {
         Self {
             content,
             anchor: Some(anchor),
+            centered: false,
         }
     }
     pub fn top_right(content: V) -> Self {
         Self {
             content,
             anchor: None,
+            centered: false,
+        }
+    }
+    pub fn top_center(content: V) -> Self {
+        Self {
+            content,
+            anchor: None,
+            centered: true,
         }
     }
 }
@@ -29,11 +39,13 @@ impl<V: View + Clone + 'static> View for Anchored<V> {
             self.clone(),
             |v| Popover {
                 anchor: v.anchor.as_ref().map(State::get),
+                centered: v.centered,
                 size: Size::ZERO,
                 panel: Rect::zero(),
             },
             |r, v| {
                 r.anchor = v.anchor.as_ref().map(State::get);
+                r.centered = v.centered;
                 UpdateResult::Updated
             },
             |v| vec![v.content.clone_view()],
@@ -51,6 +63,7 @@ impl<V: View + Clone + 'static> View for Anchored<V> {
 }
 struct Popover {
     anchor: Option<Point>,
+    centered: bool,
     size: Size,
     panel: Rect,
 }
@@ -71,15 +84,20 @@ impl ElementRenderObject for Popover {
         if let Some(child) = children.first_mut() {
             let size = child.layout(LayoutConstraints::new(
                 0.0,
-                c.max_width.min(440.0),
+                c.max_width.min(if self.centered { 620.0 } else { 440.0 }),
                 0.0,
-                c.max_height.min(260.0),
+                c.max_height.min(if self.centered { 380.0 } else { 260.0 }),
             ));
             self.panel = match self.anchor {
                 Some(anchor) => place(anchor, self.size, size),
                 None => Rect::new(
                     Point::new(
-                        (self.size.width - size.width - 8.0).max(0.0),
+                        (if self.centered {
+                            (self.size.width - size.width) / 2.0
+                        } else {
+                            self.size.width - size.width - 8.0
+                        })
+                        .max(0.0),
                         8.0_f32.min((self.size.height - size.height).max(0.0)),
                     ),
                     size,

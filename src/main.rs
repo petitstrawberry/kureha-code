@@ -13,7 +13,7 @@ use scarlet_ui::{
     scenes, vstack,
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -22,8 +22,12 @@ use std::{
     },
     thread,
 };
+mod editing_ui;
+mod groups;
 mod language;
+mod navigation_ui;
 mod popup;
+mod project_ui;
 mod ui;
 
 #[derive(Clone, Copy)]
@@ -34,12 +38,12 @@ enum DialogPurpose {
 }
 #[derive(Clone)]
 enum FileOperation {
-    Open,
+    Open { group: usize },
     Save { id: DocumentId, revision: u64 },
 }
 enum Completion {
     Open(PathBuf, String),
-    Save(PathBuf),
+    Save(PathBuf, Arc<str>),
 }
 type JobResult = std::result::Result<Completion, String>;
 struct FileJob {
@@ -96,21 +100,30 @@ struct Runtime {
     menu_actions: Vec<fn(&App)>,
     language: language::Service,
     minimap: kureha_code::minimap::MinimapCache,
+    second_bindings: BTreeMap<DocumentId, Bindings>,
+    group_tabs: [Vec<DocumentId>; 2],
+    save_all: Vec<DocumentId>,
 }
 #[derive(Clone)]
 struct App {
+    nav: navigation_ui::Navigation,
+    project: project_ui::ProjectSearch,
     editor_font: Option<FontStack>,
     theme: State<kureha_code::theme::Theme>,
     minimap_visible: State<bool>,
     terminal_visible: State<bool>,
     terminal: kureha_code::terminal::Terminal,
     active: State<usize>,
+    second: State<Option<DocumentId>>,
+    focused_group: State<usize>,
+    split_down: State<bool>,
     chrome: State<u64>,
     status: State<String>,
     position: State<String>,
     language_status: State<String>,
     language_anchor: State<Point>,
     caret_rect: State<Rect>,
+    inactive_caret_rect: State<Rect>,
     tree_rows: State<Vec<Row>>,
     tree_selected: State<Option<usize>>,
     confirmation: State<String>,
@@ -118,18 +131,27 @@ struct App {
     query: State<String>,
     replacement: State<String>,
     search_status: State<String>,
+    find_options: State<search::Options>,
     runtime: Arc<Mutex<Runtime>>,
     navigation: Arc<AtomicU64>,
 }
 impl App {
     fn new() -> Self {
+        let mut runtime = Runtime::default();
+        runtime.group_tabs[0].push(runtime.workspace.documents[0].id);
         let active = State::new(generate_state_id(), 0);
+        let second = State::new(generate_state_id(), None);
+        let focused_group = State::new(generate_state_id(), 0);
         let navigation = Arc::new(AtomicU64::new(0));
-        let changed = navigation.clone();
-        active.subscribe_any(Arc::new(move || {
-            changed.fetch_add(1, Ordering::Relaxed);
-        }));
+        for state in [&active as &dyn Listenable, &second, &focused_group] {
+            let changed = navigation.clone();
+            state.subscribe_any(Arc::new(move || {
+                changed.fetch_add(1, Ordering::Relaxed);
+            }));
+        }
         Self {
+            nav: navigation_ui::Navigation::new(),
+            project: project_ui::ProjectSearch::new(),
             editor_font: kureha_code::fonts::editor_stack(),
             theme: State::new(generate_state_id(), kureha_code::theme::Theme::Light),
             minimap_visible: State::new(generate_state_id(), true),
@@ -138,7 +160,11 @@ impl App {
             language_status: State::new(generate_state_id(), "Plain text".into()),
             language_anchor: State::new(generate_state_id(), Point::new(60.0, 30.0)),
             caret_rect: State::new(generate_state_id(), Rect::from_xywh(60.0, 10.0, 1.0, 20.0)),
+            inactive_caret_rect: State::new(generate_state_id(), Rect::zero()),
             active,
+            second,
+            focused_group,
+            split_down: State::new(generate_state_id(), false),
             navigation,
             chrome: State::new(generate_state_id(), 0),
             status: State::new(generate_state_id(), "Ready".into()),
@@ -150,7 +176,8 @@ impl App {
             query: State::new(generate_state_id(), String::new()),
             replacement: State::new(generate_state_id(), String::new()),
             search_status: State::new(generate_state_id(), "Literal search · Match case".into()),
-            runtime: Arc::new(Mutex::new(Runtime::default())),
+            find_options: State::new(generate_state_id(), search::Options::default()),
+            runtime: Arc::new(Mutex::new(runtime)),
         }
     }
     fn set_theme(&self, theme: kureha_code::theme::Theme) {
@@ -199,6 +226,15 @@ impl App {
     }
     fn active_id(&self) -> DocumentId {
         let rt = self.runtime.lock().unwrap();
+        if self.focused_group.get() == 1 {
+            if let Some(id) = self
+                .second
+                .get()
+                .filter(|id| rt.workspace.get(*id).is_some())
+            {
+                return id;
+            }
+        }
         rt.workspace.documents[self.active.get().min(rt.workspace.documents.len() - 1)].id
     }
     fn window_title(&self) -> String {
@@ -213,12 +249,7 @@ impl App {
         )
     }
     fn bindings(&self, id: DocumentId) -> Option<Bindings> {
-        self.runtime
-            .lock()
-            .unwrap()
-            .workspace
-            .get(id)
-            .map(|doc| doc.bindings.clone())
+        self.bindings_for(id, self.focused_group.get())
     }
     fn blocked(&self) -> bool {
         let rt = self.runtime.lock().unwrap();
@@ -233,16 +264,31 @@ impl App {
     }
     fn sync_editor(&self, id: DocumentId) {
         let snapshot = {
-            let rt = self.runtime.lock().unwrap();
-            rt.workspace.get(id).map(|doc| {
+            let mut rt = self.runtime.lock().unwrap();
+            rt.workspace.get_mut(id).map(|doc| {
                 (
-                    doc.bindings.clone(),
                     doc.editor.document.clone(),
                     doc.editor.selection,
+                    doc.editor.take_view_delta(),
                 )
             })
         };
-        if let Some((bindings, document, selection)) = snapshot {
+        if let Some((document, selection, delta)) = snapshot {
+            if let Some(delta) = delta {
+                if self.second.get().is_some() {
+                    if let Some(other) = self.bindings_for(id, 1 - self.focused_group.get()) {
+                        other
+                            .selection
+                            .set(kureha_code::editor::transform_selection(
+                                &delta,
+                                other.selection.get(),
+                            ));
+                    }
+                }
+            }
+            let Some(bindings) = self.bindings(id) else {
+                return;
+            };
             bindings.document.set(document);
             bindings.selection.set(selection);
         }
@@ -271,10 +317,11 @@ impl App {
         if !self.editable(id) {
             return;
         }
+        let selection = self.bindings(id).unwrap().selection.get();
         {
             let mut rt = self.runtime.lock().unwrap();
             let doc = rt.workspace.get_mut(id).unwrap();
-            doc.editor.moved(doc.bindings.selection.get());
+            doc.editor.moved(selection);
             doc.editor.undo(redo);
         }
         self.sync_editor(id);
@@ -285,7 +332,8 @@ impl App {
         if !self.editable(id) {
             return;
         }
-        let (bindings, selection) = {
+        let bindings = self.bindings(id).unwrap();
+        let selection = {
             let mut rt = self.runtime.lock().unwrap();
             let doc = rt.workspace.get_mut(id).unwrap();
             let selection = TextSelection {
@@ -293,7 +341,7 @@ impl App {
                 caret: TextPosition::new(doc.editor.document.len()),
             };
             doc.editor.moved(selection);
-            (doc.bindings.clone(), selection)
+            selection
         };
         bindings.selection.set(selection);
     }
@@ -304,18 +352,40 @@ impl App {
         self.activate_unchecked(id);
     }
     fn activate_unchecked(&self, id: DocumentId) {
-        let index = self.runtime.lock().unwrap().workspace.index(id);
+        let index = {
+            let mut rt = self.runtime.lock().unwrap();
+            let index = rt.workspace.index(id);
+            let tabs = &mut rt.group_tabs[self.focused_group.get()];
+            if index.is_some() && !tabs.contains(&id) {
+                tabs.push(id);
+            }
+            index
+        };
         if let Some(index) = index {
-            self.active.set(index);
+            if self.focused_group.get() == 1 && self.second.get().is_some() {
+                self.second.set(Some(id));
+            } else {
+                self.active.set(index);
+            }
         }
     }
     fn next_tab(&self, backwards: bool) {
         if self.blocked() {
             return;
         }
-        let count = self.runtime.lock().unwrap().workspace.documents.len();
-        self.active
-            .set((self.active.get() + if backwards { count - 1 } else { 1 }) % count);
+        let id = self.active_id();
+        let next = {
+            let rt = self.runtime.lock().unwrap();
+            let tabs = &rt.group_tabs[self.focused_group.get()];
+            let count = tabs.len();
+            if count == 0 {
+                return;
+            }
+            tabs[(tabs.iter().position(|tab| *tab == id).unwrap_or(0)
+                + if backwards { count - 1 } else { 1 })
+                % count]
+        };
+        self.activate_unchecked(next);
     }
     fn new_document(&self) {
         if self.blocked() {
@@ -326,19 +396,58 @@ impl App {
         self.changed();
     }
     fn remove_document(&self, id: DocumentId) {
-        let active = self.active_id();
-        let index = {
+        let first = self.group_id(0);
+        let second = self.second.get();
+        let (index, next_second) = {
             let mut rt = self.runtime.lock().unwrap();
-            let old_index = rt.workspace.index(id).unwrap_or(0);
+            let positions = rt
+                .group_tabs
+                .each_ref()
+                .map(|tabs| tabs.iter().position(|tab| *tab == id).unwrap_or(0));
             rt.workspace.remove(id);
-            rt.workspace
-                .index(active)
-                .unwrap_or(old_index.min(rt.workspace.documents.len() - 1))
+            for tabs in &mut rt.group_tabs {
+                tabs.retain(|tab| *tab != id);
+            }
+            if rt.group_tabs[0].is_empty() {
+                let remaining = rt.workspace.documents[0].id;
+                let remaining = if rt.group_tabs[1].contains(&remaining) {
+                    rt.workspace.new_document()
+                } else {
+                    remaining
+                };
+                rt.group_tabs[0].push(remaining);
+            }
+            let first = if rt.group_tabs[0].contains(&first) {
+                first
+            } else {
+                rt.group_tabs[0][positions[0].min(rt.group_tabs[0].len() - 1)]
+            };
+            let next_second = second.and_then(|active| {
+                let tabs = &rt.group_tabs[1];
+                if tabs.contains(&active) {
+                    Some(active)
+                } else {
+                    tabs.get(positions[1].min(tabs.len().saturating_sub(1)))
+                        .copied()
+                }
+            });
+            rt.second_bindings.remove(&id);
+            (rt.workspace.index(first).unwrap(), next_second)
         };
         self.active.set(index);
+        if second.is_some() && next_second.is_none() {
+            self.close_split();
+        } else if second != next_second {
+            self.second.set(next_second);
+        }
         self.changed();
     }
     fn request_close(&self, tab: Option<DocumentId>) {
+        if let Some(id) = tab {
+            if self.close_shared_tab(id) {
+                return;
+            }
+        }
         {
             let mut rt = self.runtime.lock().unwrap();
             if rt.close.is_some() {
@@ -394,7 +503,11 @@ impl App {
         }
     }
     fn cancel_close(&self) {
-        self.runtime.lock().unwrap().close = None;
+        {
+            let mut rt = self.runtime.lock().unwrap();
+            rt.close = None;
+            rt.save_all.clear();
+        }
         dismiss_window("confirm");
     }
     fn discard_close(&self) {
@@ -475,9 +588,11 @@ impl App {
                     receiver,
                 })
             }
-            Err(error) => self
-                .status
-                .set(format!("Could not start file operation: {error}")),
+            Err(error) => {
+                self.runtime.lock().unwrap().save_all.clear();
+                self.status
+                    .set(format!("Could not start file operation: {error}"));
+            }
         }
         self.changed();
     }
@@ -486,7 +601,8 @@ impl App {
             return;
         }
         self.status.set("Opening…".into());
-        self.worker(FileOperation::Open, move || {
+        let group = self.focused_group.get();
+        self.worker(FileOperation::Open { group }, move || {
             let path = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
             files::read(&path)
                 .map(|text| Completion::Open(path, text))
@@ -512,8 +628,48 @@ impl App {
             self.picker(DialogPurpose::Save(id));
         }
     }
+    fn save_all(&self) {
+        if self.blocked() || self.runtime.lock().unwrap().job.is_some() {
+            return;
+        }
+        let ids = self
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .documents
+            .iter()
+            .rev()
+            .filter(|doc| doc.editor.dirty())
+            .map(|doc| doc.id)
+            .collect();
+        self.runtime.lock().unwrap().save_all = ids;
+        self.save_next();
+    }
+    fn save_next(&self) {
+        loop {
+            let next = {
+                let mut rt = self.runtime.lock().unwrap();
+                let Some(id) = rt.save_all.pop() else {
+                    return;
+                };
+                rt.workspace
+                    .get(id)
+                    .filter(|doc| doc.editor.dirty())
+                    .map(|doc| (id, doc.path.clone()))
+            };
+            if let Some((id, path)) = next {
+                if let Some(path) = path {
+                    self.save_to(id, path);
+                } else {
+                    self.picker(DialogPurpose::Save(id));
+                }
+                break;
+            }
+        }
+    }
     fn save_to(&self, id: DocumentId, path: PathBuf) {
-        let (document, revision, crlf) = {
+        let (document, revision, crlf, original_path, disk_text) = {
             let rt = self.runtime.lock().unwrap();
             if rt.job.is_some() || rt.dialog.is_some() {
                 return;
@@ -521,7 +677,13 @@ impl App {
             let Some(doc) = rt.workspace.get(id) else {
                 return;
             };
-            (doc.editor.document.clone(), doc.editor.revision(), doc.crlf)
+            (
+                doc.editor.document.clone(),
+                doc.editor.revision(),
+                doc.crlf,
+                doc.path.clone(),
+                doc.disk_text.clone(),
+            )
         };
         self.status.set("Saving…".into());
         let runtime = self.runtime.clone();
@@ -537,8 +699,27 @@ impl App {
                     return Err("That file is open in another tab; save to a different path".into());
                 }
             }
-            files::save(&path, &document.as_str(), crlf)
-                .map(|_| Completion::Save(path))
+            let same_destination = original_path.as_ref().is_some_and(|original| {
+                original == &path
+                    || resolve_save_path(original).is_ok_and(|resolved| resolved == path)
+            });
+            let expected = if same_destination {
+                disk_text
+            } else {
+                match files::read(&path) {
+                    Ok(text) => Some(Arc::from(text)),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(e) => return Err(e.to_string()),
+                }
+            };
+            let text = document.as_str();
+            let saved: Arc<str> = if crlf {
+                text.replace('\n', "\r\n").into()
+            } else {
+                Arc::from(text.as_ref())
+            };
+            files::save_checked(&path, &text, crlf, expected.as_deref())
+                .map(|_| Completion::Save(path, saved))
                 .map_err(|e| e.to_string())
         });
     }
@@ -664,13 +845,25 @@ impl App {
             selection.end().byte
         };
         let document = bindings.document.get();
-        match search::find(&document.as_str(), &self.query.get(), start, backwards) {
+        let pattern = match search::Pattern::new(&self.query.get(), self.find_options.get()) {
+            Ok(pattern) => pattern,
+            Err(error) => {
+                self.search_status.set(error);
+                return;
+            }
+        };
+        match pattern.next(
+            &document.as_str(),
+            start,
+            backwards,
+            Some(selection.start().byte..selection.end().byte),
+        ) {
             Some(range) => {
                 bindings.selection.set(TextSelection {
                     anchor: TextPosition::new(range.start),
                     caret: TextPosition::new(range.end),
                 });
-                self.search_status.set("Match selected · Match case".into());
+                self.search_status.set("Match selected".into());
             }
             None => self.search_status.set(
                 if self.query.get().is_empty() {
@@ -688,10 +881,17 @@ impl App {
             return;
         };
         let query = self.query.get();
+        let options = self.find_options.get();
         if !query.is_empty() {
-            if let Some(range) = target.selection.normalized_range() {
-                if bindings.document.get().as_str().get(range) == Some(query.as_str()) {
-                    self.apply_clipboard(target, &self.replacement.get());
+            if let Ok(pattern) = search::Pattern::new(&query, options) {
+                let range = target.selection.start().byte..target.selection.end().byte;
+                if let Some(replacement) = pattern.replacement(
+                    &bindings.document.get().as_str(),
+                    range,
+                    &self.replacement.get(),
+                    options.regex,
+                ) {
+                    self.apply_clipboard(target, &replacement);
                 }
             }
         }
@@ -711,21 +911,28 @@ impl App {
             .get()
             .replace("\r\n", "\n")
             .replace('\r', "\n");
-        match search::replace_all(
-            &document.as_str(),
-            &self.query.get(),
-            &replacement,
-            files::MAX_BYTES as usize,
-        ) {
-            Ok(Some((text, count))) => {
+        if self.query.get().is_empty() {
+            self.search_status.set("Enter text to find".into());
+            return;
+        }
+        let options = self.find_options.get();
+        let result = search::Pattern::new(&self.query.get(), options).and_then(|pattern| {
+            pattern.replacement_plan(
+                &document.as_str(),
+                &replacement,
+                options.regex,
+                files::MAX_BYTES as usize,
+            )
+        });
+        match result {
+            Ok(Some((text, parts))) => {
+                let count = parts.len();
                 {
                     let mut rt = self.runtime.lock().unwrap();
                     let doc = rt.workspace.get_mut(id).unwrap();
                     doc.editor.moved(bindings.selection.get());
-                    doc.editor.edit_transaction(&EditDelta {
-                        replaced_range: 0..document.len(),
-                        inserted: text,
-                    });
+                    doc.editor
+                        .edit_parts(&parts, TextSelection::collapsed(text.len()));
                 }
                 self.sync_editor(id);
                 self.changed();
@@ -821,12 +1028,15 @@ impl App {
         {
             return false;
         }
+        let Some(bindings) = self.bindings(target.id) else {
+            return false;
+        };
         let mut rt = self.runtime.lock().unwrap();
         let Some(doc) = rt.workspace.get_mut(target.id) else {
             return false;
         };
-        if doc.bindings.generation() != target.generation
-            || doc.bindings.selection.get() != target.selection
+        if bindings.generation() != target.generation
+            || bindings.selection.get() != target.selection
         {
             return false;
         }
@@ -1002,21 +1212,36 @@ impl App {
     }
     fn complete_file(&self, operation: FileOperation, result: JobResult) {
         match (operation, result) {
-            (FileOperation::Open, Ok(Completion::Open(path, text))) => {
-                let id = self
-                    .runtime
-                    .lock()
-                    .unwrap()
-                    .workspace
-                    .open(path.clone(), &text);
+            (FileOperation::Open { group }, Ok(Completion::Open(path, text))) => {
+                let group_closed = group == 1 && self.second.get().is_none();
+                let destination = if group_closed { 0 } else { group };
+                let (id, index) = {
+                    let mut rt = self.runtime.lock().unwrap();
+                    let id = rt.workspace.open(path.clone(), &text);
+                    if !rt.group_tabs[destination].contains(&id) {
+                        rt.group_tabs[destination].push(id);
+                    }
+                    (id, rt.workspace.index(id).unwrap())
+                };
                 self.language_opened(&path, id);
-                self.activate_unchecked(id);
+                // Completing an open updates its originating pane, without
+                // taking focus from another pane or reopening a closed split.
+                if !group_closed {
+                    if destination == 0 {
+                        self.active.set(index);
+                    } else {
+                        self.second.set(Some(id));
+                    }
+                }
                 self.status.set("Ready".into());
             }
-            (FileOperation::Save { id, revision }, Ok(Completion::Save(path))) => {
+            (FileOperation::Save { id, revision }, Ok(Completion::Save(path, disk_text))) => {
                 let (exists, clean, name) = {
                     let mut rt = self.runtime.lock().unwrap();
                     let exists = rt.workspace.saved(id, revision, path);
+                    if let Some(doc) = rt.workspace.get_mut(id) {
+                        doc.disk_text = Some(disk_text);
+                    }
                     let doc = rt.workspace.get(id);
                     (
                         exists,
@@ -1037,23 +1262,22 @@ impl App {
                 if clean && self.runtime.lock().unwrap().close.is_some() {
                     self.advance_close();
                 }
+                self.save_next();
             }
-            (_, Err(error)) => self.status.set(error),
+            (_, Err(error)) => {
+                self.runtime.lock().unwrap().save_all.clear();
+                self.status.set(error);
+            }
             _ => self.status.set("Unexpected file operation result".into()),
         }
         self.changed();
     }
     fn update_position(&self) {
         let id = self.active_id();
+        let selection = self.bindings(id).unwrap().selection.get();
         let rt = self.runtime.lock().unwrap();
         let doc = rt.workspace.get(id).unwrap();
-        let byte = doc
-            .bindings
-            .selection
-            .get()
-            .caret
-            .byte
-            .min(doc.editor.document.len());
+        let byte = selection.caret.byte.min(doc.editor.document.len());
         let line = doc.editor.document.line_index_at_byte(byte);
         let start = doc.editor.document.line_range(line).map_or(0, |r| r.start);
         let column = doc.editor.document.line_text(line).map_or(1, |text| {
@@ -1093,14 +1317,21 @@ impl View for App {
         self.content().create_element()
     }
     fn listenables(&self) -> Vec<&dyn Listenable> {
-        vec![
+        let mut listenables: Vec<&dyn Listenable> = vec![
             &self.chrome,
             &self.active,
+            &self.second,
+            &self.focused_group,
+            &self.split_down,
+            &self.find_options,
             &self.find_open,
             &self.theme,
             &self.minimap_visible,
             &self.terminal_visible,
-        ]
+        ];
+        listenables.extend(self.nav.listenables());
+        listenables.extend(self.project.listenables());
+        listenables
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -1157,6 +1388,8 @@ impl Application for App {
         self.terminal.poll();
         self.poll_menu();
         self.poll();
+        self.poll_navigation();
+        self.poll_project_search();
         self.poll_clipboard();
         self.poll_language();
         self.poll_language_interactions();

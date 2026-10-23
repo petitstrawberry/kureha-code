@@ -22,8 +22,8 @@ impl App {
     pub(super) fn content(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let keys = self.clone();
-        vstack! {
-            SplitView::new(self.explorer_view(), self.editor_area())
+        ZStack::new((vstack! {
+            SplitView::new(if_view!(self.project.is_open(), self.project_search_view(), self.explorer_view()), self.editor_area())
                 .fraction(0.22).min_first(170.0).min_second(420.0).divider_colors(theme.colors().border,theme.colors().accent)
                 .frame(f32::INFINITY, f32::INFINITY),
             hstack! {
@@ -35,11 +35,17 @@ impl App {
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY)
-        .background(theme.colors().background)
+        .background(theme.colors().background), self.navigation_overlay())).alignment(Alignment::TopLeading)
+        .frame(f32::INFINITY,f32::INFINITY)
         .on_event_capture(move |event| {
             let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event else {
                 return false;
             };
+            if keys.navigation_key(*keycode,*modifiers) { return true; }
+            if keys.nav.is_open() { return false; }
+            if modifiers.primary() && modifiers.shift && matches!(keycode, KeyCode::Char('f'|'F')) {
+                keys.show_project_search(); return true;
+            }
             if modifiers.control && matches!(keycode, KeyCode::Char('`')) {
                 keys.toggle_terminal();
                 return true;
@@ -55,6 +61,7 @@ impl App {
             if keys.language_key(*keycode, *modifiers) {
                 return true;
             }
+            if keys.language_rename_open() {return false;}
             if *keycode == KeyCode::Escape && keys.dismiss_language_panel() {
                 return true;
             }
@@ -82,6 +89,9 @@ impl App {
                 return false;
             }
             match keycode {
+                KeyCode::Char('\\' | '|') => keys.split_editor(modifiers.shift),
+                KeyCode::Char('1') => keys.focus_group(0),
+                KeyCode::Char('2') => { if keys.second.get().is_none() { keys.split_editor(false); } else { keys.focus_group(1); } },
                 KeyCode::Char('j' | 'J') => keys.toggle_terminal(),
                 KeyCode::Char('n' | 'N') => keys.new_document(),
                 KeyCode::Char('o' | 'O') if modifiers.shift => keys.show_folder(),
@@ -89,6 +99,7 @@ impl App {
                 KeyCode::Char('s' | 'S') if modifiers.shift => {
                     keys.picker(DialogPurpose::Save(keys.active_id()))
                 }
+                KeyCode::Char('s' | 'S') if modifiers.alt => keys.save_all(),
                 KeyCode::Char('s' | 'S') => keys.save(),
                 KeyCode::Char('w' | 'W') if modifiers.shift => keys.request_close(None),
                 KeyCode::Char('w' | 'W') => keys.request_close(Some(keys.active_id())),
@@ -103,10 +114,8 @@ impl App {
     }
     fn editor_area(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
-        let id = self.active_id();
         vstack! {
-            self.tabs_view(),
-            SplitView::new(self.editor_view(id),self.bottom_panel()).axis(scarlet_ui::views::SplitAxis::Vertical).divider_colors(theme.colors().border,theme.colors().accent)
+            SplitView::new(self.editor_groups(),self.bottom_panel()).axis(scarlet_ui::views::SplitAxis::Vertical).divider_colors(theme.colors().border,theme.colors().accent)
                 .fraction(if self.terminal_visible.get() {0.70} else {1.0})
                 .min_first(120.0).min_second(if self.terminal_visible.get() {100.0} else {0.0})
                 .frame(f32::INFINITY,f32::INFINITY),
@@ -114,6 +123,41 @@ impl App {
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY)
+    }
+    fn editor_groups(&self) -> impl View + Clone + use<> {
+        let theme = self.theme.get();
+        SplitView::new(
+            self.editor_group(0),
+            if_view!(
+                self.second.get().is_some(),
+                self.editor_group(1),
+                VStack::new(())
+            ),
+        )
+        .axis(if self.split_down.get() {
+            scarlet_ui::views::SplitAxis::Vertical
+        } else {
+            scarlet_ui::views::SplitAxis::Horizontal
+        })
+        .fraction(if self.second.get().is_some() {
+            0.5
+        } else {
+            1.0
+        })
+        .min_first(if self.split_down.get() { 100.0 } else { 180.0 })
+        .min_second(if self.second.get().is_some() {
+            if self.split_down.get() { 100.0 } else { 180.0 }
+        } else {
+            0.0
+        })
+        .divider_colors(theme.colors().border, theme.colors().accent)
+        .frame(f32::INFINITY, f32::INFINITY)
+    }
+    fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
+        vstack! { self.tabs_view(group), self.editor_view(self.group_id(group), group), }
+            .spacing(0.0)
+            .frame(f32::INFINITY, f32::INFINITY)
+            .key(format!("editor-group-{group}"))
     }
     fn bottom_panel(&self) -> impl View + Clone + use<> {
         let close = self.clone();
@@ -129,12 +173,12 @@ impl App {
             self.terminal.view_with_font(self.editor_font.clone()),
         }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY),VStack::new(()))
     }
-    fn tabs_view(&self) -> impl View + Clone + use<> {
+    fn tabs_view(&self, group: usize) -> impl View + Clone + use<> {
         let theme = self.theme.get();
-        let active = self.active_id();
+        let active = self.group_id(group);
         let summaries = {
             let rt = self.runtime.lock().unwrap();
-            rt.workspace.documents.iter().map(|doc| {
+            rt.workspace.documents.iter().filter(|doc| rt.group_tabs[group].contains(&doc.id)).map(|doc| {
                 let saving = matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id, .. }) if *id == doc.id);
                 (doc.id, doc.path.clone(), format!("{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if saving { " …" } else { "" }))
             }).collect::<Vec<_>>()
@@ -152,9 +196,9 @@ impl App {
             hstack! {
                 Button::new(label).header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).font_size(13.0).padding(7.0)
                     .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Small)
-                    .background_color(background).on_click(move || select.activate(id)).frame(width - 28.0, 32.0),
+                    .background_color(background).on_click(move || {select.focus_group(group); select.activate(id);}).frame(width - 28.0, 32.0),
                 Button::new("×").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).padding(4.0).background_color(background)
-                    .on_click(move || close.request_close(Some(id))).frame(28.0, 32.0),
+                    .on_click(move || {close.focus_group(group); close.request_close(Some(id));}).frame(28.0, 32.0),
             }.spacing(0.0).frame(width, 32.0).background(background).key(id)
         }).collect::<Vec<_>>();
         ScrollView::new(HStack::new(ViewCollection(tabs)).spacing(0.0))
@@ -164,8 +208,8 @@ impl App {
             .frame(f32::INFINITY, 34.0)
             .background(theme.colors().surface)
     }
-    fn editor_view(&self, id: DocumentId) -> impl View + Clone + use<> {
-        let bindings = self.bindings(id).unwrap();
+    fn editor_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
+        let bindings = self.bindings_for(id, group).unwrap();
         let edited = self.clone();
         let keys = self.clone();
         let selection = bindings.selection.clone();
@@ -200,12 +244,27 @@ impl App {
         let editor = TextView::with_document(bindings.document, bindings.selection)
             .text_spans(styles)
             .diagnostic_spans(self.language_diagnostics(id))
-            .caret_rect_state(self.caret_rect.clone())
-            .on_hover(move |hit| {
-                hovering.pointer_hover(id, hit.map(|hit| (hit.byte_offset, hit.position)))
+            .caret_rect_state(if self.focused_group.get() == group {
+                self.caret_rect.clone()
+            } else {
+                self.inactive_caret_rect.clone()
             })
-            .on_modified_click(move |hit| definition.definition_at(id, hit.byte_offset))
-            .autofocus(!self.find_open.get())
+            .on_hover(move |hit| {
+                if hovering.focused_group.get() == group {
+                    hovering.pointer_hover(id, hit.map(|hit| (hit.byte_offset, hit.position)))
+                }
+            })
+            .on_modified_click(move |hit| {
+                definition.focus_group(group);
+                definition.definition_at(id, hit.byte_offset);
+            })
+            .autofocus(
+                self.focused_group.get() == group
+                    && !self.find_open.get()
+                    && !self.nav.is_open()
+                    && !self.project.wants_focus()
+                    && !self.language_rename_open(),
+            )
             .scroll_state(bindings.scroll)
             .wrap_mode(WrapMode::None)
             .line_numbers(true)
@@ -240,7 +299,7 @@ impl App {
                     event,
                     Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })
                 ) {
-                    keys.terminal.blur();
+                    keys.focus_group(group);
                 }
                 if !keys.editable(id)
                     && matches!(
@@ -257,6 +316,9 @@ impl App {
                     doc.editor.moved(selection.get());
                 }
                 if let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event {
+                    if keys.code_edit_key(*keycode, *modifiers) {
+                        return true;
+                    }
                     if modifiers.primary() {
                         match keycode {
                             KeyCode::Char('z' | 'Z') => keys.undo(modifiers.shift),
@@ -279,9 +341,9 @@ impl App {
                     .color(theme.colors().muted).padding(6.0),
                 VStack::new(())),
             hstack! {
-                ZStack::new((editor,self.language_popup(),if_view!(self.find_open.get(),super::popup::Anchored::top_right(self.find_view()),VStack::new(())))).alignment(Alignment::TopLeading)
+                ZStack::new((editor,if_view!(self.focused_group.get()==group,self.language_popup(),VStack::new(())),if_view!(self.find_open.get() && self.focused_group.get()==group,super::popup::Anchored::top_right(self.find_view()),VStack::new(())))).alignment(Alignment::TopLeading)
                     .frame(f32::INFINITY,f32::INFINITY),
-                kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme).enabled(self.minimap_visible.get()).line_height(self.editor_font.as_ref().map_or_else(||scarlet_ui::graphics::line_height_sized(14.0),|font|scarlet_ui::graphics::line_height_sized_with_font_stack(14.0,font)) as f32).view(),
+                kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme).width(if self.second.get().is_some() {54.0} else {100.0}).enabled(self.minimap_visible.get()).line_height(self.editor_font.as_ref().map_or_else(||scarlet_ui::graphics::line_height_sized(14.0),|font|scarlet_ui::graphics::line_height_sized_with_font_stack(14.0,font)) as f32).view(),
             }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY),
         }
         .spacing(0.0)
@@ -335,19 +397,29 @@ impl App {
         let replace = self.clone();
         let all = self.clone();
         let close = self.clone();
+        let case = self.clone();
+        let word = self.clone();
+        let regex = self.clone();
+        let options = self.find_options.get();
         vstack! {
             hstack! {
-                TextField::new(self.query.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).border_color(theme.colors().border).placeholder("Find (match case)").autofocus(true)
+                TextField::new(self.query.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).placeholder("Find").autofocus(true)
                     .on_submit(move || submit.find(false)).frame_width(f32::INFINITY),
                 Button::new("Previous").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || previous.find(true)),
                 Button::new("Next").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || next.find(false)),
                 Button::new("×").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || close.find_open.set(false)),
             }.spacing(6.0),
             hstack! {
-                TextField::new(self.replacement.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).border_color(theme.colors().border).placeholder("Replace with").frame_width(f32::INFINITY),
+                TextField::new(self.replacement.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).placeholder("Replace with").frame_width(f32::INFINITY),
                 Button::new("Replace").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || replace.replace_match()),
                 Button::new("Replace All").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || all.replace_all()),
             }.spacing(6.0),
+            hstack! {
+                Button::new("Aa").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(if options.match_case {theme.colors().selection} else {theme.colors().surface}).on_click(move ||case.find_options.update(|o| o.match_case = !o.match_case)),
+                Button::new("Whole Word").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(if options.whole_word {theme.colors().selection} else {theme.colors().surface}).on_click(move ||word.find_options.update(|o| o.whole_word = !o.whole_word)),
+                Button::new(".*").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(if options.regex {theme.colors().selection} else {theme.colors().surface}).on_click(move ||regex.find_options.update(|o| o.regex = !o.regex)),
+                Spacer::new(),
+            }.spacing(4.0),
             Text::from_state(self.search_status.clone()).font_size(11.0).color(theme.colors().muted),
         }.alignment(Alignment::Leading).spacing(4.0).padding(8.0).background(theme.colors().surface)
     }
@@ -375,7 +447,7 @@ impl App {
     }
     fn item(&self, id: &str, label: &str, shortcut: &str, action: fn(&App)) -> MenuEntry {
         let app = self.clone();
-        let shortcut = if cfg!(target_os = "macos") && id != "completion" {
+        let shortcut = if cfg!(target_os = "macos") && !matches!(id, "completion" | "go-to-line") {
             shortcut.replacen("Ctrl+", "Cmd+", 1)
         } else {
             shortcut.into()
@@ -403,6 +475,7 @@ impl App {
                 ),
                 MenuEntry::Separator,
                 self.item("save", "Save", "Ctrl+S", App::save),
+                self.item("save-all", "Save All", "Ctrl+Alt+S", App::save_all),
                 self.item("save-as", "Save As…", "Ctrl+Shift+S", |a| {
                     a.picker(DialogPurpose::Save(a.active_id()))
                 }),
@@ -423,7 +496,38 @@ impl App {
                 self.item("paste", "Paste", "Ctrl+V", App::paste),
                 self.item("select-all", "Select All", "Ctrl+A", App::select_all),
                 MenuEntry::Separator,
+                self.item("toggle-comment", "Toggle Line Comment", "Ctrl+/", |a| {
+                    a.edit_command(super::editing_ui::Command::Comment)
+                }),
+                self.item("indent", "Indent Line", "Ctrl+]", |a| {
+                    a.edit_command(super::editing_ui::Command::Indent)
+                }),
+                self.item("outdent", "Outdent Line", "Ctrl+[", |a| {
+                    a.edit_command(super::editing_ui::Command::Outdent)
+                }),
+                self.item("move-line-up", "Move Line Up", "Alt+Up", |a| {
+                    a.edit_command(super::editing_ui::Command::MoveUp)
+                }),
+                self.item("move-line-down", "Move Line Down", "Alt+Down", |a| {
+                    a.edit_command(super::editing_ui::Command::MoveDown)
+                }),
+                self.item("duplicate-line-up", "Copy Line Up", "Alt+Shift+Up", |a| {
+                    a.edit_command(super::editing_ui::Command::DuplicateUp)
+                }),
+                self.item(
+                    "duplicate-line-down",
+                    "Copy Line Down",
+                    "Alt+Shift+Down",
+                    |a| a.edit_command(super::editing_ui::Command::DuplicateDown),
+                ),
+                MenuEntry::Separator,
                 self.item("find", "Find…", "Ctrl+F", App::show_find),
+                self.item(
+                    "search-project",
+                    "Find in Files…",
+                    "Ctrl+Shift+F",
+                    App::show_project_search,
+                ),
                 self.item(
                     "replace",
                     "Replace…",
@@ -440,6 +544,34 @@ impl App {
                 }),
             ]),
             MenuItemModel::new("view", "View").children(vec![
+                self.item("quick-open", "Quick Open…", "Ctrl+P", App::show_quick_open),
+                self.item(
+                    "command-palette",
+                    "Command Palette…",
+                    "Ctrl+Shift+P",
+                    App::show_commands,
+                ),
+                self.item("go-to-line", "Go to Line…", "Ctrl+G", App::show_go_to_line),
+                MenuEntry::Separator,
+                self.item("split-right", "Split Editor Right", "Ctrl+\\", |a| {
+                    a.split_editor(false)
+                }),
+                self.item("split-down", "Split Editor Down", "Ctrl+Shift+\\", |a| {
+                    a.split_editor(true)
+                }),
+                self.item(
+                    "focus-other-group",
+                    "Focus Other Editor Group",
+                    "",
+                    App::focus_other_group,
+                ),
+                self.item(
+                    "close-group",
+                    "Close Second Editor Group",
+                    "",
+                    App::close_split,
+                ),
+                MenuEntry::Separator,
                 self.item("theme-light", "Color Theme: Light", "", |a| {
                     a.set_theme(kureha_code::theme::Theme::Light)
                 }),
@@ -465,6 +597,25 @@ impl App {
                 ),
             ]),
             MenuItemModel::new("code", "Code").children(vec![
+                self.item(
+                    "format",
+                    "Format Document",
+                    "Alt+Shift+F",
+                    App::format_document,
+                ),
+                self.item(
+                    "rename",
+                    "Rename Symbol in Current File…",
+                    "F2",
+                    App::show_rename,
+                ),
+                self.item(
+                    "references",
+                    "Find References",
+                    "Shift+F12",
+                    App::find_references,
+                ),
+                MenuEntry::Separator,
                 self.item("completion", "Completion", "Ctrl+Space", |a| {
                     a.language_request("textDocument/completion")
                 }),

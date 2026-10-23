@@ -4,9 +4,153 @@ use super::*;
 use scarlet_ui::clipboard::{ClipboardError, ClipboardProvider};
 use std::time::{Duration, Instant};
 
+#[test]
+fn shifted_split_shortcut_accepts_logical_pipe_character() {
+    use scarlet_ui::pipeline::RenderingPipeline;
+    let app = test_app("first\nsecond", None, false);
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_paint_enabled(false);
+    pipeline.set_root(
+        Window::new("Editor", app.content())
+            .decorated(false)
+            .size(Size::new(1100.0, 760.0))
+            .create_element(),
+    );
+    pipeline.layout_initial();
+    pipeline.render();
+    let mut modifiers = scarlet_ui::event::KeyModifiers::empty();
+    if cfg!(target_os = "macos") {
+        modifiers.super_key = true;
+    } else {
+        modifiers.control = true;
+    }
+    modifiers.shift = true;
+    pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+        keycode: KeyCode::Char('|'),
+        modifiers,
+    }));
+    assert!(app.split_down.get());
+    assert_eq!(app.second.get(), Some(app.group_id(0)));
+    pipeline.teardown();
+}
+
+#[test]
+fn split_editors_share_text_and_undo_but_keep_tabs_selection_and_scroll_independent() {
+    let app = test_app("first\nsecond\nthird", Some("RIGHT"), false);
+    let id = app.active_id();
+    let left = app.bindings(id).unwrap();
+    left.selection.set(TextSelection::collapsed(3));
+    left.scroll.set(TextViewScroll { x: 10.0, y: 42.0 });
+    app.split_editor(false);
+    let right = app.bindings(id).unwrap();
+    right.selection.set(TextSelection {
+        anchor: TextPosition::new(6),
+        caret: TextPosition::new(12),
+    });
+    right.scroll.set(TextViewScroll { x: 0.0, y: 90.0 });
+    app.paste();
+    finish_clipboard(&app);
+    assert_eq!(left.document.get().as_str(), "first\nRIGHT\nthird");
+    assert_eq!(left.selection.get(), TextSelection::collapsed(3));
+    assert_eq!(left.scroll.get().y, 42.0);
+    assert_eq!(right.scroll.get().y, 90.0);
+    app.undo(false);
+    assert_eq!(left.document.get().as_str(), "first\nsecond\nthird");
+    assert_eq!(right.selection.get().normalized_range(), Some(6..12));
+    app.new_document();
+    let other = app.active_id();
+    assert_ne!(other, id);
+    assert_eq!(app.group_id(0), id);
+    assert_eq!(app.group_id(1), other);
+    app.activate(id);
+    app.select_all();
+    app.paste();
+    finish_clipboard(&app);
+    app.request_close(Some(id));
+    assert!(app.runtime.lock().unwrap().close.is_none());
+    assert!(
+        app.runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .get(id)
+            .unwrap()
+            .editor
+            .dirty()
+    );
+    assert_eq!(app.group_id(0), id);
+    app.close_split();
+    assert!(app.second.get().is_none());
+    assert!(app.runtime.lock().unwrap().group_tabs[0].contains(&other));
+}
+
 struct TestClipboard {
     text: Arc<Mutex<Option<String>>>,
     fail_write: bool,
+}
+
+#[test]
+fn save_all_writes_dirty_buffers_and_stops_before_overwriting_external_edits() {
+    let root = std::env::temp_dir().join(format!("kureha-save-all-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let app = App::new();
+    let mut ids = Vec::new();
+    for name in ["a.rs", "b.rs", "c.rs"] {
+        let path = root.join(name);
+        std::fs::write(&path, "before\n").unwrap();
+        let id = app.runtime.lock().unwrap().workspace.open(path, "before\n");
+        app.activate(id);
+        let doc = app.bindings(id).unwrap();
+        doc.selection.set(TextSelection::collapsed(0));
+        app.edit_command(super::editing_ui::Command::Indent);
+        ids.push(id);
+    }
+    std::fs::write(root.join("b.rs"), "external\n").unwrap();
+    app.save_all();
+    let until = Instant::now() + Duration::from_secs(5);
+    while app.runtime.lock().unwrap().job.is_some() {
+        app.poll();
+        assert!(Instant::now() < until);
+        thread::yield_now();
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("a.rs")).unwrap(),
+        "    before\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("b.rs")).unwrap(),
+        "external\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("c.rs")).unwrap(),
+        "before\n"
+    );
+    assert!(app.status.get().contains("changed on disk"));
+    assert!(app.runtime.lock().unwrap().save_all.is_empty());
+    std::fs::write(root.join("b.rs"), "before\n").unwrap();
+    app.save_all();
+    while app.runtime.lock().unwrap().job.is_some() {
+        app.poll();
+        assert!(Instant::now() < until);
+        thread::yield_now();
+    }
+    for id in ids {
+        assert!(
+            !app.runtime
+                .lock()
+                .unwrap()
+                .workspace
+                .get(id)
+                .unwrap()
+                .editor
+                .dirty()
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("c.rs")).unwrap(),
+        "    before\n"
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 impl ClipboardProvider for TestClipboard {
@@ -418,7 +562,7 @@ fn file_jobs_block_new_commands_and_drain_stale_clipboard_results() {
             id: app.active_id(),
             revision,
         },
-        move || Ok(Completion::Save(PathBuf::from("saved.txt"))),
+        move || Ok(Completion::Save(PathBuf::from("saved.txt"), "first".into())),
     );
     let deadline = Instant::now() + Duration::from_secs(3);
     while !app.editable(app.active_id()) {
@@ -618,7 +762,7 @@ fn discard_closes_only_target_and_save_completion_updates_original_tab() {
             id: first,
             revision,
         },
-        Ok(Completion::Save(PathBuf::from("first.txt"))),
+        Ok(Completion::Save(PathBuf::from("first.txt"), "first".into())),
     );
     assert_eq!(app.active_id(), second);
     {
@@ -686,7 +830,7 @@ fn saving_freezes_only_its_target_and_cannot_clean_newer_revision() {
             id: first,
             revision,
         },
-        Ok(Completion::Save("first.txt".into())),
+        Ok(Completion::Save("first.txt".into(), "first".into())),
     );
     assert!(
         app.runtime
@@ -1131,4 +1275,242 @@ fn clicking_document_returns_shortcuts_from_terminal_to_editor() {
         "Find shortcut did not reach document after leaving terminal"
     );
     pipeline.teardown();
+}
+
+fn lifecycle_document(app: &App, name: &str) -> DocumentId {
+    let id = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .open(PathBuf::from(name), "first\nsecond\nthird");
+    app.activate(id);
+    id
+}
+
+fn finish_lifecycle_open(app: &App) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.runtime.lock().unwrap().job.is_some() {
+        app.poll();
+        assert!(Instant::now() < deadline, "file open did not complete");
+        thread::yield_now();
+    }
+}
+
+#[test]
+fn split_lifecycle_remove_right_tab_preserves_left_and_uses_right_neighbors() {
+    for close_active in [false, true] {
+        let app = test_app("first\nsecond\nthird", None, false);
+        let left = app.active_id();
+        let left_view = app.bindings_for(left, 0).unwrap();
+        left_view.selection.set(TextSelection::collapsed(2));
+        app.split_editor(false);
+        let background = lifecycle_document(&app, "background.txt");
+        let current = lifecycle_document(&app, "current.txt");
+        let next = lifecycle_document(&app, "next.txt");
+        app.activate(current);
+        let current_view = app.bindings_for(current, 1).unwrap();
+        current_view.selection.set(TextSelection::collapsed(7));
+        let next_view = app.bindings_for(next, 1).unwrap();
+        next_view.selection.set(TextSelection::collapsed(9));
+        let closed = if close_active { current } else { background };
+
+        app.request_close(Some(closed));
+
+        assert_eq!(app.group_id(0), left);
+        assert_eq!(app.group_id(1), if close_active { next } else { current });
+        assert_eq!(app.focused_group.get(), 1);
+        assert_eq!(left_view.selection.get(), TextSelection::collapsed(2));
+        assert_eq!(next_view.selection.get(), TextSelection::collapsed(9));
+        if !close_active {
+            assert_eq!(current_view.selection.get(), TextSelection::collapsed(7));
+        }
+        let rt = app.runtime.lock().unwrap();
+        assert!(rt.workspace.get(closed).is_none());
+        assert_eq!(rt.group_tabs[0], vec![left]);
+        assert!(rt.group_tabs[1].contains(&app.second.get().unwrap()));
+    }
+}
+
+#[test]
+fn split_lifecycle_remove_left_tab_never_selects_a_right_only_document() {
+    let app = test_app("first\nsecond\nthird", None, false);
+    let left = app.active_id();
+    let closed = lifecycle_document(&app, "left-only.txt");
+    app.activate(left);
+    app.split_editor(false);
+    let right = lifecycle_document(&app, "right-only.txt");
+    let right_view = app.bindings_for(right, 1).unwrap();
+    right_view.selection.set(TextSelection::collapsed(8));
+    app.focus_group(0);
+    app.activate(closed);
+
+    app.request_close(Some(closed));
+
+    assert_eq!(app.group_id(0), left);
+    assert_eq!(app.group_id(1), right);
+    assert_eq!(app.focused_group.get(), 0);
+    assert_eq!(right_view.selection.get(), TextSelection::collapsed(8));
+    let rt = app.runtime.lock().unwrap();
+    assert_eq!(rt.group_tabs[0], vec![left]);
+    assert_eq!(rt.group_tabs[1], vec![left, right]);
+}
+
+#[test]
+fn split_lifecycle_removing_last_group_tab_keeps_the_other_group() {
+    for group in [0, 1] {
+        let app = test_app("first\nsecond\nthird", None, false);
+        let left = app.active_id();
+        app.split_editor(false);
+        let right = lifecycle_document(&app, "right-only.txt");
+        app.request_close(Some(left));
+        let right_view = app.bindings_for(right, 1).unwrap();
+        right_view.selection.set(TextSelection::collapsed(8));
+        app.focus_group(group);
+
+        app.request_close(Some(if group == 0 { left } else { right }));
+
+        if group == 0 {
+            assert_ne!(app.group_id(0), right);
+            assert_ne!(app.group_id(0), left);
+            assert_eq!(app.group_id(1), right);
+            assert_eq!(right_view.selection.get(), TextSelection::collapsed(8));
+            assert_eq!(app.runtime.lock().unwrap().group_tabs[1], vec![right]);
+        } else {
+            assert_eq!(app.group_id(0), left);
+            assert!(app.second.get().is_none());
+            assert!(app.runtime.lock().unwrap().group_tabs[1].is_empty());
+        }
+        assert_eq!(app.focused_group.get(), 0);
+    }
+}
+
+#[test]
+fn split_lifecycle_closing_background_shared_tab_keeps_active_selection() {
+    let app = test_app("first\nsecond\nthird", None, false);
+    let shared = app.active_id();
+    let other = lifecycle_document(&app, "other.txt");
+    let current = lifecycle_document(&app, "current.txt");
+    app.activate(shared);
+    app.split_editor(false);
+    let right_view = app.bindings_for(shared, 1).unwrap();
+    right_view.selection.set(TextSelection::collapsed(8));
+    app.focus_group(0);
+    app.activate(current);
+    let current_view = app.bindings_for(current, 0).unwrap();
+    current_view.selection.set(TextSelection::collapsed(3));
+
+    app.request_close(Some(shared));
+
+    assert_eq!(app.group_id(0), current);
+    assert_eq!(app.group_id(1), shared);
+    assert_eq!(app.focused_group.get(), 0);
+    assert_eq!(current_view.selection.get(), TextSelection::collapsed(3));
+    assert_eq!(right_view.selection.get(), TextSelection::collapsed(8));
+    let rt = app.runtime.lock().unwrap();
+    assert!(rt.workspace.get(shared).is_some());
+    assert_eq!(rt.group_tabs[0], vec![other, current]);
+    assert_eq!(rt.group_tabs[1], vec![shared]);
+}
+
+#[test]
+fn split_lifecycle_async_open_stays_in_origin_without_stealing_focus() {
+    let path =
+        std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main_tests.rs"))
+            .unwrap();
+    for origin in [0, 1] {
+        let app = test_app("first\nsecond\nthird", None, false);
+        let left = app.active_id();
+        app.split_editor(false);
+        let right = lifecycle_document(&app, "right-only.txt");
+        let left_view = app.bindings_for(left, 0).unwrap();
+        let right_view = app.bindings_for(right, 1).unwrap();
+        left_view.selection.set(TextSelection::collapsed(2));
+        right_view.selection.set(TextSelection::collapsed(8));
+        app.focus_group(origin);
+        app.open(path.clone());
+        assert!(matches!(
+            app.runtime.lock().unwrap().job.as_ref().map(|job| &job.operation),
+            Some(FileOperation::Open { group }) if *group == origin
+        ));
+        app.focus_group(1 - origin);
+        let focused = app.active_id();
+
+        finish_lifecycle_open(&app);
+
+        let opened = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .find_path(&path)
+            .unwrap();
+        assert_eq!(app.group_id(origin), opened);
+        assert_eq!(app.focused_group.get(), 1 - origin);
+        assert_eq!(app.active_id(), focused);
+        assert_eq!(left_view.selection.get(), TextSelection::collapsed(2));
+        assert_eq!(right_view.selection.get(), TextSelection::collapsed(8));
+        let rt = app.runtime.lock().unwrap();
+        assert!(rt.group_tabs[origin].contains(&opened));
+        assert!(!rt.group_tabs[1 - origin].contains(&opened));
+    }
+}
+
+#[test]
+fn split_lifecycle_async_open_after_group_close_is_a_background_tab() {
+    let path =
+        std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main_tests.rs"))
+            .unwrap();
+    let app = test_app("first\nsecond\nthird", None, false);
+    let left = app.active_id();
+    let left_view = app.bindings_for(left, 0).unwrap();
+    left_view.selection.set(TextSelection::collapsed(3));
+    app.split_editor(false);
+    app.open(path.clone());
+    app.close_split();
+
+    finish_lifecycle_open(&app);
+
+    let rt = app.runtime.lock().unwrap();
+    let opened = rt.workspace.find_path(&path).unwrap();
+    assert!(rt.group_tabs[0].contains(&opened));
+    assert!(rt.group_tabs[1].is_empty());
+    drop(rt);
+    assert!(app.second.get().is_none());
+    assert_eq!(app.focused_group.get(), 0);
+    assert_eq!(app.active_id(), left);
+    assert_eq!(left_view.selection.get(), TextSelection::collapsed(3));
+}
+
+#[test]
+fn split_selections_follow_paste_indentation_and_undo_redo() {
+    let app = test_app("abc\ndef", Some("XX"), false);
+    let id = app.active_id();
+    let left = app.bindings(id).unwrap();
+    left.selection.set(TextSelection {
+        anchor: TextPosition::new(1),
+        caret: TextPosition::new(2),
+    });
+    app.split_editor(false);
+    let right = app.bindings(id).unwrap();
+    right.selection.set(TextSelection::collapsed(0));
+    app.paste();
+    finish_clipboard(&app);
+    assert_eq!(left.selection.get().normalized_range(), Some(3..4));
+    app.undo(false);
+    assert_eq!(left.selection.get().normalized_range(), Some(1..2));
+    app.undo(true);
+    assert_eq!(left.selection.get().normalized_range(), Some(3..4));
+    app.undo(false);
+    right.selection.set(TextSelection {
+        anchor: TextPosition::new(0),
+        caret: TextPosition::new(7),
+    });
+    app.edit_command(super::editing_ui::Command::Indent);
+    assert_eq!(left.document.get().as_str(), "    abc\n    def");
+    assert_eq!(left.selection.get().normalized_range(), Some(5..6));
+    app.undo(false);
+    assert_eq!(left.selection.get().normalized_range(), Some(1..2));
+    app.undo(true);
+    assert_eq!(left.selection.get().normalized_range(), Some(5..6));
 }
