@@ -34,6 +34,8 @@ impl View for LiveView {
             &self.terminal.shared.cursor,
             &self.terminal.shared.focused,
             &self.terminal.shared.palette,
+            &self.terminal.shared.preedit,
+            &self.terminal.shared.status,
         ]
     }
 

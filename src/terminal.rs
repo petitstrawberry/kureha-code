@@ -5,6 +5,7 @@
 //! `open(folder)` starts a fresh shell in that folder. Hiding the panel may keep
 //! the session alive; `close()` or dropping the last Terminal releases it.
 mod backend;
+mod ime;
 mod palette;
 pub use palette::TerminalPalette;
 mod screen;
@@ -92,6 +93,8 @@ struct Shared {
     cursor: State<TextGridCursor>,
     status: State<TerminalStatus>,
     focused: State<bool>,
+    preedit: State<ime::Preedit>,
+    text_input: State<Option<scarlet_ui::element::TextInputElementState>>,
     application_cursor: AtomicBool,
     bracketed_paste: AtomicBool,
     generation: AtomicU64,
@@ -120,6 +123,8 @@ impl Terminal {
                 cursor: State::new(generate_state_id(), TextGridCursor::new(0, 0)),
                 status: State::new(generate_state_id(), TerminalStatus::Idle),
                 focused: State::new(generate_state_id(), false),
+                preedit: State::new(generate_state_id(), ime::Preedit::default()),
+                text_input: State::new(generate_state_id(), None),
                 application_cursor: AtomicBool::new(false),
                 bracketed_paste: AtomicBool::new(false),
                 generation: AtomicU64::new(0),
@@ -231,6 +236,7 @@ impl Terminal {
         self.shared.focused.set(true);
     }
     pub fn blur(&self) {
+        self.clear_preedit();
         self.shared.focused.set(false);
     }
 
@@ -242,7 +248,7 @@ impl Terminal {
         self.shared.generation.fetch_add(1, Ordering::Relaxed);
         self.shared.session.lock().unwrap().take();
         self.shared.status.set(TerminalStatus::Closed);
-        self.shared.focused.set(false);
+        self.blur();
     }
     /// Resize is coalesced and bounded, including when a pane is collapsed.
     pub fn resize(&self, columns: u16, rows: u16) {
@@ -308,6 +314,18 @@ impl Terminal {
         })
     }
     pub fn handle_key(&self, event: KeyEvent) -> bool {
+        if self.composing() {
+            if matches!(
+                event,
+                KeyEvent::Pressed {
+                    keycode: KeyCode::Escape,
+                    ..
+                }
+            ) {
+                self.clear_preedit();
+            }
+            return true;
+        }
         if let KeyEvent::Pressed {
             keycode: KeyCode::PageUp | KeyCode::PageDown,
             modifiers,
@@ -358,13 +376,13 @@ impl Terminal {
             .font_size(14.0)
             .background_color(palette.background)
             .cursor_color(palette.cursor)
-            .cursor(if self.focused() {
+            .cursor(if self.focused() && !self.composing() {
                 Some(self.shared.cursor.get())
             } else {
                 None
             });
-        if let Some(font) = font {
-            grid = grid.font_stack(font);
+        if let Some(font) = &font {
+            grid = grid.font_stack(font.clone());
         }
         let content = grid
             .on_event(move |event| {
@@ -373,16 +391,17 @@ impl Terminal {
                 }
                 match event {
                     Event::Keyboard(key) => terminal.handle_key(*key),
-                    Event::TextInputCommit { text, .. } => terminal.send_input(text.as_bytes()),
-                    _ => false,
+                    _ => terminal.ime_event(event),
                 }
             })
             .focusable(self.shared.focused.clone())
             .tab_input(true)
+            .text_input(self.shared.text_input.clone())
             .frame(f32::INFINITY, f32::INFINITY);
         screen::MeasuredView {
             terminal: self.clone(),
             cell_size,
+            font,
             content,
         }
     }

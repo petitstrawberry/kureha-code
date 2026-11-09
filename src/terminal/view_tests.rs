@@ -262,3 +262,145 @@ fn tab_and_shift_tab_reach_the_pty_queue_and_keep_keyboard_focus() {
     pipeline.teardown();
     terminal.close();
 }
+
+#[test]
+fn ime_composition_stays_local_commits_utf8_once_and_cancels_on_blur() {
+    use scarlet_ui::event::KeyModifiers;
+    let terminal = Terminal::new();
+    let inbox = Arc::new(Mutex::new(Inbox::default()));
+    terminal.shared.status.set(TerminalStatus::Running);
+    *terminal.shared.session.lock().unwrap() = Some(Session {
+        cancel: Arc::new(AtomicBool::new(false)),
+        inbox: inbox.clone(),
+        output: Arc::new(Mutex::new(None)),
+    });
+    terminal.focus();
+    let font = crate::fonts::editor_stack();
+    let cell = view::cell_size(font.as_ref());
+    terminal.shared.cursor.set(TextGridCursor::new(4, 2));
+    let window = |width| {
+        Window::new("IME", terminal.view_with_font(font.clone()).padding(12.0))
+            .decorated(false)
+            .size(Size::new(width, 180.0))
+    };
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_root(window(480.0).create_element());
+    pipeline.layout_initial();
+    let original = pixels(&mut pipeline);
+    let initial = pipeline
+        .focused_text_input_state()
+        .expect("IME must be enabled for the focused terminal");
+    assert_eq!(
+        initial.cursor_rect.origin,
+        scarlet_ui::Point::new(12.0 + 4.0 * cell.width, 12.0 + 2.0 * cell.height)
+    );
+    assert!(initial.surrounding_text.is_empty());
+    let preedit = |text: &str, cursor, anchor| Event::TextInputPreedit {
+        context_id: 0,
+        serial: 1,
+        text: text.into(),
+        cursor_byte: cursor,
+        anchor_byte: anchor,
+        spans: vec![],
+    };
+    assert!(pipeline.handle_event(&preedit("にほんご", 12, 0)));
+    let composed = pixels(&mut pipeline);
+    assert_ne!(
+        composed, original,
+        "preedit must be visible before the shell echoes it"
+    );
+    assert!(terminal.composing());
+    assert!(inbox.lock().unwrap().input.is_empty());
+    // Navigation, conversion, confirmation and duplicate character events
+    // belong to the IME until composition is committed or cancelled.
+    for event in [
+        KeyEvent::Pressed {
+            keycode: KeyCode::Left,
+            modifiers: KeyModifiers::empty(),
+        },
+        KeyEvent::Pressed {
+            keycode: KeyCode::Space,
+            modifiers: KeyModifiers::empty(),
+        },
+        KeyEvent::Pressed {
+            keycode: KeyCode::Enter,
+            modifiers: KeyModifiers::empty(),
+        },
+        KeyEvent::Char { c: 'n' },
+    ] {
+        assert!(pipeline.handle_event(&Event::Keyboard(event)));
+    }
+    assert!(inbox.lock().unwrap().input.is_empty());
+    assert!(pipeline.handle_event(&preedit("日本語", 9, 0)));
+    pipeline.render();
+    assert!(pipeline.handle_event(&Event::TextInputCommit {
+        context_id: 0,
+        serial: 2,
+        text: "日本語".into()
+    }));
+    assert!(!terminal.composing());
+    assert_eq!(
+        inbox.lock().unwrap().input.drain(..).collect::<Vec<_>>(),
+        "日本語".as_bytes()
+    );
+    assert_eq!(
+        pixels(&mut pipeline),
+        original,
+        "commit must clear the local overlay"
+    );
+    assert!(pipeline.handle_event(&preedit("取消", 6, 0)));
+    pipeline.render();
+    assert!(pipeline.handle_event(&preedit("", 0, 0)));
+    assert_eq!(pixels(&mut pipeline), original);
+    assert!(inbox.lock().unwrap().input.is_empty());
+    assert!(pipeline.handle_event(&preedit("再変換", 9, 0)));
+    pipeline.render();
+    terminal.blur();
+    pipeline.render();
+    assert!(!terminal.composing());
+    assert!(pipeline.focused_text_input_state().is_none());
+    terminal.focus();
+    pipeline.render();
+    assert!(pipeline.focused_text_input_state().is_some());
+    assert!(!terminal.composing());
+    // Candidate positioning follows a terminal cursor update and a resized,
+    // reparented viewport, including a composition wider than that viewport.
+    terminal.shared.cursor.set(TextGridCursor::new(28, 5));
+    pipeline
+        .element_tree_mut()
+        .root_mut()
+        .unwrap()
+        .update(&window(240.0));
+    pipeline.layout_initial();
+    pipeline.render();
+    assert!(pipeline.handle_event(&preedit(&"長い変換文字列".repeat(12), u32::MAX, 1)));
+    pipeline.render();
+    let current = pipeline.focused_text_input_state().unwrap();
+    assert!(current.cursor_rect.origin.x >= current.input_rect.origin.x);
+    assert!(
+        current.cursor_rect.origin.x + current.cursor_rect.size.width
+            <= current.input_rect.origin.x + current.input_rect.size.width
+    );
+    assert!(current.cursor_rect.origin.y >= current.input_rect.origin.y);
+    assert!(
+        current.cursor_rect.origin.y + current.cursor_rect.size.height
+            <= current.input_rect.origin.y + current.input_rect.size.height
+    );
+    assert!(inbox.lock().unwrap().input.is_empty());
+    assert!(pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+        keycode: KeyCode::Escape,
+        modifiers: KeyModifiers::empty()
+    })));
+    pipeline.render();
+    assert!(!terminal.composing());
+    assert!(inbox.lock().unwrap().input.is_empty());
+    // Idle IME metadata must not keep scheduling new terminal frames.
+    for _ in 0..3 {
+        pipeline.render();
+    }
+    assert!(!pipeline.has_dirty());
+    terminal.close();
+    pipeline.render();
+    assert!(pipeline.focused_text_input_state().is_none());
+    pipeline.teardown();
+}

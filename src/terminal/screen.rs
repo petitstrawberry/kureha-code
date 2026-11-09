@@ -132,6 +132,7 @@ impl Queries {
 pub(super) struct MeasuredView<V: View + Clone> {
     pub terminal: Terminal,
     pub cell_size: Size,
+    pub font: Option<scarlet_ui::FontStack>,
     pub content: V,
 }
 impl<V: View + Clone> View for MeasuredView<V> {
@@ -141,11 +142,16 @@ impl<V: View + Clone> View for MeasuredView<V> {
             |view| Measure {
                 terminal: view.terminal.clone(),
                 cell_size: view.cell_size,
+                font: view.font.clone(),
                 size: Size::ZERO,
             },
             |object, view| {
                 object.terminal = view.terminal.clone();
                 object.cell_size = view.cell_size;
+                object.font = view.font.clone();
+                object
+                    .terminal
+                    .sync_ime(object.size, object.cell_size, object.font.as_ref());
                 UpdateResult::Updated
             },
             |view| vec![view.content.clone_view()],
@@ -161,6 +167,7 @@ impl<V: View + Clone> View for MeasuredView<V> {
 struct Measure {
     terminal: Terminal,
     cell_size: Size,
+    font: Option<scarlet_ui::FontStack>,
     size: Size,
 }
 impl ElementRenderObject for Measure {
@@ -187,7 +194,17 @@ impl ElementRenderObject for Measure {
                 (self.size.height / self.cell_size.height) as u16,
             );
         }
+        self.terminal
+            .sync_ime(self.size, self.cell_size, self.font.as_ref());
         self.size
+    }
+    fn paint_overlay(
+        &self,
+        ctx: &mut scarlet_ui::renderer::PaintContext<'_>,
+        origin: scarlet_ui::Point,
+    ) -> bool {
+        self.terminal
+            .paint_preedit(ctx, origin, self.size, self.cell_size, self.font.as_ref())
     }
     fn size(&self) -> Size {
         self.size
