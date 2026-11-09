@@ -364,3 +364,8 @@ Validation on macOS AArch64:
   CUA's drag command timed out; a subsequent process sample was idle in the
   AppKit event loop. Native drag/back-button interaction is not claimed verified.
   Scarlet-native runtime testing remains outstanding.
+
+The minimap source marks subsequently changed from 80% to 40% opacity (also
+respecting any alpha in the syntax color). The viewport indicator remains at
+15% neutral fill. All 12 minimap tests and all 18 rendered fixtures passed again;
+Light/Monokai screenshots were refreshed after visual review.

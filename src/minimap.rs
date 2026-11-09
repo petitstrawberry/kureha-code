@@ -553,7 +553,7 @@ impl ElementRenderObject for SurfaceRenderer {
                         (mark.columns.len() as f32 * column_width).max(0.5),
                         bottom - top,
                     ),
-                    Color { a: 0.80, ..color },
+                    Color { a: color.a * 0.40, ..color },
                 );
             }
         }
