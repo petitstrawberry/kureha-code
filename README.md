@@ -41,4 +41,3 @@ cargo test --lib --bin kureha-code
 ```
 
 - [Scarlet bundle](platforms/scarlet/bundle.toml)
-- [Build and runtime validation](docs/validation.md)
