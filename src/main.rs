@@ -97,7 +97,7 @@ enum ClipboardJob {
 #[derive(Default)]
 struct Runtime {
     window_drag_requested: bool,
-    panel_return_focus: bool,
+    terminal_return_focus: Option<u64>,
     history: location_history::History,
     markdown: markdown_ui::Previews,
     image_zoom: BTreeMap<(DocumentId, usize), f32>,
@@ -129,8 +129,7 @@ struct App {
     theme_settings: Arc<Mutex<Option<theme_settings::Watcher>>>,
     minimap_visible: State<bool>,
     panel_visible: State<bool>,
-    panel_position: State<terminal_ui::PanelPosition>,
-    panel_fractions: State<[f32; 2]>,
+    panel_fraction: State<f32>,
     terminal: terminal_ui::Panel,
     panes: State<Vec<Option<TabId>>>,
     pane_layout: State<groups::PaneLayout>,
@@ -200,8 +199,7 @@ impl App {
             theme_settings: Arc::new(Mutex::new(None)),
             minimap_visible: State::new(generate_state_id(), true),
             panel_visible: State::new(generate_state_id(), false),
-            panel_position: State::new(generate_state_id(), terminal_ui::PanelPosition::Bottom),
-            panel_fractions: State::new(generate_state_id(), [0.70, 0.67]),
+            panel_fraction: State::new(generate_state_id(), 0.70),
             terminal: terminal_ui::Panel::new(),
             language_status: State::new(generate_state_id(), String::new()),
             language_anchor: State::new(generate_state_id(), Point::new(60.0, 30.0)),
@@ -396,7 +394,7 @@ impl App {
         let group = self.focused_group.get();
         let exists = {
             let mut rt = self.runtime.lock().unwrap();
-            let exists = rt.document_for_tab(id).is_some();
+            let exists = rt.document_for_tab(id).is_some() || self.terminal.for_tab(id).is_some();
             if exists && !rt.group_tabs[group].contains(&id) {
                 rt.group_tabs[group].push(id);
             }
@@ -404,7 +402,7 @@ impl App {
         };
         if exists {
             self.set_group_id(group, id);
-            self.blur_terminals();
+            self.focus_group_terminal(group);
         }
     }
     fn next_tab(&self, backwards: bool) {
@@ -479,6 +477,7 @@ impl App {
         if !self.group_exists(self.focused_group.get()) {
             self.focus_group(self.pane_order()[0]);
         }
+        self.focus_group_terminal(self.focused_group.get());
         self.invalidate_clipboard();
         self.dismiss_language_panel();
         self.update_position();
@@ -486,6 +485,9 @@ impl App {
     }
     fn request_close(&self, tab: Option<TabId>) {
         if let Some(id) = tab {
+            if self.close_terminal_tab(id) {
+                return;
+            }
             if self.close_shared_tab(id) {
                 return;
             }
@@ -1450,8 +1452,7 @@ impl View for App {
             &self.theme,
             &self.minimap_visible,
             &self.panel_visible,
-            &self.panel_position,
-            &self.panel_fractions,
+            &self.panel_fraction,
             &self.terminal.revision,
         ];
         listenables.extend(self.nav.listenables());

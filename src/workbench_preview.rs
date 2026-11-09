@@ -167,7 +167,11 @@ fn terminal_layout_preview() {
         "terminal-restored",
     ] {
         match scene {
-            "terminal-three-columns" => app.panel_position.set(terminal_ui::PanelPosition::Right),
+            "terminal-three-columns" => {
+                let id = app.terminal.active().unwrap().id;
+                app.new_terminal();
+                app.split_terminal_from_panel(id, None, tab_drag::Edge::Right);
+            }
             "terminal-hidden" => app.hide_panel(),
             "terminal-restored" => app.toggle_panel(),
             _ => {}
@@ -203,7 +207,9 @@ fn terminal_layout_preview() {
         }
     }
     pipeline.teardown();
-    terminal.close();
+    for session in app.terminal.sessions() {
+        session.terminal.close();
+    }
 }
 
 #[test]

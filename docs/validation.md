@@ -674,3 +674,24 @@ Native sgfx/wgpu typing checks covered source-only and preview-visible windows.
 The [method, timings and logs](performance/typing-20261110/measurement.md) record
 both the warm medians and the remaining maximum-frame spike; no claim of measured
 keyboard-to-display latency or universal worst-case performance is made.
+
+
+## Terminal Tab input and editor groups — 2026-11-10
+
+Tab and Shift+Tab now reach the terminal input queue through ScarletUI's
+opt-in `Focusable::tab_input` policy. The bottom panel remains fixed; individual
+sessions can move into existing editor tab strips, local splits or outer splits,
+and back into the panel without restarting their PTYs.
+
+- Kureha: 119 library + 106 application tests passed; 10 optional/manual tests ignored.
+- ScarletUI core at `8e8f4a3e`: 705 passed; five ignored.
+- Mounted event tests verify Tab/Shift+Tab focus and PTY queue bytes, plus input
+  before a panel-to-editor drag, after that drag and after returning to the panel.
+- Real PTY tests preserve shell variables across moves, keep hidden sessions alive,
+  isolate terminal closes and restore the correct focus after panel/palette use.
+  Splitting an editor terminal starts an independent shell; closing its group
+  moves the tabs to the neighboring group without ending the sessions.
+- [Editor terminal alongside the bottom panel](screenshots/terminal-editor-tabs.png)
+  was rendered and visually reviewed with ScarletUI's CPU validation pipeline.
+  Panel-hidden and restored layouts were also rendered; this is not a native GPU capture.
+- The locked, offline macOS release build passed. No new Linux, Windows or Scarlet runtime check was performed.

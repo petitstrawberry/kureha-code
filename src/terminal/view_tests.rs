@@ -213,3 +213,52 @@ fn terminal_palette_screenshot() {
     .unwrap();
     pipeline.teardown();
 }
+
+#[test]
+fn tab_and_shift_tab_reach_the_pty_queue_and_keep_keyboard_focus() {
+    use scarlet_ui::{Button, VStack, event::KeyModifiers};
+    let terminal = Terminal::new();
+    let inbox = Arc::new(Mutex::new(Inbox::default()));
+    terminal.shared.status.set(TerminalStatus::Running);
+    *terminal.shared.session.lock().unwrap() = Some(Session {
+        cancel: Arc::new(AtomicBool::new(false)),
+        inbox: inbox.clone(),
+        output: Arc::new(Mutex::new(None)),
+    });
+    terminal.focus();
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_root(
+        Window::new(
+            "Terminal input",
+            VStack::new((Button::new("Before"), terminal.view(), Button::new("After"))),
+        )
+        .decorated(false)
+        .size(Size::new(480.0, 240.0))
+        .create_element(),
+    );
+    pipeline.layout_initial();
+    pipeline.render();
+    for shift in [false, true, false] {
+        assert!(pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+            keycode: KeyCode::Tab,
+            modifiers: KeyModifiers {
+                shift,
+                ..KeyModifiers::empty()
+            }
+        })));
+        pipeline.render();
+        assert!(terminal.focused());
+    }
+    assert_eq!(
+        inbox
+            .lock()
+            .unwrap()
+            .input
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        b"\t\x1b[Z\t"
+    );
+    pipeline.teardown();
+    terminal.close();
+}

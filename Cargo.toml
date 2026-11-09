@@ -19,11 +19,11 @@ floem-editor-core = { git = "https://github.com/lapce/floem", rev = "31fa8f444c3
 scarlet_os = { package = "scarlet-os", git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3ac8c97289a28599bac22fca4ac26a5f9ca", default-features = false, features = ["std"] }
 scarlet_sys = { package = "scarlet-sys", git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3ac8c97289a28599bac22fca4ac26a5f9ca" }
 scarlet-fs = { git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3ac8c97289a28599bac22fca4ac26a5f9ca" }
-scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "34c2c08057f7be7579b9975c927e3aa13f9cfa3d", default-features = false, features = ["std", "platform-sws"] }
+scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "8e8f4a3e221b86ad6670d56f221975fabdc33757", default-features = false, features = ["std", "platform-sws"] }
 
 [target.'cfg(not(target_os = "scarlet"))'.dependencies]
 ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
-scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "34c2c08057f7be7579b9975c927e3aa13f9cfa3d", default-features = false, features = ["std", "platform-winit"] }
+scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "8e8f4a3e221b86ad6670d56f221975fabdc33757", default-features = false, features = ["std", "platform-winit"] }
 
 [target.'cfg(all(unix, not(target_os = "scarlet")))'.dependencies]
 libc = "0.2"

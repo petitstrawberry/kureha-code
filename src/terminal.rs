@@ -378,6 +378,7 @@ impl Terminal {
                 }
             })
             .focusable(self.shared.focused.clone())
+            .tab_input(true)
             .frame(f32::INFINITY, f32::INFINITY);
         screen::MeasuredView {
             terminal: self.clone(),

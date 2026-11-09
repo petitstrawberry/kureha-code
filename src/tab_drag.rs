@@ -26,31 +26,24 @@ pub(super) enum Edge {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Destination {
+    Panel,
     Insert(usize, usize),
     Split(usize, Edge),
     Outer(Edge),
 }
 #[derive(Clone, Copy)]
 struct Gesture {
-    group: usize,
+    group: Option<usize>,
     id: TabId,
     start: Point,
     dragging: bool,
     target: Option<Destination>,
-}
-#[derive(Clone, Copy)]
-struct PanelGesture {
-    start: Point,
-    target: Option<terminal_ui::PanelPosition>,
-    session: u64,
-    dragging: bool,
 }
 #[derive(Default)]
 struct Model {
     geometry: BTreeMap<RegionId, Rect>,
     gesture: Option<Gesture>,
     press: Option<Point>,
-    panel_drag: Option<PanelGesture>,
 }
 #[derive(Clone, Default)]
 pub(super) struct DragState(Arc<Mutex<Model>>);
@@ -64,35 +57,22 @@ impl App {
         let Some(panel) = geometry.get(&RegionId::Panel) else {
             return;
         };
-        let side = self.panel_position.get() == terminal_ui::PanelPosition::Right;
-        let panes = self
+        let panes: Vec<_> = self
             .pane_order()
             .iter()
             .filter_map(|g| geometry.get(&RegionId::Group(*g)))
-            .collect::<Vec<_>>();
+            .collect();
         let start = panes
             .iter()
-            .map(|r| if side { r.origin.x } else { r.origin.y })
+            .map(|r| r.origin.y)
             .fold(f32::INFINITY, f32::min);
         let end = panes
             .iter()
-            .map(|r| {
-                if side {
-                    r.origin.x + r.size.width
-                } else {
-                    r.origin.y + r.size.height
-                }
-            })
+            .map(|r| r.origin.y + r.size.height)
             .fold(0.0, f32::max);
-        let extent = if side {
-            panel.size.width
-        } else {
-            panel.size.height
-        };
-        if end > start && extent > 0.0 {
-            self.panel_fractions.update(|ratios| {
-                ratios[usize::from(side)] = (end - start) / (end - start + extent)
-            });
+        if end > start && panel.size.height > 0.0 {
+            self.panel_fraction
+                .set((end - start) / (end - start + panel.size.height));
         }
     }
     pub(super) fn remember_pane_sizes(&self) {
@@ -180,64 +160,6 @@ impl App {
             .copied()
             .unwrap_or(Rect::zero());
         let point = |x, y| Point::new(x as f32 + root.origin.x, y as f32 + root.origin.y);
-        let panel_drag = self.tab_drag.0.lock().unwrap().panel_drag;
-        if let Some(mut drag) = panel_drag {
-            let start = drag.start;
-            let previous = drag.target;
-            match event {
-                Event::Mouse(MouseEvent::Moved { x, y }) => {
-                    let p = point(*x, *y);
-                    let target = if (p.x - start.x).hypot(p.y - start.y) < 6.0 || !root.contains(p)
-                    {
-                        None
-                    } else if p.x > root.size.width * 0.80 {
-                        Some(terminal_ui::PanelPosition::Right)
-                    } else if p.y > root.size.height * 0.70 {
-                        Some(terminal_ui::PanelPosition::Bottom)
-                    } else {
-                        None
-                    };
-                    drag.dragging |= (p.x - start.x).hypot(p.y - start.y) >= 6.0;
-                    drag.target = target;
-                    self.tab_drag.0.lock().unwrap().panel_drag = Some(drag);
-                    if previous != target {
-                        self.changed();
-                    }
-                    return true;
-                }
-                Event::Mouse(MouseEvent::ButtonReleased {
-                    button: MouseButton::Left,
-                    x,
-                    y,
-                    ..
-                }) => {
-                    self.tab_drag.0.lock().unwrap().panel_drag = None;
-                    if !root.contains(point(*x, *y)) {
-                        self.changed();
-                        return true;
-                    }
-                    if !drag.dragging || previous.is_some() {
-                        self.terminal.select(drag.session);
-                    }
-                    if let Some(position) = previous {
-                        self.remember_panel_size();
-                        self.panel_position.set(position);
-                    }
-                    self.changed();
-                    return true;
-                }
-                Event::Mouse(MouseEvent::ButtonCancelled { .. })
-                | Event::Keyboard(KeyEvent::Pressed {
-                    keycode: KeyCode::Escape,
-                    ..
-                }) => {
-                    self.tab_drag.0.lock().unwrap().panel_drag = None;
-                    self.changed();
-                    return true;
-                }
-                _ => {}
-            }
-        }
         match event {
             Event::Mouse(MouseEvent::ButtonPressed {
                 button: MouseButton::Left,
@@ -260,7 +182,7 @@ impl App {
                 };
                 drag.dragging |= (p.x - drag.start.x).hypot(p.y - drag.start.y) >= 6.0;
                 if drag.dragging {
-                    drag.target = destination(&model.geometry, &tabs, &self.pane_order(), p);
+                    drag.target = self.terminal_drop_target(&model.geometry, drag, &tabs, p);
                 }
                 let changed = model.gesture.is_none_or(|previous| {
                     previous.dragging != drag.dragging || previous.target != drag.target
@@ -285,27 +207,42 @@ impl App {
                 };
                 if drag.dragging {
                     let tabs = self.runtime.lock().unwrap().group_tabs.clone();
-                    let target = destination(
+                    let target = self.terminal_drop_target(
                         &self.tab_drag.0.lock().unwrap().geometry,
+                        drag,
                         &tabs,
-                        &self.pane_order(),
                         p,
                     );
-                    match target {
-                        Some(Destination::Insert(group, index)) => {
-                            self.move_tab(drag.id, drag.group, group, index)
+                    match (drag.group, target) {
+                        (Some(_), Some(Destination::Panel)) => {
+                            self.return_terminal_to_panel(drag.id)
                         }
-                        Some(Destination::Split(target, edge)) => {
-                            self.split_tab_beside(drag.id, drag.group, target, edge)
+                        (Some(source), Some(Destination::Insert(group, index))) => {
+                            self.move_tab(drag.id, source, group, index)
                         }
-                        Some(Destination::Outer(edge)) => {
-                            self.split_tab_outer(drag.id, drag.group, edge)
+                        (Some(source), Some(Destination::Split(group, edge))) => {
+                            self.split_tab_beside(drag.id, source, group, edge)
                         }
-                        None => {}
+                        (Some(source), Some(Destination::Outer(edge))) => {
+                            self.split_tab_outer(drag.id, source, edge)
+                        }
+                        (None, Some(Destination::Insert(group, index))) => {
+                            self.attach_terminal(drag.id, group, index)
+                        }
+                        (None, Some(Destination::Split(group, edge))) => {
+                            self.split_terminal_from_panel(drag.id, Some(group), edge)
+                        }
+                        (None, Some(Destination::Outer(edge))) => {
+                            self.split_terminal_from_panel(drag.id, None, edge)
+                        }
+                        (None, Some(Destination::Panel)) => self.terminal.select(drag.id),
+                        _ => {}
                     }
-                } else {
-                    self.focus_group(drag.group);
+                } else if let Some(group) = drag.group {
+                    self.focus_group(group);
                     self.activate(drag.id);
+                } else {
+                    self.terminal.select(drag.id);
                 }
                 self.changed();
                 true
@@ -325,6 +262,25 @@ impl App {
                 had
             }
             _ => false,
+        }
+    }
+
+    fn terminal_drop_target(
+        &self,
+        geometry: &BTreeMap<RegionId, Rect>,
+        drag: Gesture,
+        tabs: &[Vec<TabId>],
+        point: Point,
+    ) -> Option<Destination> {
+        if self.panel_visible.get()
+            && geometry
+                .get(&RegionId::Panel)
+                .is_some_and(|r| r.contains(point))
+            && (drag.group.is_none() || self.terminal.for_tab(drag.id).is_some())
+        {
+            Some(Destination::Panel)
+        } else {
+            destination(geometry, tabs, &self.pane_order(), point)
         }
     }
 
@@ -427,7 +383,7 @@ impl App {
             return;
         }
         self.remember_location_in(source);
-        let from = self.bindings_for(id, source).unwrap();
+        let from = self.bindings_for(id, source);
         let detach = beside.map_or(self.pane_order().len() > 1, |target| target != source);
         let group = if let Some(beside) = beside {
             self.add_group(id, beside, edge)
@@ -437,12 +393,14 @@ impl App {
             self.pane_layout.update(|layout| layout.wrap(group, edge));
             group
         };
-        let to = self.bindings_for(id, group).unwrap();
-        to.selection.set(from.selection.get());
-        to.scroll.set(from.scroll.get());
+        if let (Some(from), Some(to)) = (from, self.bindings_for(id, group)) {
+            to.selection.set(from.selection.get());
+            to.scroll.set(from.scroll.get());
+        }
         let next = {
             let mut rt = self.runtime.lock().unwrap();
-            let remove = rt.group_tabs[source].len() > 1 || detach;
+            let remove =
+                rt.group_tabs[source].len() > 1 || detach || self.terminal.for_tab(id).is_some();
             if remove {
                 rt.group_tabs[source].retain(|tab| *tab != id);
             }
@@ -459,9 +417,7 @@ impl App {
                 rt.group_tabs[source].first().copied()
             }
         };
-        if let Some(next) = next {
-            self.set_group_id(source, next);
-        }
+        self.panes.update(|panes| panes[source] = next);
         self.focus_group(group);
         if next.is_none() {
             self.retire_empty_group(source);
@@ -728,10 +684,11 @@ impl ElementRenderObject for RegionRenderer {
                 {
                     let mut model = self.state.0.lock().unwrap();
                     if let Some(start) = model.press.take() {
-                        model.panel_drag = Some(PanelGesture {
+                        model.gesture = Some(Gesture {
+                            group: None,
+                            id: session,
                             start,
                             target: None,
-                            session,
                             dragging: false,
                         });
                         return true;
@@ -758,7 +715,7 @@ impl ElementRenderObject for RegionRenderer {
                 let mut model = self.state.0.lock().unwrap();
                 if let Some(start) = model.press.take() {
                     model.gesture = Some(Gesture {
-                        group,
+                        group: Some(group),
                         id,
                         start,
                         dragging: false,
@@ -771,29 +728,17 @@ impl ElementRenderObject for RegionRenderer {
         false
     }
     fn paint_overlay(&self, ctx: &mut PaintContext<'_>, origin: Point) -> bool {
-        if self.id == RegionId::Root {
-            if let Some(PanelGesture {
-                target: Some(position),
-                ..
-            }) = self.state.0.lock().unwrap().panel_drag
-            {
-                let rect = match position {
-                    terminal_ui::PanelPosition::Right => Rect::from_xywh(
-                        origin.x + self.size.width * 0.8,
-                        origin.y,
-                        self.size.width * 0.2,
-                        self.size.height,
-                    ),
-                    terminal_ui::PanelPosition::Bottom => Rect::from_xywh(
-                        origin.x,
-                        origin.y + self.size.height * 0.7,
-                        self.size.width,
-                        self.size.height * 0.3,
-                    ),
-                };
-                ctx.fill_rect(rect, self.accent.with_opacity(0.16));
-                return true;
-            }
+        if self.id == RegionId::Panel
+            && self
+                .state
+                .0
+                .lock()
+                .unwrap()
+                .gesture
+                .is_some_and(|g| g.dragging && g.target == Some(Destination::Panel))
+        {
+            ctx.fill_rect(Rect::new(origin, self.size), self.accent.with_opacity(0.16));
+            return true;
         }
         if self.id == RegionId::EditorArea {
             let model = self.state.0.lock().unwrap();
@@ -889,6 +834,7 @@ impl ElementRenderObject for RegionRenderer {
 mod tests {
     use super::*;
     use scarlet_ui::{event::KeyModifiers, pipeline::RenderingPipeline};
+    use std::time::{Duration, Instant};
     #[test]
     fn moving_dirty_tabs_keeps_document_history_and_collapses_empty_groups() {
         let app = App::with_document();
@@ -1066,7 +1012,7 @@ mod tests {
     }
 
     #[test]
-    fn panel_drag_docks_independently_of_nested_editors_and_toggle_preserves_sessions() {
+    fn terminal_session_drag_moves_into_an_editor_and_back_without_moving_panel() {
         let app = App::with_document();
         app.split_editor(true);
         app.focus_group(0);
@@ -1075,6 +1021,25 @@ mod tests {
         app.new_terminal();
         let session = app.terminal.active().unwrap();
         let generation = session.terminal.generation();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while session.terminal.status() != kureha_code::terminal::TerminalStatus::Running {
+            app.poll_terminals();
+            assert!(Instant::now() < deadline, "terminal startup timed out");
+            thread::sleep(Duration::from_millis(10));
+        }
+        let check_tab = |pipeline: &mut RenderingPipeline| {
+            for shift in [false, true] {
+                assert!(pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+                    keycode: KeyCode::Tab,
+                    modifiers: scarlet_ui::event::KeyModifiers {
+                        shift,
+                        ..scarlet_ui::event::KeyModifiers::empty()
+                    },
+                })));
+                pipeline.render();
+                assert!(session.terminal.focused());
+            }
+        };
         let window = || {
             Window::new("Panel", app.content())
                 .decorated(false)
@@ -1085,50 +1050,72 @@ mod tests {
         pipeline.set_root(window().create_element());
         pipeline.layout_initial();
         pipeline.render();
-        let mut geometry = BTreeMap::new();
-        collect_geometry(
-            pipeline.element_tree().root().unwrap(),
-            Point::ZERO,
-            &mut geometry,
+        check_tab(&mut pipeline);
+        let geometry = app.tab_drag.0.lock().unwrap().geometry.clone();
+        let original_panel = geometry[&RegionId::Panel];
+        let session_rect = geometry[&RegionId::Session(session.id)];
+        let group_rect = geometry[&RegionId::Group(2)];
+        let target = Point::new(
+            group_rect.origin.x + group_rect.size.width / 2.0,
+            group_rect.origin.y + group_rect.size.height / 2.0,
         );
-        let tab = geometry[&RegionId::Session(session.id)];
-        pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
-            button: MouseButton::Left,
-            x: (tab.origin.x + 25.0) as i32,
-            y: (tab.origin.y + 15.0) as i32,
-            click_count: 1,
-        }));
-        assert!(app.tab_drag.0.lock().unwrap().panel_drag.is_some());
-        pipeline.handle_event(&Event::Mouse(MouseEvent::Moved { x: 1050, y: 350 }));
-        pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
-            button: MouseButton::Left,
-            x: 1050,
-            y: 350,
-            click_count: 1,
-        }));
-        assert_eq!(app.panel_position.get(), terminal_ui::PanelPosition::Right);
+        let drag = |pipeline: &mut RenderingPipeline, from: Rect, to: Point| {
+            pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+                button: MouseButton::Left,
+                x: (from.origin.x + 25.0) as i32,
+                y: (from.origin.y + 15.0) as i32,
+                click_count: 1,
+            }));
+            pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
+                x: to.x as i32,
+                y: to.y as i32,
+            }));
+            pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+                button: MouseButton::Left,
+                x: to.x as i32,
+                y: to.y as i32,
+                click_count: 1,
+            }));
+        };
+        drag(&mut pipeline, session_rect, target);
+        let tab = app.group_id(2).unwrap();
+        assert_eq!(app.terminal.for_tab(tab).unwrap().id, session.id);
+        assert!(app.terminal.panel_sessions().is_empty());
+        assert_eq!(app.pane_layout.get(), layout);
+        assert!(app.terminal_focused());
+        let paste = app.terminal_paste_target().unwrap();
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.layout_initial();
+        pipeline.render();
+        check_tab(&mut pipeline);
+        let geometry = app.tab_drag.0.lock().unwrap().geometry.clone();
+        let panel = geometry[&RegionId::Panel];
+        assert_eq!(panel, original_panel);
+        drag(
+            &mut pipeline,
+            geometry[&RegionId::Tab(2, tab)],
+            Point::new(
+                panel.origin.x + panel.size.width / 2.0,
+                panel.origin.y + panel.size.height / 2.0,
+            ),
+        );
+        assert_eq!(app.terminal.active().unwrap().id, session.id);
+        assert!(app.terminal.for_tab(tab).is_none());
+        assert!(!app.apply_terminal_paste(paste, "stale after move"));
+        assert_eq!(session.terminal.generation(), generation);
         assert_eq!(app.pane_layout.get(), layout);
         pipeline
             .element_tree_mut()
             .root_mut()
             .unwrap()
             .update(&window());
+        pipeline.layout_initial();
         pipeline.render();
-        let mut geometry = BTreeMap::new();
-        collect_geometry(
-            pipeline.element_tree().root().unwrap(),
-            Point::ZERO,
-            &mut geometry,
-        );
-        assert!(geometry[&RegionId::Panel].origin.x > geometry[&RegionId::Group(2)].origin.x);
-        app.focus_group(0);
-        app.toggle_panel();
-        assert!(!app.panel_visible.get());
-        app.toggle_panel();
-        assert!(app.panel_visible.get());
-        assert_eq!(app.terminal.active().unwrap().id, session.id);
-        assert_eq!(session.terminal.generation(), generation);
-        assert_eq!(app.pane_layout.get(), layout);
+        check_tab(&mut pipeline);
         session.terminal.close();
         pipeline.teardown();
     }
