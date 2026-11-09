@@ -297,3 +297,28 @@ fixture spends roughly 1.1 seconds per painted scroll frame, mostly in backdrop
 painting; this is not a native GPU frame-time measurement. These checks do not
 establish that every reported hang has been eliminated. Scarlet-native runtime
 verification is still outstanding.
+
+## Hover-visible document scrolling — 2026-11-09
+
+The clarified trigger is scrolling the editor document while a hover is visible.
+This differs from scrolling inside the hover. A full-workbench regression
+reproduced lost wheel input: the hit target below the popup was its full-viewport
+`OnEventRenderObject`, not the document TextView. The popup's surrounding ZStack
+also claimed the transparent area after that event wrapper was moved.
+
+The keep-open event handler now wraps the actual panel inside Anchored, and
+mutually exclusive information/rename panels use Either rather than a full-size
+ZStack. Pointer input outside the panel reaches TextView. A document wheel event
+also dismisses the old hover, clears its delayed target and cancels outstanding
+hover requests, including explicit Show Hover requests without a pointer
+generation. Diagnostics and other panels are left intact. Scrolling inside the
+hover still scrolls its contents and keeps it open.
+
+Validation: all 178 Kureha tests passed (four optional/manual cases ignored),
+including hit-target selection, document scroll and selection preservation,
+continued scrolling after a rebuild, late manual-hover response rejection and
+hover-internal scroll retention. The new document-scroll regression failed
+before the fix because TextView never received the event. Locked/offline release
+build passed. Native winit/WGPU launched, but CUA could not acquire its window
+(`cgWindowNotFound`); this follow-up's native interaction is not claimed verified.
+No new ScarletUI change was needed for this fix.

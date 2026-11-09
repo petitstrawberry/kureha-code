@@ -635,6 +635,11 @@ impl App {
                 ) {
                     keys.focus_group(group);
                 }
+                if let Event::Mouse(MouseEvent::Wheel { delta_x, delta_y, .. }) = event {
+                    if (*delta_x != 0 || *delta_y != 0) && keys.focused_group.get() == group {
+                        keys.dismiss_hover_for_scroll();
+                    }
+                }
                 if !keys.editable(id)
                     && matches!(
                         event,

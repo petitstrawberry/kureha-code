@@ -1498,6 +1498,37 @@ impl App {
             self.changed();
         }
     }
+    pub(super) fn dismiss_hover_for_scroll(&self) {
+        let mut rt = self.runtime.lock().unwrap();
+        let service = &mut rt.language;
+        service.hover_generation = service.hover_generation.wrapping_add(1);
+        service.hover_target = None;
+        service.hover_hide = None;
+        service.hover_sent = false;
+        // Include explicit Show Hover requests, which have no pointer generation.
+        for session in service.sessions.values_mut() {
+            let cancelled: Vec<_> = session
+                .pending
+                .iter()
+                .filter(|(_, request)| request.method == "textDocument/hover")
+                .map(|(id, _)| *id)
+                .collect();
+            for id in cancelled {
+                session.pending.remove(&id);
+                if let Some(client) = &session.client {
+                    let _ = client.notify("$/cancelRequest", json!({"id": id}));
+                }
+            }
+        }
+        let shown = matches!(service.panel, Panel::Hover(_));
+        if shown {
+            service.panel = Panel::Closed;
+        }
+        drop(rt);
+        if shown {
+            self.changed();
+        }
+    }
     pub(super) fn keep_hover_open(&self) {
         self.runtime.lock().unwrap().language.hover_hide = None;
     }
@@ -1983,29 +2014,33 @@ impl App {
                     Surface::floating(scroll)
                         .surface_style(self.theme.get().popup_style())
                         .corner_radius(10.0)
-                ),
+                )
+                // Keep this handler inside the anchored panel. An event wrapper
+                // around Anchored would hit-test the entire editor viewport.
+                .on_event_capture(move |event| {
+                    if matches!(
+                        event,
+                        Event::Mouse(
+                            scarlet_ui::event::MouseEvent::Moved { .. }
+                                | scarlet_ui::event::MouseEvent::Entered { .. }
+                        )
+                    ) {
+                        hovered.keep_hover_open();
+                    }
+                    false
+                }),
                 self.language_anchor.clone()
             )
             .max_size(if hover_text.is_some() {
                 Size::new(520.0, 340.0)
             } else {
                 Size::new(440.0, 260.0)
-            })
-            .on_event_capture(move |event| {
-                if matches!(
-                    event,
-                    Event::Mouse(
-                        scarlet_ui::event::MouseEvent::Moved { .. }
-                            | scarlet_ui::event::MouseEvent::Entered { .. }
-                    )
-                ) {
-                    hovered.keep_hover_open();
-                }
-                false
             }),
             VStack::new(())
         );
-        ZStack::new((information, rename_view)).alignment(Alignment::TopLeading)
+        // These panels are mutually exclusive. A full-size ZStack here would
+        // itself intercept input outside either panel.
+        if_view!(rename.is_some(), rename_view, information)
     }
     pub(super) fn language_panel(&self) -> impl View + Clone + use<> {
         let (panel, problems, root) = {

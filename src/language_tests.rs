@@ -74,6 +74,10 @@ fn long_hover_scrolls_repeatedly_inside_the_workbench() {
             })));
             pipeline.render();
         }
+        assert!(matches!(
+            app.runtime.lock().unwrap().language.panel,
+            Panel::Hover(_)
+        ));
         let offset = body(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
         if direction < 0 {
             assert!(offset.y < origin.y, "{offset:?} / {origin:?}");
@@ -94,6 +98,166 @@ fn long_hover_scrolls_repeatedly_inside_the_workbench() {
         start.elapsed()
     );
     pipeline.teardown();
+}
+
+#[test]
+fn scrolling_document_dismisses_hover_and_invalidates_its_pending_target() {
+    use scarlet_ui::{
+        event::{MouseEvent, ScrollSource, WheelPhase},
+        pipeline::RenderingPipeline,
+    };
+    let app = App::new();
+    let id = app.active_id();
+    app.runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .get_mut(id)
+        .unwrap()
+        .editor = kureha_code::editor::Editor::new(&"pub fn example() {}\n".repeat(500));
+    app.sync_editor(id);
+    app.pointer_hover(id, Some((7, Point::new(90.0, 40.0))));
+    let generation = app.runtime.lock().unwrap().language.hover_generation;
+    app.runtime.lock().unwrap().language.panel =
+        Panel::Hover("pub fn example()\n\nDocumentation.\n\n".repeat(30));
+    let bindings = app.bindings(id).unwrap();
+    let selection = bindings.selection.get();
+    let window = || {
+        Window::new("Document scroll", app.content())
+            .decorated(false)
+            .size(Size::new(1100.0, 760.0))
+    };
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_paint_enabled(false);
+    pipeline.set_root(window().create_element());
+    pipeline.layout_initial();
+    pipeline.render();
+    fn editor(e: &dyn Element, origin: Point) -> Option<Rect> {
+        let origin = Point::new(origin.x + e.position().x, origin.y + e.position().y);
+        if e.type_name_debug()
+            .ends_with(", scarlet_ui_core::views::text_view::TextViewRenderObject>")
+        {
+            return Some(Rect::new(origin, e.bounds().size));
+        }
+        e.children()
+            .iter()
+            .find_map(|child| editor(child.as_ref(), origin))
+    }
+    let bounds = editor(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
+    // Below the popup, but inside the document: this is not a popup wheel event.
+    let x = (bounds.origin.x + 110.0) as i32;
+    let y = (bounds.origin.y + bounds.size.height - 50.0) as i32;
+    assert!(
+        pipeline
+            .element_tree()
+            .hit_test(Point::new(x as f32, y as f32))
+            .unwrap()
+            .type_name_debug()
+            .ends_with(", scarlet_ui_core::views::text_view::TextViewRenderObject>"),
+        "the transparent popup area must not intercept the document"
+    );
+    assert!(pipeline.handle_event(&Event::Mouse(MouseEvent::Wheel {
+        delta_x: 0,
+        delta_y: -120,
+        x,
+        y,
+        phase: WheelPhase::Moved,
+        source: ScrollSource::Trackpad,
+    })));
+    assert!(bindings.scroll.get().y > 0.0);
+    assert_eq!(bindings.selection.get(), selection);
+    {
+        let rt = app.runtime.lock().unwrap();
+        assert!(
+            matches!(rt.language.panel, Panel::Closed),
+            "scrolling the document must retire its old hover"
+        );
+        assert!(rt.language.hover_target.is_none());
+        assert!(rt.language.hover_generation > generation);
+    }
+    pipeline
+        .element_tree_mut()
+        .root_mut()
+        .unwrap()
+        .update(&window());
+    pipeline.render();
+    assert!(pipeline.handle_event(&Event::Mouse(MouseEvent::Wheel {
+        delta_x: 0,
+        delta_y: -120,
+        x,
+        y,
+        phase: WheelPhase::Moved,
+        source: ScrollSource::Trackpad,
+    })));
+    pipeline.render();
+    assert!(bindings.scroll.get().y >= 240.0);
+    pipeline.teardown();
+}
+
+#[test]
+fn document_scroll_discards_late_manual_hover_without_cancelling_diagnostics() {
+    let app = App::new();
+    let id = app.active_id();
+    let pending = |method: &str| Pending {
+        guard: Guard {
+            id,
+            revision: 0,
+            caret: 0,
+            navigation: 0,
+        },
+        method: method.into(),
+        params: Value::Null,
+        hover_generation: None,
+        document_version: None,
+        attempts: 0,
+        started: Instant::now(),
+    };
+    app.runtime.lock().unwrap().language.sessions.insert(
+        "fixture".into(),
+        Session {
+            client: None,
+            starting: None,
+            initialize: None,
+            ready: true,
+            capabilities: Value::Null,
+            pending: BTreeMap::from([
+                (1, pending("textDocument/diagnostic")),
+                (2, pending("textDocument/hover")),
+            ]),
+            documents: BTreeMap::new(),
+            root: PathBuf::from("/tmp"),
+            language: "rust".into(),
+            label: "fixture".into(),
+            failure: None,
+            started: Instant::now(),
+            diagnostic_requests: BTreeMap::new(),
+        },
+    );
+    app.dismiss_hover_for_scroll();
+    assert!(
+        app.runtime.lock().unwrap().language.sessions["fixture"]
+            .pending
+            .contains_key(&1)
+    );
+    assert!(!app.language_event(
+        "fixture",
+        LspEvent::Response {
+            id: 2,
+            result: json!({"contents": "late hover"}),
+            error: None,
+        },
+        &[]
+    ));
+    assert!(matches!(
+        app.runtime.lock().unwrap().language.panel,
+        Panel::Closed
+    ));
+    app.runtime.lock().unwrap().language.panel = Panel::Problems;
+    app.dismiss_hover_for_scroll();
+    assert!(matches!(
+        app.runtime.lock().unwrap().language.panel,
+        Panel::Problems
+    ));
 }
 
 #[test]
