@@ -1,6 +1,6 @@
 # Kureha Code
 
-A code editor for Scarlet and desktop platforms, built with ScarletUI.
+A cross-platform code editor built with ScarletUI.
 
 <!-- ![Markdown source and preview](docs/screenshots/markdown-preview.png) -->
 
