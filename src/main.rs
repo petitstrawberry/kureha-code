@@ -26,6 +26,7 @@ mod editing_ui;
 mod groups;
 mod hover;
 mod language;
+mod location_history;
 mod navigation_ui;
 mod popup;
 mod project_ui;
@@ -88,6 +89,7 @@ enum ClipboardJob {
 }
 #[derive(Default)]
 struct Runtime {
+    history: location_history::History,
     workspace: Workspace,
     explorer: Explorer,
     owner: Option<WindowId>,
@@ -364,6 +366,9 @@ impl App {
         if self.blocked() {
             return;
         }
+        if self.active_id() != id && self.runtime.lock().unwrap().workspace.get(id).is_some() {
+            self.remember_location();
+        }
         self.activate_unchecked(id);
     }
     fn activate_unchecked(&self, id: DocumentId) {
@@ -400,12 +405,13 @@ impl App {
                 + if backwards { count - 1 } else { 1 })
                 % count]
         };
-        self.activate_unchecked(next);
+        self.activate(next);
     }
     fn new_document(&self) {
         if self.blocked() {
             return;
         }
+        self.remember_location();
         let id = self.runtime.lock().unwrap().workspace.new_document();
         self.activate_unchecked(id);
         self.changed();
@@ -420,6 +426,7 @@ impl App {
                 .each_ref()
                 .map(|tabs| tabs.iter().position(|tab| *tab == id).unwrap_or(0));
             rt.workspace.remove(id);
+            rt.history.remove(id);
             for tabs in &mut rt.group_tabs {
                 tabs.retain(|tab| *tab != id);
             }
@@ -1230,6 +1237,10 @@ impl App {
             (FileOperation::Open { group }, Ok(Completion::Open(path, text))) => {
                 let group_closed = group == 1 && self.second.get().is_none();
                 let destination = if group_closed { 0 } else { group };
+                let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
+                if !group_closed && existing != Some(self.group_id(destination)) {
+                    self.remember_location_in(destination);
+                }
                 let (id, index) = {
                     let mut rt = self.runtime.lock().unwrap();
                     let id = rt.workspace.open(path.clone(), &text);

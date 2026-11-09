@@ -518,10 +518,10 @@ impl App {
             left += width + 4.0;
             let select = self.clone();
             let close = self.clone();
-            let icon = file_icons::for_path(path.as_deref());
+            let icon = file_icons::for_path(path.as_deref()).themed(&theme, id == active);
             let content = hstack! {
                 Button::new(label).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).font_size(13.0).padding(7.0)
-                    .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Small)
+                    .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Pixels(18)).icon_style(icon.style())
                     .on_click(move || {select.focus_group(group); select.activate(id);}).frame(width - 28.0, 32.0),
                 Button::new("×").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(4.0)
                     .on_click(move || {close.focus_group(group); close.request_close(Some(id));}).frame(28.0, 32.0),
@@ -530,12 +530,20 @@ impl App {
             if id == active { surface.surface_style(theme.tab_style()) }
                 else { surface.fill(Color::TRANSPARENT) }.key(id)
         }).collect::<Vec<_>>();
-        ScrollView::new(HStack::new(ViewCollection(tabs)).spacing(4.0))
-            .horizontal()
-            .content_size(left, 32.0)
-            .scroll_to_horizontal_range(selected_range.0, selected_range.1)
-            .frame(f32::INFINITY, 34.0)
-            .padding_insets(EdgeInsets::new(8.0, 8.0, 8.0, 6.0))
+        let back = self.clone();
+        let forward = self.clone();
+        hstack! {
+            Button::icon_only(Icon::ArrowLeft).header_style()
+                .text_color(theme.colors().foreground).background_color(Color::TRANSPARENT)
+                .enabled(self.can_go_back()).on_click(move || back.go_back()).frame(28.0, 30.0),
+            Button::icon_only(Icon::ArrowRight).header_style()
+                .text_color(theme.colors().foreground).background_color(Color::TRANSPARENT)
+                .enabled(self.can_go_forward()).on_click(move || forward.go_forward()).frame(28.0, 30.0),
+            ScrollView::new(HStack::new(ViewCollection(tabs)).spacing(4.0))
+                .horizontal().content_size(left, 32.0)
+                .scroll_to_horizontal_range(selected_range.0, selected_range.1)
+                .frame(f32::INFINITY, 34.0),
+        }.spacing(2.0).padding_insets(EdgeInsets::new(8.0, 8.0, 8.0, 6.0))
     }
     fn editor_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         let bindings = self.bindings_for(id, group).unwrap();
@@ -719,6 +727,7 @@ impl App {
                     let input = app.nav.row_inputs.get(format!("tree:{}", row.key));
                     let icon = if row.directory { file_icons::folder(row.expanded) }
                         else { file_icons::for_path(row.path.as_deref()) };
+                    let icon = icon.themed(&theme, selected == Some(index));
                     list_row(hstack! {
                         Spacer::new().frame(row.depth as f32 * 14.0, 1.0),
                         hstack! {
@@ -927,6 +936,9 @@ impl App {
                     "",
                     App::close_split,
                 ),
+                MenuEntry::Separator,
+                self.item("go-back", "Go Back", if cfg!(target_os="macos") {"Ctrl+-"} else {"Alt+Left"}, App::go_back),
+                self.item("go-forward", "Go Forward", if cfg!(target_os="macos") {"Ctrl+Shift+-"} else {"Alt+Right"}, App::go_forward),
                 MenuEntry::Separator,
                 self.item("theme-edit", "Customize Theme…", "", App::open_theme_settings),
                 self.item("theme-reload", "Reload Custom Theme", "", App::reload_theme_settings),

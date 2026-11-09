@@ -364,6 +364,8 @@ const COMMANDS: &[CommandDescriptor] = &[
         "completion autocomplete lsp",
         "Ctrl+Space"
     ),
+    command!("go-back", "Go: Back", "navigation history previous location", "GoBack"),
+    command!("go-forward", "Go: Forward", "navigation history next location", "GoForward"),
     command!("next-tab", "View: Next Editor", "tab", "Ctrl+Tab"),
     command!(
         "previous-tab",
@@ -407,6 +409,17 @@ impl App {
     /// Call before workbench shortcuts. While open, other shortcut handlers
     /// should stop dispatching and return false to the focused TextField.
     pub(crate) fn navigation_key(&self, key: KeyCode, modifiers: KeyModifiers) -> bool {
+        if !self.nav.is_open() && cfg!(target_os = "macos") && modifiers.control && !modifiers.super_key && !modifiers.alt && matches!(key, KeyCode::Char('-' | '_')) {
+            if modifiers.shift { self.go_forward(); } else { self.go_back(); }
+            return true;
+        }
+        if !self.nav.is_open() && !cfg!(target_os = "macos") && modifiers.alt && !modifiers.primary() && !modifiers.shift {
+            match key {
+                KeyCode::Left => { self.go_back(); return true; }
+                KeyCode::Right => { self.go_forward(); return true; }
+                _ => {}
+            }
+        }
         if modifiers.primary() && !modifiers.alt && matches!(key, KeyCode::Char('p' | 'P')) {
             if modifiers.shift {
                 self.show_commands();
@@ -723,6 +736,7 @@ impl App {
             if let Some(doc) = self.runtime.lock().unwrap().workspace.get_mut(id) {
                 doc.editor.moved(selection);
             }
+            if bindings.selection.get() != selection { self.remember_location(); }
             self.nav.close();
             bindings.selection.set(selection);
             self.invalidate_clipboard();
@@ -747,6 +761,8 @@ impl App {
     }
     fn execute_navigation_command(&self, id: &str) {
         match id {
+            "go-back" => self.go_back(),
+            "go-forward" => self.go_forward(),
             "quick-open" => self.show_quick_open(),
             "go-line" => self.show_go_to_line(),
             "open" => self.picker(DialogPurpose::Open),
@@ -861,6 +877,11 @@ impl App {
     }
 }
 fn shortcut(shortcut: &str) -> String {
+    let shortcut = match shortcut {
+        "GoBack" => if cfg!(target_os = "macos") { "Ctrl+-" } else { "Alt+Left" },
+        "GoForward" => if cfg!(target_os = "macos") { "Ctrl+Shift+-" } else { "Alt+Right" },
+        value => value,
+    };
     shortcut.replace(
         "Primary",
         if cfg!(target_os = "macos") {

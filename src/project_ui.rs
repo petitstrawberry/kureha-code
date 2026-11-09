@@ -565,11 +565,11 @@ impl App {
         for id in &ids {
             // Activating also registers documents opened from snapshots in the
             // focused editor group's tabs; restore the user's active tab below.
-            self.activate(*id);
+            self.activate_unchecked(*id);
             self.sync_editor(*id);
         }
         if !ids.is_empty() {
-            self.activate(active);
+            self.activate_unchecked(active);
             self.changed();
         }
         Ok((ids.len(), matches))
@@ -604,7 +604,7 @@ impl App {
             .workspace
             .find_path(&source.path);
         if let Some(id) = existing {
-            self.select_project_result(id, &source, range);
+            self.select_project_result(id, &source, range, true);
         } else {
             if source.document.is_some() {
                 self.project
@@ -629,7 +629,7 @@ impl App {
         }
     }
 
-    fn select_project_result(&self, id: DocumentId, source: &Source, range: Range<usize>) {
+    fn select_project_result(&self, id: DocumentId, source: &Source, range: Range<usize>, remember: bool) {
         let current = {
             let rt = self.runtime.lock().unwrap();
             rt.workspace
@@ -647,6 +647,7 @@ impl App {
                 .set("Result changed; search again to locate it".into());
             return;
         }
+        let same_document = self.active_id() == id;
         self.activate(id);
         let Some(bindings) = self.bindings(id) else {
             return;
@@ -657,6 +658,9 @@ impl App {
         };
         if let Some(doc) = self.runtime.lock().unwrap().workspace.get_mut(id) {
             doc.editor.moved(selection);
+        }
+        if remember && same_document && bindings.selection.get() != selection {
+            self.remember_location();
         }
         bindings.selection.set(selection);
         self.project.owns_focus.set(false);
@@ -688,7 +692,7 @@ impl App {
             if navigation == pending.navigation
                 || (navigation == pending.navigation.wrapping_add(1) && self.active_id() == id)
             {
-                self.select_project_result(id, &pending.source, pending.range);
+                self.select_project_result(id, &pending.source, pending.range, false);
             }
         } else if opening && navigation == pending.navigation {
             self.project.runtime.lock().unwrap().navigation = Some(pending);
@@ -1096,7 +1100,7 @@ mod tests {
             },
         );
         let before = app.bindings(id).unwrap().selection.get();
-        app.select_project_result(id, &found.sources[0], 0..3);
+        app.select_project_result(id, &found.sources[0], 0..3, true);
         assert_eq!(app.bindings(id).unwrap().selection.get(), before);
     }
 
@@ -1109,8 +1113,13 @@ mod tests {
         app.split_editor(false);
         let right = app.bindings(id).unwrap();
         let found = results(&app, &[id]);
-        app.select_project_result(id, &found.sources[0], 8..11);
+        let before = right.selection.get();
+        app.select_project_result(id, &found.sources[0], 8..11, true);
         assert_eq!(left.selection.get(), TextSelection::collapsed(5));
+        assert_eq!(right.selection.get().normalized_range(), Some(8..11));
+        app.go_back();
+        assert_eq!(right.selection.get(), before);
+        app.go_forward();
         assert_eq!(right.selection.get().normalized_range(), Some(8..11));
         let changes =
             project_search::prepare_replace(&found, "dog", &AtomicBool::new(false)).unwrap();

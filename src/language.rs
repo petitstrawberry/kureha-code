@@ -1745,8 +1745,9 @@ impl App {
     pub(super) fn language_navigate(&self, path: PathBuf, target: Value) {
         let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
         if let Some(id) = existing {
+            let same_document = id == self.active_id();
             self.activate(id);
-            self.language_select(id, &target);
+            self.language_select(id, &target, same_document);
         } else {
             if self.runtime.lock().unwrap().job.is_some() {
                 self.status
@@ -1766,7 +1767,7 @@ impl App {
             }
         }
     }
-    fn language_select(&self, id: DocumentId, target: &Value) {
+    fn language_select(&self, id: DocumentId, target: &Value, remember: bool) {
         let Some(active_bindings) = self.bindings(id) else {
             return;
         };
@@ -1785,6 +1786,9 @@ impl App {
             doc.editor.moved(selection);
             (active_bindings, selection)
         };
+        if remember && bindings.0.selection.get() != bindings.1 {
+            self.remember_location();
+        }
         bindings.0.selection.set(bindings.1);
         if !matches!(
             self.runtime.lock().unwrap().language.panel,
@@ -1809,7 +1813,7 @@ impl App {
                 }
             };
         if let Some(target) = target {
-            self.language_select(id, &target);
+            self.language_select(id, &target, false);
         }
     }
     fn accept_completion(&self, index: usize) {

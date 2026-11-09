@@ -322,3 +322,45 @@ before the fix because TextView never received the event. Locked/offline release
 build passed. Native winit/WGPU launched, but CUA could not acquire its window
 (`cgWindowNotFound`); this follow-up's native interaction is not claimed verified.
 No new ScarletUI change was needed for this fix.
+
+## Navigation, file icons and minimap dragging — 2026-11-09
+
+The tab strip now exposes Back/Forward. Explicit tab, definition, project-search
+and line navigation remember the originating document/group, selection and
+scroll position. History is session-only, bounded to 128 entries, prunes closed
+documents and discards the forward branch on a new jump. Restoring an edited
+buffer clamps saved byte positions to UTF-8 boundaries. Project Replace All's
+internal tab activations do not add navigation entries.
+
+File/folder icons are 18 px, folders have stronger filled/bold silhouettes, and
+Rust/Python/JavaScript/TypeScript/Go/HTML/CSS use distinct language marks.
+Colors adjust against the theme's normal and selected backgrounds. All bundled
+palettes pass the icon contrast checks. ScarletUI #90 exposes seven already
+bundled Tabler glyphs; Cargo pins its published commit
+`4a24445bb01e1e6c6e2ee1439e6c05f3ad6a7ed5` without a local path patch.
+
+Minimap drag state now belongs to its retained renderer. Grabbing the viewport
+keeps the grab offset, leaving the bounds does not cancel dragging, and moving
+uses the full scrollable range even for sampled long files. Release/cancellation
+ends the drag, including outside the minimap. Rebuilding the workbench retains
+the gesture; switching to another document clears it.
+
+Validation on macOS AArch64:
+
+- All 183 Kureha tests passed; four optional/manual tests ignored. History tests
+  cover painted viewport restoration, back/forward branching, split groups,
+  closed documents and changed UTF-8 text. Project-search navigation also checks
+  back/forward restoration.
+- The mounted minimap regression covers 100-line and 4,000-line documents,
+  off-center grabs, rebuilds during dragging, horizontal escape, both scroll
+  limits and release outside. The long-file case passed separately after the
+  full suite.
+- All seven ScarletUI icon tests passed, including every selected glyph's
+  rasterization and filled-outline fallback. Locked/offline release build passed.
+- Eighteen CPU-painted fixtures rendered successfully; Light and Monokai images
+  were inspected and preserved in `screenshots/navigation-light.png` and
+  `screenshots/navigation-monokai.png`.
+- Native winit/WGPU launched and rendered the new tab controls and Rust mark.
+  CUA's drag command timed out; a subsequent process sample was idle in the
+  AppKit event loop. Native drag/back-button interaction is not claimed verified.
+  Scarlet-native runtime testing remains outstanding.

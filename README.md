@@ -111,6 +111,7 @@ Z/Shift+Z, X/C/V and A handle Undo/Redo, clipboard and Select All in the editor.
 | --- | --- |
 | Quick Open / Command Palette | Primary P / Primary Shift P (or F1) |
 | Go to line and optional column | Control G |
+| Back / forward to a location | macOS: Control - / Control Shift -; elsewhere: Alt Left / Right |
 | Search project | Primary Shift F |
 | Save all dirty documents | Primary Alt S |
 | Split right / down | Primary \\ / Primary Shift \\ |
@@ -125,6 +126,13 @@ switches to line navigation and `>command` switches to the command palette.
 Navigation overlays leave the editor's height unchanged. The bounded index skips
 build/vendor directories and symlinks, supports an exclusion-only subset of root
 ignore files, and reports incomplete scans; it is not a full Git ignore engine.
+
+Back/forward arrows beside the tabs restore the file, editor group, selection and
+scroll position before a tab change, definition/search jump or Go to Line. The
+session keeps up to 128 locations; closing a document removes its entries.
+The minimap keeps the point where you grab its viewport indicator, and continues
+dragging outside its bounds until release. File icons use distinct language marks
+and adjust their contrast for the current theme and selected row.
 
 Project search includes unsaved buffers and shows file/line previews in the
 sidebar. It is cancellable and bounded to 1 MiB per file, 64 MiB total and 2,000
