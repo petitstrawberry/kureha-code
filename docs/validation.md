@@ -695,3 +695,19 @@ and back into the panel without restarting their PTYs.
   was rendered and visually reviewed with ScarletUI's CPU validation pipeline.
   Panel-hidden and restored layouts were also rendered; this is not a native GPU capture.
 - The locked, offline macOS release build passed. No new Linux, Windows or Scarlet runtime check was performed.
+
+
+## Terminal IME — 2026-11-10
+
+Terminal focus now exposes a text-input context and caret rectangle through
+ScarletUI. Composition renders locally with a selection and underline; only
+committed UTF-8 reaches the PTY. Candidate positioning follows the cursor and
+viewport, including long compositions. Blur, cancellation and session close
+clear the composition without sending it to the shell.
+
+- 120 library + 106 application tests passed; 10 optional/manual tests ignored.
+- Mounted tests verify input-context registration, Japanese preedit rendering,
+  suppression of conversion keys, exact committed bytes, cancellation, focus
+  changes, viewport clamping and absence of idle frame invalidation.
+- The locked, offline macOS release build passed.
+- The user confirmed that terminal IME works with the updated build.
