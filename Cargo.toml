@@ -7,6 +7,7 @@ license = "MIT"
 
 [dependencies]
 regex = "1"
+pulldown-cmark = { version = "0.13.4", default-features = false }
 vt100 = "0.16.2"
 serde_json = "1"
 toml = "0.8"
@@ -21,6 +22,7 @@ scarlet-fs = { git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3
 scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "1e0c15585dda178b8e70594ed850d9148da2918d", default-features = false, features = ["std", "platform-sws"] }
 
 [target.'cfg(not(target_os = "scarlet"))'.dependencies]
+ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
 scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "1e0c15585dda178b8e70594ed850d9148da2918d", default-features = false, features = ["std", "platform-winit"] }
 
 [target.'cfg(all(unix, not(target_os = "scarlet")))'.dependencies]

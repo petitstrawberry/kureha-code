@@ -16,3 +16,6 @@ pub mod media;
 pub mod minimap;
 pub mod terminal;
 pub mod theme;
+
+pub mod markdown;
+pub mod markdown_resources;

@@ -375,6 +375,9 @@ impl App {
                 }
                 if !(modifiers.primary() && matches!(keycode, KeyCode::Char('w' | 'W' | 'n' | 'N' | 'o' | 'O' | '1'..='9' | '\\' | '|') | KeyCode::Tab) || modifiers.control && *keycode == KeyCode::Tab) { return false; }
             }
+            if modifiers.primary() && modifiers.shift && !modifiers.alt && matches!(keycode, KeyCode::Char('v'|'V')) {
+                keys.toggle_markdown_preview(); return true;
+            }
             if keys.language_key(*keycode, *modifiers) {
                 return true;
             }
@@ -890,6 +893,19 @@ impl App {
                     App::show_commands,
                 ),
                 self.item("go-to-line", "Go to Line…", "Ctrl+G", App::show_go_to_line),
+                MenuEntry::Separator,
+                self.item(
+                    "markdown-preview",
+                    "Toggle Markdown Preview",
+                    "Ctrl+Shift+V",
+                    App::toggle_markdown_preview,
+                ),
+                self.item(
+                    "markdown-preview-side",
+                    "Open Markdown Preview to Side",
+                    "",
+                    App::markdown_preview_to_side,
+                ),
                 MenuEntry::Separator,
                 self.item("split-right", "Split Editor Right", "Ctrl+\\", |a| {
                     a.split_editor(false)

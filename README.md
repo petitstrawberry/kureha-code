@@ -315,7 +315,39 @@ are preserved. Empty panes collapse; splitting the only tab keeps a view in
 both panes when splitting that same pane. Moving the sole tab to another pane
 collapses the empty source. Escape or dropping outside the editor cancels the gesture.
 
-HTML/Markdown previews are at the WebView design stage, not enabled yet.
+## Built-in Markdown preview
+
+View → Toggle Markdown Preview (Primary+Shift+V) switches the current pane
+between source and preview. Open Markdown Preview to Side keeps the source
+alongside a live preview of the same unsaved document. The Source button returns
+to editing. Preview mode follows tabs when they move between editor groups;
+saving and Undo history still belong to the shared document.
+
+CommonMark is parsed with pulldown-cmark and drawn directly by ScarletUI, without
+a browser process. Headings, quotes, nested lists, tasks, tables, inline code,
+links, and fenced code with syntax colors follow the selected theme. Strong text
+uses native emphasis; italic markup uses the theme accent. Heading links scroll
+within the preview; file links open in the editor and web links open in the system
+browser. Preview text selection and full HTML/CSS layout are not implemented.
+
+Markdown images are embedded in the document, with aspect ratio and alpha
+preserved. Relative/absolute local paths (including URI-escaped names) and, on
+macOS/Windows/Linux, HTTP/HTTPS URLs support PNG, JPEG, GIF (first frame), WebP,
+BMP and ICO. SVG is not supported yet. Failed images show their alt text and the
+load error. `Markdown: Refresh Preview` reloads images changed independently of
+the Markdown file. Local resources reuse decoded pixels while their size and
+modification time match; remote resources are cached for 60 seconds across text
+edits. Remote requests have a four-second deadline and no shared browser session.
+
+Parsing and image loading use separate bounded workers, so an image response
+cannot block text updates. Rendering reuses layout until content, theme, font or
+width changes. Hidden panes stop requesting work, and stale text revisions and
+image results from an old document path are discarded. Limits are 256 KiB of
+Markdown, 4,000 blocks, 32 distinct images, 16 MiB per encoded image and 16 million
+decoded pixels per preview. Exceeding a limit displays the reason and leaves the
+source available. Scarlet currently supports local embedded images only.
+
+HTML preview remains at the WebView design stage.
 [The WebView design](docs/webview.md) reuses Myrica's engine/worker boundary and
 allows platform-native WebViews through separate presentation adapters. It
 covers in-memory documents, relative resources, native-view composition and the
