@@ -317,11 +317,19 @@ collapses the empty source. Escape or dropping outside the editor cancels the ge
 
 ## Built-in Markdown preview
 
-View → Toggle Markdown Preview (Primary+Shift+V) switches the current pane
-between source and preview. Open Markdown Preview to Side keeps the source
-alongside a live preview of the same unsaved document. The Source button returns
-to editing. Preview mode follows tabs when they move between editor groups;
-saving and Undo history still belong to the shared document.
+The workspace starts empty. Closing the last document leaves it empty; New File
+(Primary+N) explicitly creates an untitled document.
+
+View → Open Markdown Preview (Primary+Shift+V) opens an independent preview pane
+beside the source. Repeating the command focuses that preview. Its × closes only
+the preview, and Source focuses the associated editor. Unsaved changes appear
+live without saving; text and Undo history remain in the source document.
+
+File Sync follows the associated editor's active Markdown file; turn it off to
+pin the current file. Other file types leave a following preview empty. Scroll
+Sync aligns source and preview in both directions and can be disabled separately.
+Both switches start enabled. Position mapping interpolates between Markdown
+blocks, so it is approximate within long paragraphs and code blocks.
 
 CommonMark is parsed with pulldown-cmark and drawn directly by ScarletUI, without
 a browser process. Headings, quotes, nested lists, tasks, tables, inline code,
@@ -340,8 +348,10 @@ modification time match; remote resources are cached for 60 seconds across text
 edits. Remote requests have a four-second deadline and no shared browser session.
 
 Parsing and image loading use separate bounded workers, so an image response
-cannot block text updates. Rendering reuses layout until content, theme, font or
-width changes. Hidden panes stop requesting work, and stale text revisions and
+cannot block text updates. Desktop presentation uses ScarletUI's sgfx/wgpu path;
+parsing, text measurement and layout still run on the CPU. Scrolling emits paint
+commands only for visible content. Layout caches survive provisional split-pane
+measurements, and edits/image completion reuse unchanged paragraph measurements. Hidden panes stop requesting work, and stale text revisions and
 image results from an old document path are discarded. Limits are 256 KiB of
 Markdown, 4,000 blocks, 32 distinct images, 16 MiB per encoded image and 16 million
 decoded pixels per preview. Exceeding a limit displays the reason and leaves the

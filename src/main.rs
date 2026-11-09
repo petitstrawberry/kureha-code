@@ -154,11 +154,34 @@ struct App {
     navigation: Arc<AtomicU64>,
 }
 impl App {
+    #[cfg(test)]
+    fn with_document() -> Self {
+        let app = Self::new();
+        app.new_document();
+        app
+    }
+    #[cfg(test)]
+    fn document_id(&self) -> DocumentId {
+        self.active_id().expect("test requires an open document")
+    }
+    fn close_active(&self) {
+        if self.is_preview_pane(self.focused_group.get()) {
+            self.close_markdown_preview(self.focused_group.get());
+            return;
+        }
+        if let Some(id) = self.active_id() {
+            self.request_close(Some(id));
+        }
+    }
+    fn save_as(&self) {
+        if let Some(id) = self.active_id() {
+            self.picker(DialogPurpose::Save(id));
+        }
+    }
     fn new() -> Self {
         let mut runtime = Runtime::default();
-        let first = runtime.workspace.documents[0].id;
-        runtime.group_tabs = vec![vec![first]];
-        let panes = State::new(generate_state_id(), vec![Some(first)]);
+        runtime.group_tabs = vec![Vec::new()];
+        let panes = State::new(generate_state_id(), vec![None]);
         let focused_group = State::new(generate_state_id(), 0);
         let navigation = Arc::new(AtomicU64::new(0));
         for state in [&panes as &dyn Listenable, &focused_group] {
@@ -182,7 +205,7 @@ impl App {
             panel_position: State::new(generate_state_id(), terminal_ui::PanelPosition::Bottom),
             panel_fractions: State::new(generate_state_id(), [0.70, 0.67]),
             terminal: terminal_ui::Panel::new(),
-            language_status: State::new(generate_state_id(), "Plain text".into()),
+            language_status: State::new(generate_state_id(), String::new()),
             language_anchor: State::new(generate_state_id(), Point::new(60.0, 30.0)),
             caret_rect: State::new(generate_state_id(), Rect::from_xywh(60.0, 10.0, 1.0, 20.0)),
             inactive_caret_rect: State::new(generate_state_id(), Rect::zero()),
@@ -192,7 +215,7 @@ impl App {
             navigation,
             chrome: State::new(generate_state_id(), 0),
             status: State::new(generate_state_id(), "Ready".into()),
-            position: State::new(generate_state_id(), "Ln 1, Col 1 · UTF-8 · LF".into()),
+            position: State::new(generate_state_id(), String::new()),
             tree_rows: State::initial(generate_state_id()),
             tree_selected: State::initial(generate_state_id()),
             confirmation: State::new(generate_state_id(), String::new()),
@@ -231,11 +254,13 @@ impl App {
     fn invalidate_clipboard(&self) {
         self.navigation.fetch_add(1, Ordering::Relaxed);
     }
-    fn active_id(&self) -> DocumentId {
+    fn active_id(&self) -> Option<DocumentId> {
         self.group_id(self.focused_group.get())
     }
     fn window_title(&self) -> String {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return env!("APP_NAME").into();
+        };
         let rt = self.runtime.lock().unwrap();
         let doc = rt.workspace.get(id).unwrap();
         format!(
@@ -257,7 +282,7 @@ impl App {
         rt.dialog.is_none()
             && rt.close.is_none()
             && rt.workspace.get(id).is_some_and(|doc| doc.image.is_none())
-            && !rt.markdown.modes.contains(&(id, self.focused_group.get()))
+            && !rt.markdown.panels.contains_key(&self.focused_group.get())
             && !matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id: saving, .. }) if *saving == id)
     }
     fn sync_editor(&self, id: DocumentId) {
@@ -315,7 +340,9 @@ impl App {
         }
     }
     fn undo(&self, redo: bool) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         if !self.editable(id) {
             return;
         }
@@ -330,7 +357,9 @@ impl App {
         self.changed();
     }
     fn select_all(&self) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         if !self.editable(id) {
             return;
         }
@@ -351,12 +380,14 @@ impl App {
         if self.blocked() {
             return;
         }
-        if self.active_id() != id && self.runtime.lock().unwrap().workspace.get(id).is_some() {
+        if self.active_id() != Some(id) && self.runtime.lock().unwrap().workspace.get(id).is_some()
+        {
             self.remember_location();
         }
         self.activate_unchecked(id);
     }
     fn activate_unchecked(&self, id: DocumentId) {
+        self.focus_editor();
         let group = self.focused_group.get();
         let exists = {
             let mut rt = self.runtime.lock().unwrap();
@@ -375,7 +406,9 @@ impl App {
         if self.blocked() {
             return;
         }
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         let next = {
             let rt = self.runtime.lock().unwrap();
             let tabs = &rt.group_tabs[self.focused_group.get()];
@@ -393,6 +426,7 @@ impl App {
         if self.blocked() {
             return;
         }
+        self.focus_editor();
         self.remember_location();
         let id = self.runtime.lock().unwrap().workspace.new_document();
         self.activate_unchecked(id);
@@ -414,21 +448,26 @@ impl App {
                     panes[group] = tabs.get(index.min(tabs.len().saturating_sub(1))).copied();
                 }
             }
-            if panes.iter().all(Option::is_none) {
-                let group = self.focused_group.get();
-                let replacement = rt.workspace.documents[0].id;
-                rt.group_tabs[group].push(replacement);
-                panes[group] = Some(replacement);
-            }
         }
         self.panes.set(panes.clone());
-        let keep = |g: usize| panes[g].is_some();
-        if let Some(layout) = self.pane_layout.get().retain(&keep) {
-            self.pane_layout.set(layout);
-        }
+        let editors = self.editor_pane_order();
+        let keep_empty = editors
+            .iter()
+            .all(|g| panes[*g].is_none())
+            .then(|| editors.first().copied())
+            .flatten();
+        let layout = self
+            .pane_layout
+            .get()
+            .retain(&|g| panes[g].is_some() || self.is_preview_pane(g) || Some(g) == keep_empty)
+            .unwrap_or(groups::PaneLayout::Leaf(self.focused_group.get()));
+        self.pane_layout.set(layout);
         if !self.group_exists(self.focused_group.get()) {
             self.focus_group(self.pane_order()[0]);
         }
+        self.invalidate_clipboard();
+        self.dismiss_language_panel();
+        self.update_position();
         self.changed();
     }
     fn request_close(&self, tab: Option<DocumentId>) {
@@ -593,6 +632,7 @@ impl App {
         self.changed();
     }
     fn open(&self, path: PathBuf) {
+        self.focus_editor();
         if self.blocked() || self.runtime.lock().unwrap().job.is_some() {
             return;
         }
@@ -614,7 +654,10 @@ impl App {
             let rt = self.runtime.lock().unwrap();
             rt.close.as_ref().and_then(|close| close.target)
         }
-        .unwrap_or_else(|| self.active_id());
+        .or_else(|| self.active_id());
+        let Some(id) = id else {
+            return;
+        };
         let path = self
             .runtime
             .lock()
@@ -824,7 +867,7 @@ impl App {
         if self.blocked() {
             return;
         }
-        if let Some(bindings) = self.bindings(self.active_id()) {
+        if let Some(bindings) = self.active_id().and_then(|id| self.bindings(id)) {
             let document = bindings.document.get();
             if let Some(range) = bindings.selection.get().normalized_range() {
                 if let Some(text) = document.as_str().get(range) {
@@ -840,7 +883,7 @@ impl App {
         if self.blocked() {
             return;
         }
-        let Some(bindings) = self.bindings(self.active_id()) else {
+        let Some(bindings) = self.active_id().and_then(|id| self.bindings(id)) else {
             return;
         };
         let selection = bindings.selection.get();
@@ -881,7 +924,9 @@ impl App {
         }
     }
     fn replace_match(&self) {
-        let target = self.clipboard_target();
+        let Some(target) = self.clipboard_target() else {
+            return;
+        };
         let Some(bindings) = self.bindings(target.id) else {
             return;
         };
@@ -903,7 +948,9 @@ impl App {
         self.find(false);
     }
     fn replace_all(&self) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         if !self.editable(id) {
             return;
         }
@@ -951,9 +998,11 @@ impl App {
         }
     }
     fn clipboard_service(&self) -> Option<TextClipboard> {
-        if !self.editable(self.active_id()) {
-            self.status.set("Finish the file operation first".into());
-            return None;
+        if !self.terminal_focused() {
+            let id = self.active_id()?;
+            if !self.editable(id) {
+                return None;
+            }
         }
         let service = {
             let rt = self.runtime.lock().unwrap();
@@ -975,18 +1024,20 @@ impl App {
             }
         }
     }
-    fn clipboard_target(&self) -> ClipboardTarget {
-        let id = self.active_id();
+    fn clipboard_target(&self) -> Option<ClipboardTarget> {
+        let id = self.active_id()?;
         let bindings = self.bindings(id).unwrap();
-        ClipboardTarget {
+        Some(ClipboardTarget {
             id,
             generation: bindings.generation(),
             navigation: self.navigation.load(Ordering::Relaxed),
             selection: bindings.selection.get(),
-        }
+        })
     }
     fn copy(&self, cut: bool) {
-        let target = self.clipboard_target();
+        let Some(target) = self.clipboard_target() else {
+            return;
+        };
         let Some(range) = target.selection.normalized_range() else {
             return;
         };
@@ -1015,7 +1066,9 @@ impl App {
         let Some(service) = self.clipboard_service() else {
             return;
         };
-        let target = self.clipboard_target();
+        let Some(target) = self.clipboard_target() else {
+            return;
+        };
         let handle = service.read_text();
         self.runtime.lock().unwrap().clipboard_job = Some(ClipboardJob::Paste { handle, target });
         self.status.set("Reading desktop clipboard…".into());
@@ -1032,7 +1085,7 @@ impl App {
             Some(ClipboardJob::TerminalPaste { handle, target });
     }
     fn apply_clipboard(&self, target: ClipboardTarget, text: &str) -> bool {
-        if self.active_id() != target.id
+        if self.active_id() != Some(target.id)
             || !self.editable(target.id)
             || self.navigation.load(Ordering::Relaxed) != target.navigation
         {
@@ -1267,14 +1320,14 @@ impl App {
         text: String,
         image: Option<kureha_code::media::ImageAsset>,
     ) {
-        let group_closed = !self.group_exists(group);
+        let group_closed = !self.group_exists(group) || self.is_preview_pane(group);
         let destination = if group_closed {
-            self.pane_order()[0]
+            self.editor_pane_order()[0]
         } else {
             group
         };
         let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
-        if !group_closed && existing != Some(self.group_id(destination)) {
+        if !group_closed && existing != self.group_id(destination) {
             self.remember_location_in(destination);
         }
         let id = {
@@ -1301,7 +1354,15 @@ impl App {
         self.status.set("Ready".into());
     }
     fn update_position(&self) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            if !self.position.get().is_empty() {
+                self.position.set(String::new());
+            }
+            if !self.language_status.get().is_empty() {
+                self.language_status.set(String::new());
+            }
+            return;
+        };
         let selection = self.bindings(id).unwrap().selection.get();
         let rt = self.runtime.lock().unwrap();
         let doc = rt.workspace.get(id).unwrap();

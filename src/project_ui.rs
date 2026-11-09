@@ -572,7 +572,9 @@ impl App {
             self.sync_editor(*id);
         }
         if !ids.is_empty() {
-            self.activate_unchecked(active);
+            if let Some(active) = active {
+                self.activate_unchecked(active);
+            }
             self.changed();
         }
         Ok((ids.len(), matches))
@@ -656,7 +658,7 @@ impl App {
                 .set("Result changed; search again to locate it".into());
             return;
         }
-        let same_document = self.active_id() == id;
+        let same_document = self.active_id() == Some(id);
         self.activate(id);
         let Some(bindings) = self.bindings(id) else {
             return;
@@ -699,7 +701,8 @@ impl App {
             // File completion activates its tab once; any intervening tab/group
             // navigation contributes another generation and cancels this jump.
             if navigation == pending.navigation
-                || (navigation == pending.navigation.wrapping_add(1) && self.active_id() == id)
+                || (navigation == pending.navigation.wrapping_add(1)
+                    && self.active_id() == Some(id))
             {
                 self.select_project_result(id, &pending.source, pending.range, false);
             }
@@ -873,7 +876,7 @@ mod tests {
 
     #[test]
     fn replacement_preflights_every_revision_before_any_edit() {
-        let app = App::new();
+        let app = App::with_document();
         let first = open(&app, "/project/a.rs", "cat one");
         let second = open(&app, "/project/b.rs", "cat two");
         let found = results(&app, &[first, second]);
@@ -897,7 +900,7 @@ mod tests {
 
     #[test]
     fn replacement_respects_unsaved_text_and_separate_document_undo() {
-        let app = App::new();
+        let app = App::with_document();
         let first = open(&app, "/project/a.rs", "cat one");
         let second = open(&app, "/project/b.rs", "cat two");
         app.edit(
@@ -947,8 +950,8 @@ mod tests {
 
     #[test]
     fn unopened_replacement_preserves_raw_baseline_and_registers_tab() {
-        let app = App::new();
-        let previous = app.active_id();
+        let app = App::with_document();
+        let previous = app.document_id();
         let source = Source {
             path: PathBuf::from("/project/closed.rs"),
             text: "cat\n".into(),
@@ -977,7 +980,7 @@ mod tests {
             app.apply_project_replacements(&found, changes).unwrap(),
             (1, 1)
         );
-        assert_eq!(app.active_id(), previous);
+        assert_eq!(app.document_id(), previous);
         let id = {
             let rt = app.runtime.lock().unwrap();
             let id = rt
@@ -1007,7 +1010,7 @@ mod tests {
 
     #[test]
     fn opening_result_after_scan_aborts_all_replacement() {
-        let app = App::new();
+        let app = App::with_document();
         let first = open(&app, "/project/a.rs", "cat");
         let mut found = results(&app, &[first]);
         let closed = Source {
@@ -1058,7 +1061,7 @@ mod tests {
 
     #[test]
     fn completed_search_with_new_query_or_root_is_discarded() {
-        let app = App::new();
+        let app = App::with_document();
         app.runtime.lock().unwrap().explorer.root = Some(PathBuf::from("/project"));
         let id = open(&app, "/project/a.rs", "cat");
         app.project.query.set("cat".into());
@@ -1077,7 +1080,7 @@ mod tests {
 
     #[test]
     fn replacement_input_changed_while_worker_ran_does_not_apply() {
-        let app = App::new();
+        let app = App::with_document();
         app.runtime.lock().unwrap().explorer.root = Some(PathBuf::from("/project"));
         let id = open(&app, "/project/a.rs", "cat");
         let found = Arc::new(results(&app, &[id]));
@@ -1098,7 +1101,7 @@ mod tests {
 
     #[test]
     fn stale_result_activation_preserves_selection() {
-        let app = App::new();
+        let app = App::with_document();
         let id = open(&app, "/project/a.rs", "cat one");
         let found = results(&app, &[id]);
         app.edit(
@@ -1115,7 +1118,7 @@ mod tests {
 
     #[test]
     fn search_result_and_replacement_use_focused_split_bindings() {
-        let app = App::new();
+        let app = App::with_document();
         let id = open(&app, "/project/a.rs", "cat one\ncat two");
         let left = app.bindings(id).unwrap();
         left.selection.set(TextSelection::collapsed(5));
@@ -1180,7 +1183,7 @@ mod tests {
         std::fs::write(&second_path, "cat two\r\n").unwrap();
         std::fs::create_dir(dir.0.join("target")).unwrap();
         std::fs::write(dir.0.join("target/ignored.txt"), "cat build").unwrap();
-        let app = App::new();
+        let app = App::with_document();
         app.runtime.lock().unwrap().explorer.root = Some(dir.0.clone());
         let first = open(&app, first_path.to_str().unwrap(), "cat disk\r\n");
         app.edit(
@@ -1228,7 +1231,7 @@ mod tests {
         let dir = Fixture::new();
         let path = dir.0.join("a.txt");
         std::fs::write(&path, "cat result\n").unwrap();
-        let app = App::new();
+        let app = App::with_document();
         let id = open(&app, path.to_str().unwrap(), "cat result\n");
         app.runtime.lock().unwrap().explorer.root = Some(dir.0.clone());
         app.show_project_search();
@@ -1391,7 +1394,7 @@ mod tests {
             let dir = Fixture::new();
             let path = dir.0.join("unopened.txt");
             std::fs::write(&path, "before\ncat result\n").unwrap();
-            let app = App::new();
+            let app = App::with_document();
             if split {
                 app.split_editor(false);
             }
@@ -1410,7 +1413,7 @@ mod tests {
             }
             app.poll_project_search();
             assert_eq!(
-                app.bindings(app.active_id())
+                app.bindings(app.document_id())
                     .unwrap()
                     .selection
                     .get()

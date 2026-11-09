@@ -532,3 +532,58 @@ Validation on macOS through the locked Nix development environment:
   visually reviewed for headings, nested content, code colors, tables and the
   embedded image. This was a ScarletUI CPU renderer review, not a native window
   interaction pass.
+
+
+## Independent previews and bounded painting — 2026-11-09
+
+The workspace now starts with no document. Closing the last document leaves an
+empty editor; creating an untitled document is explicit. Markdown previews are
+independent panes opened beside their associated editor, rather than a tab mode.
+They follow unsaved text and optionally follow the active Markdown file and
+scroll position. Closing a preview preserves its source. File opens, tab moves,
+and editor-group closure cannot turn a preview into an ordinary editor tab.
+
+Scroll synchronization uses source-line/block geometry in both directions, even
+without clicking to transfer focus. A queued reveal is clamped when a document
+shrinks, and programmatic movement is not echoed back. Within a block, source
+positions are interpolated rather than mapped character by character.
+
+ScarletUI is pinned to published revision 88d8873b217460d381995e625d2003fb87c5fc1e
+([PR #92](https://github.com/petitstrawberry/scarlet-ui/pull/92)). Custom render
+objects receive viewport changes and can invalidate their own paint without
+requesting layout on every scroll. The upstream core suite passed 703 tests,
+with five optional tests ignored; a mounted regression verifies new scrolled
+pixels without another content layout.
+
+Kureha emits paint commands only for visible Markdown runs, panels and images.
+Unchanged paragraphs keep their measured runs after edits and image completion.
+Two retained width layouts avoid remeasuring text when split containers probe a
+provisional width. Glyph advances are shared across paragraphs during layout;
+decoded image buffers remain shared with the backend.
+
+Validation in the locked Nix environment on macOS ARM64:
+
+- Full suite: 113 library + 102 application tests passed; eight ignored.
+  PTY validation used `SHELL=/bin/sh` for a predictable interactive shell.
+- After the final geometry/measurement changes, all ten focused Markdown tests
+  passed again (one screenshot fixture ignored).
+- Mounted regressions cover bidirectional wheel synchronization, no feedback
+  loop, disabled synchronization, shrinking documents with a queued reveal,
+  following/pinning files, source activation from a preview, closing either
+  document or preview, and an entirely empty workspace.
+- A 1,000-paragraph regression generates fewer than 200 paint commands for a
+  400px viewport at three scroll positions, over 50 times fewer than painting
+  the full fixture. Scrolling preserves geometry, unchanged paragraphs preserve
+  their measured buffers, and provisional width changes reuse the prior layout.
+  These are command-count/cache checks, not frame-rate measurements.
+- The release build passed. A separate native process was launched with
+  `SCARLET_UI_WINIT_RENDERER=sgfx`, which disables CPU fallback. It reported
+  `[ScarletUI] platform-winit renderer=sgfx backend=wgpu`.
+- Native input/scrolling could not be verified: computer-use window lookup
+  returned `cgWindowNotFound`. GPU initialization is verified; GPU frame rates
+  and native preview interactions are not claimed measured.
+- The updated [two-pane screenshot](screenshots/markdown-preview.png) was rendered
+  by ScarletUI's CPU validation pipeline and visually reviewed, including the
+  independent preview controls and embedded image. It is not a GPU screenshot.
+
+No new Scarlet, Windows or Linux runtime verification was performed.

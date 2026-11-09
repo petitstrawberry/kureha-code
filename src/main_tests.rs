@@ -35,7 +35,7 @@ fn shifted_split_shortcut_accepts_logical_pipe_character() {
     ));
     assert_eq!(
         app.panes.get().get(1).copied().flatten(),
-        Some(app.group_id(0))
+        Some(app.group_id(0).unwrap())
     );
     pipeline.teardown();
 }
@@ -43,7 +43,7 @@ fn shifted_split_shortcut_accepts_logical_pipe_character() {
 #[test]
 fn split_editors_share_text_and_undo_but_keep_tabs_selection_and_scroll_independent() {
     let app = test_app("first\nsecond\nthird", Some("RIGHT"), false);
-    let id = app.active_id();
+    let id = app.document_id();
     let left = app.bindings(id).unwrap();
     left.selection.set(TextSelection::collapsed(3));
     left.scroll.set(TextViewScroll { x: 10.0, y: 42.0 });
@@ -64,10 +64,10 @@ fn split_editors_share_text_and_undo_but_keep_tabs_selection_and_scroll_independ
     assert_eq!(left.document.get().as_str(), "first\nsecond\nthird");
     assert_eq!(right.selection.get().normalized_range(), Some(6..12));
     app.new_document();
-    let other = app.active_id();
+    let other = app.document_id();
     assert_ne!(other, id);
-    assert_eq!(app.group_id(0), id);
-    assert_eq!(app.group_id(1), other);
+    assert_eq!(app.group_id(0).unwrap(), id);
+    assert_eq!(app.group_id(1).unwrap(), other);
     app.activate(id);
     app.select_all();
     app.paste();
@@ -84,7 +84,7 @@ fn split_editors_share_text_and_undo_but_keep_tabs_selection_and_scroll_independ
             .editor
             .dirty()
     );
-    assert_eq!(app.group_id(0), id);
+    assert_eq!(app.group_id(0).unwrap(), id);
     app.close_split();
     assert!(app.panes.get().get(1).copied().flatten().is_none());
     assert!(app.runtime.lock().unwrap().group_tabs[0].contains(&other));
@@ -99,7 +99,7 @@ struct TestClipboard {
 fn save_all_writes_dirty_buffers_and_stops_before_overwriting_external_edits() {
     let root = std::env::temp_dir().join(format!("kureha-save-all-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    let app = App::new();
+    let app = App::with_document();
     let mut ids = Vec::new();
     for name in ["a.rs", "b.rs", "c.rs"] {
         let path = root.join(name);
@@ -174,7 +174,7 @@ impl ClipboardProvider for TestClipboard {
 }
 
 fn test_app(text: &str, clipboard_text: Option<&str>, fail_write: bool) -> App {
-    let app = App::new();
+    let app = App::with_document();
     {
         let mut rt = app.runtime.lock().unwrap();
         rt.workspace.documents[0].editor = Editor::new(text);
@@ -183,7 +183,7 @@ fn test_app(text: &str, clipboard_text: Option<&str>, fail_write: bool) -> App {
             fail_write,
         }));
     }
-    app.sync_editor(app.active_id());
+    app.sync_editor(app.document_id());
     app
 }
 
@@ -206,14 +206,14 @@ fn copy_and_cut_preserve_unicode_and_cut_is_undoable() {
         anchor: TextPosition::new(8),
         caret: TextPosition::new(1),
     };
-    app.bindings(app.active_id())
+    app.bindings(app.document_id())
         .unwrap()
         .selection
         .set(selection);
     app.copy(false);
     finish_clipboard(&app);
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -221,7 +221,7 @@ fn copy_and_cut_preserve_unicode_and_cut_is_undoable() {
         "a猫🍁z"
     );
     assert_eq!(
-        app.bindings(app.active_id()).unwrap().selection.get(),
+        app.bindings(app.document_id()).unwrap().selection.get(),
         selection
     );
     assert!(
@@ -231,7 +231,7 @@ fn copy_and_cut_preserve_unicode_and_cut_is_undoable() {
     );
     app.copy(true);
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -240,7 +240,7 @@ fn copy_and_cut_preserve_unicode_and_cut_is_undoable() {
     );
     finish_clipboard(&app);
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -248,12 +248,12 @@ fn copy_and_cut_preserve_unicode_and_cut_is_undoable() {
         "az"
     );
     assert_eq!(
-        app.bindings(app.active_id()).unwrap().selection.get(),
+        app.bindings(app.document_id()).unwrap().selection.get(),
         TextSelection::collapsed(1)
     );
     app.undo(false);
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -261,12 +261,12 @@ fn copy_and_cut_preserve_unicode_and_cut_is_undoable() {
         "a猫🍁z"
     );
     assert_eq!(
-        app.bindings(app.active_id()).unwrap().selection.get(),
+        app.bindings(app.document_id()).unwrap().selection.get(),
         selection
     );
     app.undo(true);
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -276,7 +276,7 @@ fn copy_and_cut_preserve_unicode_and_cut_is_undoable() {
     app.paste();
     finish_clipboard(&app);
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -293,11 +293,11 @@ fn failed_or_oversized_cut_never_deletes_text() {
     ] {
         let app = test_app(&text, Some("original clipboard"), true);
         app.select_all();
-        let selection = app.bindings(app.active_id()).unwrap().selection.get();
+        let selection = app.bindings(app.document_id()).unwrap().selection.get();
         app.copy(true);
         finish_clipboard(&app);
         assert_eq!(
-            app.bindings(app.active_id())
+            app.bindings(app.document_id())
                 .unwrap()
                 .document
                 .get()
@@ -305,7 +305,7 @@ fn failed_or_oversized_cut_never_deletes_text() {
             text
         );
         assert_eq!(
-            app.bindings(app.active_id()).unwrap().selection.get(),
+            app.bindings(app.document_id()).unwrap().selection.get(),
             selection
         );
         assert!(
@@ -321,11 +321,11 @@ fn failed_or_oversized_cut_never_deletes_text() {
 fn paste_normalizes_line_endings_and_restores_selection_on_undo() {
     let app = test_app("replace me", Some("猫\r\n🍁\rfin"), false);
     app.select_all();
-    let selection = app.bindings(app.active_id()).unwrap().selection.get();
+    let selection = app.bindings(app.document_id()).unwrap().selection.get();
     app.paste();
     finish_clipboard(&app);
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -333,7 +333,7 @@ fn paste_normalizes_line_endings_and_restores_selection_on_undo() {
         "猫\n🍁\nfin"
     );
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .selection
             .get()
@@ -343,7 +343,7 @@ fn paste_normalizes_line_endings_and_restores_selection_on_undo() {
     );
     app.undo(false);
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -351,7 +351,7 @@ fn paste_normalizes_line_endings_and_restores_selection_on_undo() {
         "replace me"
     );
     assert_eq!(
-        app.bindings(app.active_id()).unwrap().selection.get(),
+        app.bindings(app.document_id()).unwrap().selection.get(),
         selection
     );
 }
@@ -360,7 +360,7 @@ fn paste_normalizes_line_endings_and_restores_selection_on_undo() {
 fn clipboard_paste_undo_is_separate_from_adjacent_typing() {
     let app = test_app("", Some("猫🍁"), false);
     app.edit(
-        app.active_id(),
+        app.document_id(),
         &EditDelta {
             replaced_range: 0..0,
             inserted: "before".into(),
@@ -369,21 +369,21 @@ fn clipboard_paste_undo_is_separate_from_adjacent_typing() {
     app.paste();
     finish_clipboard(&app);
     let byte = app
-        .bindings(app.active_id())
+        .bindings(app.document_id())
         .unwrap()
         .selection
         .get()
         .caret
         .byte;
     app.edit(
-        app.active_id(),
+        app.document_id(),
         &EditDelta {
             replaced_range: byte..byte,
             inserted: "after".into(),
         },
     );
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -393,7 +393,7 @@ fn clipboard_paste_undo_is_separate_from_adjacent_typing() {
     for text in ["before猫🍁", "before", ""] {
         app.undo(false);
         assert_eq!(
-            app.bindings(app.active_id())
+            app.bindings(app.document_id())
                 .unwrap()
                 .document
                 .get()
@@ -401,14 +401,14 @@ fn clipboard_paste_undo_is_separate_from_adjacent_typing() {
             text
         );
         assert_eq!(
-            app.bindings(app.active_id()).unwrap().selection.get(),
+            app.bindings(app.document_id()).unwrap().selection.get(),
             TextSelection::collapsed(text.len())
         );
     }
     for text in ["before", "before猫🍁", "before猫🍁after"] {
         app.undo(true);
         assert_eq!(
-            app.bindings(app.active_id())
+            app.bindings(app.document_id())
                 .unwrap()
                 .document
                 .get()
@@ -425,11 +425,11 @@ fn empty_clipboard_and_empty_copy_leave_selection_and_history_alone() {
         app.copy(true);
         assert!(app.runtime.lock().unwrap().clipboard_job.is_none());
         app.select_all();
-        let selection = app.bindings(app.active_id()).unwrap().selection.get();
+        let selection = app.bindings(app.document_id()).unwrap().selection.get();
         app.paste();
         finish_clipboard(&app);
         assert_eq!(
-            app.bindings(app.active_id())
+            app.bindings(app.document_id())
                 .unwrap()
                 .document
                 .get()
@@ -437,7 +437,7 @@ fn empty_clipboard_and_empty_copy_leave_selection_and_history_alone() {
             "keep"
         );
         assert_eq!(
-            app.bindings(app.active_id()).unwrap().selection.get(),
+            app.bindings(app.document_id()).unwrap().selection.get(),
             selection
         );
         assert!(
@@ -453,25 +453,25 @@ fn empty_clipboard_and_empty_copy_leave_selection_and_history_alone() {
 fn cut_and_paste_reject_changed_or_restored_targets() {
     let changes: [fn(&App); 4] = [
         |app| {
-            app.bindings(app.active_id())
+            app.bindings(app.document_id())
                 .unwrap()
                 .selection
                 .set(TextSelection::collapsed(0))
         },
         |app| {
-            let selection = app.bindings(app.active_id()).unwrap().selection.get();
-            app.bindings(app.active_id())
+            let selection = app.bindings(app.document_id()).unwrap().selection.get();
+            app.bindings(app.document_id())
                 .unwrap()
                 .selection
                 .set(TextSelection::collapsed(0));
-            app.bindings(app.active_id())
+            app.bindings(app.document_id())
                 .unwrap()
                 .selection
                 .set(selection);
         },
         |app| {
             app.edit(
-                app.active_id(),
+                app.document_id(),
                 &EditDelta {
                     replaced_range: 0..5,
                     inserted: "typed".into(),
@@ -485,7 +485,7 @@ fn cut_and_paste_reject_changed_or_restored_targets() {
             rt.workspace.documents[0].editor = Editor::new("other");
             assert_eq!(rt.workspace.documents[0].editor.revision(), revision);
             drop(rt);
-            app.sync_editor(app.active_id());
+            app.sync_editor(app.document_id());
             app.select_all();
         },
     ];
@@ -499,15 +499,15 @@ fn cut_and_paste_reject_changed_or_restored_targets() {
                 app.paste();
             }
             assert!(
-                !!app.editable(app.active_id()),
+                !!app.editable(app.document_id()),
                 "clipboard must not freeze typing"
             );
             change(&app);
-            let before = app.bindings(app.active_id()).unwrap().document.get();
-            let selection = app.bindings(app.active_id()).unwrap().selection.get();
+            let before = app.bindings(app.document_id()).unwrap().document.get();
+            let selection = app.bindings(app.document_id()).unwrap().selection.get();
             finish_clipboard(&app);
             assert_eq!(
-                app.bindings(app.active_id())
+                app.bindings(app.document_id())
                     .unwrap()
                     .document
                     .get()
@@ -515,7 +515,7 @@ fn cut_and_paste_reject_changed_or_restored_targets() {
                 before.as_str()
             );
             assert_eq!(
-                app.bindings(app.active_id()).unwrap().selection.get(),
+                app.bindings(app.document_id()).unwrap().selection.get(),
                 selection
             );
             assert!(app.status.get().contains("cancelled"));
@@ -534,14 +534,14 @@ fn file_jobs_block_new_commands_and_drain_stale_clipboard_results() {
             app.paste();
         }
         let (sender, receiver) = mpsc::channel();
-        let id = app.active_id();
+        let id = app.document_id();
         app.runtime.lock().unwrap().job = Some(FileJob {
             operation: FileOperation::Save { id, revision: 0 },
             receiver,
         });
         finish_clipboard(&app);
         assert_eq!(
-            app.bindings(app.active_id())
+            app.bindings(app.document_id())
                 .unwrap()
                 .document
                 .get()
@@ -565,20 +565,20 @@ fn file_jobs_block_new_commands_and_drain_stale_clipboard_results() {
         .revision();
     app.worker(
         FileOperation::Save {
-            id: app.active_id(),
+            id: app.document_id(),
             revision,
         },
         move || Ok(Completion::Save(PathBuf::from("saved.txt"), "first".into())),
     );
     let deadline = Instant::now() + Duration::from_secs(3);
-    while !app.editable(app.active_id()) {
+    while !app.editable(app.document_id()) {
         app.poll();
         assert!(Instant::now() < deadline, "file job did not complete");
         thread::yield_now();
     }
     finish_clipboard(&app);
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -597,8 +597,8 @@ fn menu_commands_are_queued_and_execute_on_poll() {
     let window_id = u32::MAX;
     register_menu_callbacks(window_id, &app.menu());
     for id in ["select-all", "copy", "cut", "paste"] {
-        let before = app.bindings(app.active_id()).unwrap().document.get();
-        let selection = app.bindings(app.active_id()).unwrap().selection.get();
+        let before = app.bindings(app.document_id()).unwrap().document.get();
+        let selection = app.bindings(app.document_id()).unwrap().selection.get();
         assert!(invoke_menu_callback(window_id, id));
         let deadline = Instant::now() + Duration::from_secs(3);
         while app.runtime.lock().unwrap().menu_actions.is_empty() {
@@ -606,7 +606,7 @@ fn menu_commands_are_queued_and_execute_on_poll() {
             thread::yield_now();
         }
         assert_eq!(
-            app.bindings(app.active_id())
+            app.bindings(app.document_id())
                 .unwrap()
                 .document
                 .get()
@@ -614,7 +614,7 @@ fn menu_commands_are_queued_and_execute_on_poll() {
             before.as_str()
         );
         assert_eq!(
-            app.bindings(app.active_id()).unwrap().selection.get(),
+            app.bindings(app.document_id()).unwrap().selection.get(),
             selection
         );
         assert!(app.runtime.lock().unwrap().clipboard_job.is_none());
@@ -623,7 +623,7 @@ fn menu_commands_are_queued_and_execute_on_poll() {
     }
     unregister_menu_callbacks(window_id);
     assert_eq!(
-        app.bindings(app.active_id())
+        app.bindings(app.document_id())
             .unwrap()
             .document
             .get()
@@ -635,7 +635,7 @@ fn menu_commands_are_queued_and_execute_on_poll() {
 #[test]
 fn new_tabs_keep_unsaved_text_and_each_tabs_caret_scroll_and_undo() {
     let app = test_app("", None, false);
-    let first = app.active_id();
+    let first = app.document_id();
     app.edit(
         first,
         &EditDelta {
@@ -647,7 +647,7 @@ fn new_tabs_keep_unsaved_text_and_each_tabs_caret_scroll_and_undo() {
     bindings.selection.set(TextSelection::collapsed(5));
     bindings.scroll.set(TextViewScroll { x: 12.0, y: 90.0 });
     app.new_document();
-    let second = app.active_id();
+    let second = app.document_id();
     assert_ne!(first, second);
     app.edit(
         second,
@@ -672,7 +672,7 @@ fn new_tabs_keep_unsaved_text_and_each_tabs_caret_scroll_and_undo() {
 fn clipboard_is_cancelled_after_switching_tabs_even_when_switching_back() {
     for cut in [false, true] {
         let app = test_app("first", Some("clipboard"), false);
-        let first = app.active_id();
+        let first = app.document_id();
         app.select_all();
         if cut {
             app.copy(true);
@@ -680,7 +680,7 @@ fn clipboard_is_cancelled_after_switching_tabs_even_when_switching_back() {
             app.paste();
         }
         app.new_document();
-        let second = app.active_id();
+        let second = app.document_id();
         app.activate(first);
         finish_clipboard(&app);
         assert_eq!(
@@ -695,7 +695,7 @@ fn clipboard_is_cancelled_after_switching_tabs_even_when_switching_back() {
 #[test]
 fn close_cancel_and_window_cancel_preserve_dirty_tabs_including_discard_decisions() {
     let app = test_app("", None, false);
-    let first = app.active_id();
+    let first = app.document_id();
     app.edit(
         first,
         &EditDelta {
@@ -704,7 +704,7 @@ fn close_cancel_and_window_cancel_preserve_dirty_tabs_including_discard_decision
         },
     );
     app.new_document();
-    let second = app.active_id();
+    let second = app.document_id();
     app.edit(
         second,
         &EditDelta {
@@ -737,7 +737,7 @@ fn close_cancel_and_window_cancel_preserve_dirty_tabs_including_discard_decision
 #[test]
 fn discard_closes_only_target_and_save_completion_updates_original_tab() {
     let app = test_app("", None, false);
-    let first = app.active_id();
+    let first = app.document_id();
     app.edit(
         first,
         &EditDelta {
@@ -755,7 +755,7 @@ fn discard_closes_only_target_and_save_completion_updates_original_tab() {
         .editor
         .revision();
     app.new_document();
-    let second = app.active_id();
+    let second = app.document_id();
     app.edit(
         second,
         &EditDelta {
@@ -770,7 +770,7 @@ fn discard_closes_only_target_and_save_completion_updates_original_tab() {
         },
         Ok(Completion::Save(PathBuf::from("first.txt"), "first".into())),
     );
-    assert_eq!(app.active_id(), second);
+    assert_eq!(app.document_id(), second);
     {
         let rt = app.runtime.lock().unwrap();
         assert!(!rt.workspace.get(first).unwrap().editor.dirty());
@@ -780,14 +780,14 @@ fn discard_closes_only_target_and_save_completion_updates_original_tab() {
     app.request_close(Some(second));
     app.discard_close();
     assert!(app.bindings(second).is_none());
-    assert_eq!(app.active_id(), first);
+    assert_eq!(app.document_id(), first);
     assert_eq!(app.bindings(first).unwrap().document.get().as_str(), "one");
 }
 
 #[test]
 fn saving_freezes_only_its_target_and_cannot_clean_newer_revision() {
     let app = test_app("", None, false);
-    let first = app.active_id();
+    let first = app.document_id();
     app.edit(
         first,
         &EditDelta {
@@ -805,7 +805,7 @@ fn saving_freezes_only_its_target_and_cannot_clean_newer_revision() {
         .editor
         .revision();
     app.new_document();
-    let second = app.active_id();
+    let second = app.document_id();
     let (_sender, receiver) = mpsc::channel();
     app.runtime.lock().unwrap().job = Some(FileJob {
         operation: FileOperation::Save {
@@ -857,7 +857,7 @@ fn saving_freezes_only_its_target_and_cannot_clean_newer_revision() {
 #[test]
 fn find_replace_all_is_one_transaction_and_empty_query_does_not_edit() {
     let app = test_app("猫 and 猫", None, false);
-    let id = app.active_id();
+    let id = app.document_id();
     app.query.set("猫".into());
     app.find(false);
     assert_eq!(
@@ -945,7 +945,7 @@ fn workbench_lays_out_without_a_window_at_normal_and_minimum_sizes() {
 fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
     use scarlet_ui::event::{MouseButton, MouseEvent, ScrollSource, WheelPhase};
     use scarlet_ui::pipeline::RenderingPipeline;
-    let app = App::new();
+    let app = App::with_document();
     app.runtime.lock().unwrap().explorer.root = Some(PathBuf::from("/project"));
     app.tree_rows.set(
         (0..100)
@@ -1124,7 +1124,7 @@ fn selection_and_find_overlay_preserve_document_viewport_and_scroll() {
         source: ScrollSource::Trackpad,
     }));
     pipeline.render();
-    let bindings = app.bindings(app.active_id()).unwrap();
+    let bindings = app.bindings(app.document_id()).unwrap();
     let scroll = bindings.scroll.get();
     assert!(scroll.y > 1000.0);
     pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
@@ -1323,7 +1323,7 @@ fn finish_lifecycle_open(app: &App) {
 fn split_lifecycle_remove_right_tab_preserves_left_and_uses_right_neighbors() {
     for close_active in [false, true] {
         let app = test_app("first\nsecond\nthird", None, false);
-        let left = app.active_id();
+        let left = app.document_id();
         let left_view = app.bindings_for(left, 0).unwrap();
         left_view.selection.set(TextSelection::collapsed(2));
         app.split_editor(false);
@@ -1339,8 +1339,11 @@ fn split_lifecycle_remove_right_tab_preserves_left_and_uses_right_neighbors() {
 
         app.request_close(Some(closed));
 
-        assert_eq!(app.group_id(0), left);
-        assert_eq!(app.group_id(1), if close_active { next } else { current });
+        assert_eq!(app.group_id(0).unwrap(), left);
+        assert_eq!(
+            app.group_id(1).unwrap(),
+            if close_active { next } else { current }
+        );
         assert_eq!(app.focused_group.get(), 1);
         assert_eq!(left_view.selection.get(), TextSelection::collapsed(2));
         assert_eq!(next_view.selection.get(), TextSelection::collapsed(9));
@@ -1357,7 +1360,7 @@ fn split_lifecycle_remove_right_tab_preserves_left_and_uses_right_neighbors() {
 #[test]
 fn split_lifecycle_remove_left_tab_never_selects_a_right_only_document() {
     let app = test_app("first\nsecond\nthird", None, false);
-    let left = app.active_id();
+    let left = app.document_id();
     let closed = lifecycle_document(&app, "left-only.txt");
     app.activate(left);
     app.split_editor(false);
@@ -1369,8 +1372,8 @@ fn split_lifecycle_remove_left_tab_never_selects_a_right_only_document() {
 
     app.request_close(Some(closed));
 
-    assert_eq!(app.group_id(0), left);
-    assert_eq!(app.group_id(1), right);
+    assert_eq!(app.group_id(0).unwrap(), left);
+    assert_eq!(app.group_id(1).unwrap(), right);
     assert_eq!(app.focused_group.get(), 0);
     assert_eq!(right_view.selection.get(), TextSelection::collapsed(8));
     let rt = app.runtime.lock().unwrap();
@@ -1382,7 +1385,7 @@ fn split_lifecycle_remove_left_tab_never_selects_a_right_only_document() {
 fn split_lifecycle_removing_last_group_tab_keeps_the_other_group() {
     for group in [0, 1] {
         let app = test_app("first\nsecond\nthird", None, false);
-        let left = app.active_id();
+        let left = app.document_id();
         app.split_editor(false);
         let right = lifecycle_document(&app, "right-only.txt");
         app.request_close(Some(left));
@@ -1394,11 +1397,11 @@ fn split_lifecycle_removing_last_group_tab_keeps_the_other_group() {
 
         if group == 0 {
             assert!(!app.group_exists(0));
-            assert_eq!(app.group_id(1), right);
+            assert_eq!(app.group_id(1).unwrap(), right);
             assert_eq!(right_view.selection.get(), TextSelection::collapsed(8));
             assert_eq!(app.runtime.lock().unwrap().group_tabs[1], vec![right]);
         } else {
-            assert_eq!(app.group_id(0), left);
+            assert_eq!(app.group_id(0).unwrap(), left);
             assert!(app.panes.get().get(1).copied().flatten().is_none());
             assert!(app.runtime.lock().unwrap().group_tabs[1].is_empty());
         }
@@ -1409,7 +1412,7 @@ fn split_lifecycle_removing_last_group_tab_keeps_the_other_group() {
 #[test]
 fn split_lifecycle_closing_background_shared_tab_keeps_active_selection() {
     let app = test_app("first\nsecond\nthird", None, false);
-    let shared = app.active_id();
+    let shared = app.document_id();
     let other = lifecycle_document(&app, "other.txt");
     let current = lifecycle_document(&app, "current.txt");
     app.activate(shared);
@@ -1423,8 +1426,8 @@ fn split_lifecycle_closing_background_shared_tab_keeps_active_selection() {
 
     app.request_close(Some(shared));
 
-    assert_eq!(app.group_id(0), current);
-    assert_eq!(app.group_id(1), shared);
+    assert_eq!(app.group_id(0).unwrap(), current);
+    assert_eq!(app.group_id(1).unwrap(), shared);
     assert_eq!(app.focused_group.get(), 0);
     assert_eq!(current_view.selection.get(), TextSelection::collapsed(3));
     assert_eq!(right_view.selection.get(), TextSelection::collapsed(8));
@@ -1441,7 +1444,7 @@ fn split_lifecycle_async_open_stays_in_origin_without_stealing_focus() {
             .unwrap();
     for origin in [0, 1] {
         let app = test_app("first\nsecond\nthird", None, false);
-        let left = app.active_id();
+        let left = app.document_id();
         app.split_editor(false);
         let right = lifecycle_document(&app, "right-only.txt");
         let left_view = app.bindings_for(left, 0).unwrap();
@@ -1455,7 +1458,7 @@ fn split_lifecycle_async_open_stays_in_origin_without_stealing_focus() {
             Some(FileOperation::Open { group }) if *group == origin
         ));
         app.focus_group(1 - origin);
-        let focused = app.active_id();
+        let focused = app.document_id();
 
         finish_lifecycle_open(&app);
 
@@ -1466,9 +1469,9 @@ fn split_lifecycle_async_open_stays_in_origin_without_stealing_focus() {
             .workspace
             .find_path(&path)
             .unwrap();
-        assert_eq!(app.group_id(origin), opened);
+        assert_eq!(app.group_id(origin).unwrap(), opened);
         assert_eq!(app.focused_group.get(), 1 - origin);
-        assert_eq!(app.active_id(), focused);
+        assert_eq!(app.document_id(), focused);
         assert_eq!(left_view.selection.get(), TextSelection::collapsed(2));
         assert_eq!(right_view.selection.get(), TextSelection::collapsed(8));
         let rt = app.runtime.lock().unwrap();
@@ -1483,7 +1486,7 @@ fn split_lifecycle_async_open_after_group_close_is_a_background_tab() {
         std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main_tests.rs"))
             .unwrap();
     let app = test_app("first\nsecond\nthird", None, false);
-    let left = app.active_id();
+    let left = app.document_id();
     let left_view = app.bindings_for(left, 0).unwrap();
     left_view.selection.set(TextSelection::collapsed(3));
     app.split_editor(false);
@@ -1499,14 +1502,14 @@ fn split_lifecycle_async_open_after_group_close_is_a_background_tab() {
     drop(rt);
     assert!(app.panes.get().get(1).copied().flatten().is_none());
     assert_eq!(app.focused_group.get(), 0);
-    assert_eq!(app.active_id(), left);
+    assert_eq!(app.document_id(), left);
     assert_eq!(left_view.selection.get(), TextSelection::collapsed(3));
 }
 
 #[test]
 fn split_selections_follow_paste_indentation_and_undo_redo() {
     let app = test_app("abc\ndef", Some("XX"), false);
-    let id = app.active_id();
+    let id = app.document_id();
     let left = app.bindings(id).unwrap();
     left.selection.set(TextSelection {
         anchor: TextPosition::new(1),
@@ -1534,4 +1537,56 @@ fn split_selections_follow_paste_indentation_and_undo_redo() {
     assert_eq!(left.selection.get().normalized_range(), Some(1..2));
     app.undo(true);
     assert_eq!(left.selection.get().normalized_range(), Some(5..6));
+}
+
+#[test]
+fn empty_workspace_stays_empty_until_a_document_is_explicitly_created_or_opened() {
+    use scarlet_ui::pipeline::RenderingPipeline;
+    let mut app = App::new();
+    assert!(app.runtime.lock().unwrap().workspace.documents.is_empty());
+    assert_eq!(app.active_id(), None);
+    assert_eq!(app.window_title(), env!("APP_NAME"));
+    assert_eq!(app.editor_pane_order(), vec![0]);
+    app.on_idle();
+    assert!(app.position.get().is_empty());
+    assert!(app.language_status.get().is_empty());
+    app.save();
+    app.save_as();
+    app.close_active();
+    app.undo(false);
+    app.select_all();
+    app.copy(false);
+    app.paste();
+    app.next_tab(false);
+    app.split_editor(false);
+    assert!(app.runtime.lock().unwrap().workspace.documents.is_empty());
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_root(
+        Window::new("Empty", app.content())
+            .decorated(false)
+            .size(Size::new(900.0, 600.0))
+            .create_element(),
+    );
+    pipeline.layout_initial();
+    assert!(pipeline.render().is_some());
+    pipeline.teardown();
+    app.complete_open(0, "/tmp/only.rs".into(), "fn main() {}".into(), None);
+    assert_eq!(app.runtime.lock().unwrap().workspace.documents.len(), 1);
+    let id = app.document_id();
+    app.remove_document(id);
+    assert_eq!(app.active_id(), None);
+    assert!(app.runtime.lock().unwrap().workspace.documents.is_empty());
+    assert!(
+        app.runtime
+            .lock()
+            .unwrap()
+            .group_tabs
+            .iter()
+            .all(Vec::is_empty)
+    );
+    assert_eq!(app.window_title(), env!("APP_NAME"));
+    app.new_document();
+    let rt = app.runtime.lock().unwrap();
+    assert_eq!(rt.workspace.documents.len(), 1);
+    assert!(rt.workspace.documents[0].path.is_none());
 }

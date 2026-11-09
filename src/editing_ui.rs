@@ -14,7 +14,9 @@ pub(super) enum Command {
 }
 impl App {
     pub(super) fn edit_command(&self, command: Command) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         if !self.editable(id) {
             return;
         }
@@ -95,7 +97,8 @@ impl App {
                 KeyCode::Tab if modifiers.shift => Some(Command::Outdent),
                 KeyCode::Tab
                     if self
-                        .bindings(self.active_id())
+                        .active_id()
+                        .and_then(|id| self.bindings(id))
                         .is_some_and(|b| b.selection.get().normalized_range().is_some()) =>
                 {
                     Some(Command::Indent)

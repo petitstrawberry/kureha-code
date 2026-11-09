@@ -194,15 +194,9 @@ const COMMANDS: &[CommandDescriptor] = &[
     ),
     command!(
         "markdown-preview",
-        "Markdown: Toggle Preview",
+        "Markdown: Open Preview",
         "source render",
         "Primary+Shift+V"
-    ),
-    command!(
-        "markdown-preview-side",
-        "Markdown: Open Preview to Side",
-        "source render split",
-        ""
     ),
     command!(
         "save-all",
@@ -671,8 +665,7 @@ impl App {
             let rt = self.runtime.lock().unwrap();
             (
                 rt.explorer.root.clone().or_else(|| {
-                    rt.workspace
-                        .get(id)
+                    id.and_then(|id| rt.workspace.get(id))
                         .and_then(|doc| doc.path.as_ref()?.parent().map(Path::to_path_buf))
                 }),
                 rt.explorer.generation,
@@ -953,7 +946,9 @@ impl App {
                     return;
                 }
             };
-            let id = self.active_id();
+            let Some(id) = self.active_id() else {
+                return;
+            };
             let Some(bindings) = self.bindings(id) else {
                 return;
             };
@@ -1003,8 +998,8 @@ impl App {
             "new" => self.new_document(),
             "save" => self.save(),
             "save-all" => self.save_all(),
-            "save-as" => self.picker(DialogPurpose::Save(self.active_id())),
-            "close" => self.request_close(Some(self.active_id())),
+            "save-as" => self.save_as(),
+            "close" => self.close_active(),
             "find" => self.show_find(),
             "project-search" => self.show_project_search(),
             "undo" => self.undo(false),
@@ -1017,8 +1012,7 @@ impl App {
             "duplicate-up" => self.edit_command(super::editing_ui::Command::DuplicateUp),
             "duplicate-down" => self.edit_command(super::editing_ui::Command::DuplicateDown),
             "markdown-refresh" => self.refresh_markdown_preview(),
-            "markdown-preview" => self.toggle_markdown_preview(),
-            "markdown-preview-side" => self.markdown_preview_to_side(),
+            "markdown-preview" => self.open_markdown_preview(),
             "split-right" => self.split_editor(false),
             "split-down" => self.split_editor(true),
             "focus-other" => self.focus_other_group(),
@@ -1028,26 +1022,26 @@ impl App {
             "theme-edit" => self.open_theme_settings(),
             "theme-reload" => self.reload_theme_settings(),
             "minimap" => self.toggle_minimap(),
-            "tab-outer-left" => self.split_tab_outer(
-                self.active_id(),
-                self.focused_group.get(),
-                tab_drag::Edge::Left,
-            ),
-            "tab-outer-right" => self.split_tab_outer(
-                self.active_id(),
-                self.focused_group.get(),
-                tab_drag::Edge::Right,
-            ),
-            "tab-outer-top" => self.split_tab_outer(
-                self.active_id(),
-                self.focused_group.get(),
-                tab_drag::Edge::Top,
-            ),
-            "tab-outer-bottom" => self.split_tab_outer(
-                self.active_id(),
-                self.focused_group.get(),
-                tab_drag::Edge::Bottom,
-            ),
+            "tab-outer-left" => {
+                if let Some(id) = self.active_id() {
+                    self.split_tab_outer(id, self.focused_group.get(), tab_drag::Edge::Left);
+                }
+            }
+            "tab-outer-right" => {
+                if let Some(id) = self.active_id() {
+                    self.split_tab_outer(id, self.focused_group.get(), tab_drag::Edge::Right);
+                }
+            }
+            "tab-outer-top" => {
+                if let Some(id) = self.active_id() {
+                    self.split_tab_outer(id, self.focused_group.get(), tab_drag::Edge::Top);
+                }
+            }
+            "tab-outer-bottom" => {
+                if let Some(id) = self.active_id() {
+                    self.split_tab_outer(id, self.focused_group.get(), tab_drag::Edge::Bottom);
+                }
+            }
             "panel" => self.toggle_panel(),
             "restart-terminal" => self.terminal.restart(),
             "new-terminal" => self.new_terminal(),
@@ -1187,10 +1181,10 @@ fn index_hint(index: &Index, matches: usize) -> String {
 mod tests {
     use super::*;
     fn app_with_text(text: &str) -> App {
-        let app = App::new();
+        let app = App::with_document();
         app.runtime.lock().unwrap().workspace.documents[0].editor =
             kureha_code::editor::Editor::new(text);
-        app.sync_editor(app.active_id());
+        app.sync_editor(app.document_id());
         app
     }
     fn primary() -> KeyModifiers {
@@ -1226,7 +1220,7 @@ mod tests {
         assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
         assert!(!app.nav.is_open());
         assert_eq!(
-            app.bindings(app.active_id())
+            app.bindings(app.document_id())
                 .unwrap()
                 .selection
                 .get()
@@ -1238,7 +1232,7 @@ mod tests {
     #[test]
     fn goto_affects_only_the_active_editor_group_and_invalid_input_stays_open() {
         let app = app_with_text("猫🍁x\nnext line");
-        let id = app.active_id();
+        let id = app.document_id();
         let left = app.bindings(id).unwrap();
         left.selection.set(TextSelection::collapsed(3));
         app.split_editor(false);
@@ -1399,7 +1393,7 @@ mod tests {
         pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c: 'x' }));
         assert_eq!(app.nav.query.get(), "Darkx");
         assert_eq!(
-            app.bindings(app.active_id())
+            app.bindings(app.document_id())
                 .unwrap()
                 .document
                 .get()
@@ -1583,7 +1577,7 @@ mod tests {
                 .find_map(|child| document(child.as_ref(), point))
         }
         let original = document(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
-        let bindings = app.bindings(app.active_id()).unwrap();
+        let bindings = app.bindings(app.document_id()).unwrap();
         for mode in [Mode::Commands, Mode::Line, Mode::Files] {
             app.show_navigation(mode);
             // Input can arrive in the same platform batch before the overlay

@@ -97,16 +97,10 @@ impl App {
         )
     }
     pub(super) fn group_exists(&self, group: usize) -> bool {
-        self.panes.get().get(group).is_some_and(Option::is_some)
+        self.pane_layout.get().leaves().contains(&group)
     }
-    pub(super) fn group_id(&self, group: usize) -> DocumentId {
-        let panes = self.panes.get();
-        panes
-            .get(group)
-            .copied()
-            .flatten()
-            .or_else(|| panes.into_iter().flatten().next())
-            .unwrap()
+    pub(super) fn group_id(&self, group: usize) -> Option<DocumentId> {
+        self.panes.get().get(group).copied().flatten()
     }
     pub(super) fn set_group_id(&self, group: usize, id: DocumentId) {
         self.panes.update(|panes| panes[group] = Some(id));
@@ -122,6 +116,12 @@ impl App {
             self.dismiss_language_panel();
         }
         self.blur_terminals();
+    }
+    pub(super) fn allocate_empty_group(&self) -> usize {
+        let group = self.panes.get().len();
+        self.runtime.lock().unwrap().group_tabs.push(Vec::new());
+        self.panes.update(|panes| panes.push(None));
+        group
     }
     pub(super) fn allocate_group(&self, id: DocumentId) -> usize {
         let group = self.panes.get().len();
@@ -140,8 +140,11 @@ impl App {
         if self.blocked() {
             return;
         }
+        self.focus_editor();
         let source = self.focused_group.get();
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         let group = self.add_group(
             id,
             source,
@@ -157,11 +160,6 @@ impl App {
             to.selection.set(from.selection.get());
             to.scroll.set(from.scroll.get());
         }
-        self.runtime
-            .lock()
-            .unwrap()
-            .markdown
-            .move_pane(id, source, group, true);
         self.focus_group(group);
         self.status.set(
             if down {
@@ -174,7 +172,12 @@ impl App {
     }
     /// Remove only a view; tabs and PTYs migrate to its nearest neighbour.
     pub(super) fn close_split(&self) {
-        let order = self.pane_order();
+        let group = self.focused_group.get();
+        if self.is_preview_pane(group) {
+            self.close_markdown_preview(group);
+            return;
+        }
+        let order = self.editor_pane_order();
         if order.len() < 2 {
             return;
         }
@@ -193,12 +196,14 @@ impl App {
         }
         self.retire_empty_group(source);
         self.focus_group(target);
-        self.set_group_id(target, active);
+        if let Some(active) = active {
+            self.set_group_id(target, active);
+        }
         self.status
             .set("Pane closed; tabs moved to neighbour".into());
     }
     pub(super) fn retire_empty_group(&self, group: usize) {
-        if self.pane_order().len() < 2 {
+        if self.is_preview_pane(group) || self.editor_pane_order().len() < 2 {
             return;
         }
         if !self.runtime.lock().unwrap().group_tabs[group].is_empty() {
@@ -251,7 +256,7 @@ impl App {
             tabs.get(position.min(tabs.len().saturating_sub(1)))
                 .copied()
         };
-        if active == id {
+        if active == Some(id) {
             if let Some(next) = next {
                 self.activate_unchecked(next);
             } else {
@@ -268,8 +273,8 @@ mod tests {
     use super::*;
     #[test]
     fn three_views_share_edits_but_keep_viewports_and_transform_every_selection() {
-        let app = App::new();
-        let id = app.active_id();
+        let app = App::with_document();
+        let id = app.document_id();
         app.edit(
             id,
             &EditDelta {
@@ -307,17 +312,17 @@ mod tests {
     }
     #[test]
     fn async_open_cannot_target_a_new_pane_after_its_origin_closes() {
-        let app = App::new();
+        let app = App::with_document();
         app.split_editor(false);
         app.split_editor(false);
         app.focus_group(1);
         app.close_split();
         app.split_editor(false);
         assert_eq!(app.pane_order(), vec![0, 3, 2]);
-        let active = app.active_id();
+        let active = app.document_id();
         app.complete_open(1, PathBuf::from("delayed.txt"), "result".into(), None);
         assert_eq!(app.focused_group.get(), 3);
-        assert_eq!(app.active_id(), active);
+        assert_eq!(app.document_id(), active);
         let rt = app.runtime.lock().unwrap();
         let opened = rt.workspace.find_path(Path::new("delayed.txt")).unwrap();
         assert!(rt.group_tabs[0].contains(&opened));

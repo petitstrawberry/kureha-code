@@ -205,7 +205,7 @@ mod row_tests {
     fn explorer_selected_row_clicks_blank_space_cancels_outside_and_retains_keyboard_focus() {
         for theme in kureha_code::theme::Theme::ALL {
             for offset in [35.0, 280.0] {
-                let app = App::new();
+                let app = App::with_document();
                 app.set_theme(theme.clone());
                 assert!(app.runtime.lock().unwrap().explorer.set_root(
                     0,
@@ -376,7 +376,7 @@ impl App {
                 if !(modifiers.primary() && matches!(keycode, KeyCode::Char('w' | 'W' | 'n' | 'N' | 'o' | 'O' | '1'..='9' | '\\' | '|') | KeyCode::Tab) || modifiers.control && *keycode == KeyCode::Tab) { return false; }
             }
             if modifiers.primary() && modifiers.shift && !modifiers.alt && matches!(keycode, KeyCode::Char('v'|'V')) {
-                keys.toggle_markdown_preview(); return true;
+                keys.open_markdown_preview(); return true;
             }
             if keys.language_key(*keycode, *modifiers) {
                 return true;
@@ -416,12 +416,12 @@ impl App {
                 KeyCode::Char('o' | 'O') if modifiers.shift => keys.show_folder(),
                 KeyCode::Char('o' | 'O') => keys.picker(DialogPurpose::Open),
                 KeyCode::Char('s' | 'S') if modifiers.shift => {
-                    keys.picker(DialogPurpose::Save(keys.active_id()))
+                    keys.save_as()
                 }
                 KeyCode::Char('s' | 'S') if modifiers.alt => keys.save_all(),
                 KeyCode::Char('s' | 'S') => keys.save(),
                 KeyCode::Char('w' | 'W') if modifiers.shift => keys.request_close(None),
-                KeyCode::Char('w' | 'W') => keys.request_close(Some(keys.active_id())),
+                KeyCode::Char('w' | 'W') => keys.close_active(),
                 KeyCode::Char('f' | 'F') => keys.show_find(),
                 KeyCode::Char('h' | 'H') if !cfg!(target_os = "macos") => keys.show_find(),
                 KeyCode::Char('g' | 'G') => keys.find(modifiers.shift),
@@ -462,9 +462,13 @@ impl App {
     fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
         self.tab_region(
             Surface::section(
-                vstack! { self.tabs_view(group), self.document_view(self.group_id(group), group), }
+                if self.is_preview_pane(group) { Either::A(self.markdown_pane(group)) } else { Either::B(vstack! { self.tabs_view(group),
+                    match self.group_id(group) {
+                        Some(id) => Either::A(self.document_view(id, group)),
+                        None => Either::B(VStack::new(()).frame(f32::INFINITY, f32::INFINITY).background(self.theme.get().editor_colors().background)),
+                    }, }
                     .spacing(0.0)
-                    .frame(f32::INFINITY, f32::INFINITY),
+                    .frame(f32::INFINITY, f32::INFINITY)) },
             )
             .surface_style(self.theme.get().chrome_style())
             .corner_radius(16.0)
@@ -487,11 +491,11 @@ impl App {
         let mut selected_range = (0.0, 0.0);
         let tabs = summaries.into_iter().map(|(id, path, label)| {
             let width = (label.chars().count() as f32 * 7.0 + 70.0).clamp(120.0, 240.0);
-            if id == active { selected_range = (left, left + width); }
+            if Some(id) == active { selected_range = (left, left + width); }
             left += width + 4.0;
             let select = self.clone();
             let close = self.clone();
-            let icon = file_icons::for_path(path.as_deref()).themed(&theme, id == active);
+            let icon = file_icons::for_path(path.as_deref()).themed(&theme, Some(id) == active);
             let content = hstack! {
                 Button::new(label).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).font_size(13.0).padding(7.0)
                     .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Pixels(18)).icon_style(icon.style())
@@ -500,7 +504,7 @@ impl App {
                     .on_click(move || {close.focus_group(group); close.request_close(Some(id));}).frame(28.0, 32.0),
             }.spacing(0.0).frame(width, 32.0);
             let surface = Surface::section(content).corner_radius(10.0).clip_content(true);
-            self.tab_region(if id == active { surface.surface_style(theme.tab_style()) }
+            self.tab_region(if Some(id) == active { surface.surface_style(theme.tab_style()) }
                 else { surface.fill(Color::TRANSPARENT) }, tab_drag::RegionId::Tab(group, id)).key(id)
         }).collect::<Vec<_>>();
         let back = self.clone();
@@ -817,13 +821,9 @@ impl App {
                 MenuEntry::Separator,
                 self.item("save", "Save", "Ctrl+S", App::save),
                 self.item("save-all", "Save All", "Ctrl+Alt+S", App::save_all),
-                self.item("save-as", "Save As…", "Ctrl+Shift+S", |a| {
-                    a.picker(DialogPurpose::Save(a.active_id()))
-                }),
+                self.item("save-as", "Save As…", "Ctrl+Shift+S", |a| a.save_as()),
                 MenuEntry::Separator,
-                self.item("close", "Close Tab", "Ctrl+W", |a| {
-                    a.request_close(Some(a.active_id()))
-                }),
+                self.item("close", "Close Tab", "Ctrl+W", |a| a.close_active()),
                 self.item("close-window", "Close Window", "Ctrl+Shift+W", |a| {
                     a.request_close(None)
                 }),
@@ -896,15 +896,9 @@ impl App {
                 MenuEntry::Separator,
                 self.item(
                     "markdown-preview",
-                    "Toggle Markdown Preview",
+                    "Open Markdown Preview",
                     "Ctrl+Shift+V",
-                    App::toggle_markdown_preview,
-                ),
-                self.item(
-                    "markdown-preview-side",
-                    "Open Markdown Preview to Side",
-                    "",
-                    App::markdown_preview_to_side,
+                    App::open_markdown_preview,
                 ),
                 MenuEntry::Separator,
                 self.item("split-right", "Split Editor Right", "Ctrl+\\", |a| {

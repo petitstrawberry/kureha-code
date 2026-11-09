@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn long_hover_remains_responsive_to_escape_after_layout() {
     use scarlet_ui::pipeline::RenderingPipeline;
-    let app = App::new();
+    let app = App::with_document();
     let text = (0..28).map(|i| format!("pub enum Example{i} {{ First, Second(u32) }}\n\nLong documentation with several code examples and unicode 猫.\n\n")).collect();
     app.runtime.lock().unwrap().language.panel = Panel::Hover(text);
     let mut pipeline = RenderingPipeline::new();
@@ -38,7 +38,7 @@ fn long_hover_scrolls_repeatedly_inside_the_workbench() {
         event::{MouseEvent, ScrollSource, WheelPhase},
         pipeline::RenderingPipeline,
     };
-    let app = App::new();
+    let app = App::with_document();
     app.runtime.lock().unwrap().language.panel = Panel::Hover((0..28).map(|i| format!("pub enum Example{i} {{ First, Second(u32) }}\n\nLong documentation with several code examples and unicode 猫.\n\n")).collect());
     let mut pipeline = RenderingPipeline::new();
     pipeline.set_root(
@@ -106,8 +106,8 @@ fn scrolling_document_dismisses_hover_and_invalidates_its_pending_target() {
         event::{MouseEvent, ScrollSource, WheelPhase},
         pipeline::RenderingPipeline,
     };
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     app.runtime
         .lock()
         .unwrap()
@@ -196,14 +196,14 @@ fn scrolling_document_dismisses_hover_and_invalidates_its_pending_target() {
 
 #[test]
 fn document_scroll_discards_late_manual_hover_without_cancelling_diagnostics() {
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     let pending = |method: &str| Pending {
         guard: Guard {
             id,
             revision: 0,
             caret: 0,
-            navigation: 0,
+            navigation: app.navigation.load(Ordering::Relaxed),
         },
         method: method.into(),
         params: Value::Null,
@@ -263,8 +263,8 @@ fn document_scroll_discards_late_manual_hover_without_cancelling_diagnostics() {
 #[test]
 fn hover_overlay_preserves_the_editor_bounds_document_and_selection() {
     use scarlet_ui::pipeline::RenderingPipeline;
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     let bindings = app.bindings(id).unwrap();
     let window = || {
         Window::new("Hover integration", app.content())
@@ -321,8 +321,8 @@ fn utf16_positions_keep_japanese_and_astral_characters_on_boundaries() {
 }
 #[test]
 fn completion_is_one_undo_step_and_applies_additional_edits() {
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     {
         let mut rt = app.runtime.lock().unwrap();
         let doc = rt.workspace.get_mut(id).unwrap();
@@ -375,8 +375,8 @@ fn completion_is_one_undo_step_and_applies_additional_edits() {
 }
 #[test]
 fn stale_completion_does_not_replace_newer_text() {
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     {
         let mut rt = app.runtime.lock().unwrap();
         let doc = rt.workspace.get_mut(id).unwrap();
@@ -384,7 +384,7 @@ fn stale_completion_does_not_replace_newer_text() {
             id,
             revision: doc.editor.revision(),
             caret: 0,
-            navigation: 0,
+            navigation: app.navigation.load(Ordering::Relaxed),
         };
         doc.editor.edit_transaction(&EditDelta {
             replaced_range: 0..0,
@@ -416,8 +416,8 @@ fn stale_completion_does_not_replace_newer_text() {
 
 #[test]
 fn cancelled_background_diagnostics_keep_the_user_status() {
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     let snapshot = Snapshot {
         id,
         path: PathBuf::from("/tmp/main.rs"),
@@ -432,7 +432,7 @@ fn cancelled_background_diagnostics_keep_the_user_status() {
             id,
             revision: 0,
             caret: 0,
-            navigation: 0,
+            navigation: app.navigation.load(Ordering::Relaxed),
         },
         method: method.into(),
         params: Value::Null,
@@ -513,7 +513,7 @@ fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
     let source = "pub fn greet() -> i32 { 7 }\nfn main() { let _value = greet(); missing_name(); gre }\nuse missing_crate::Absent;\nfn broken( {\n";
     let path = fixture.0.join("src/main.rs");
     std::fs::write(&path, source).unwrap();
-    let app = App::new();
+    let app = App::with_document();
     let id = {
         let mut rt = app.runtime.lock().unwrap();
         rt.explorer.root = Some(fixture.0.clone());
@@ -645,8 +645,8 @@ fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
 
 #[test]
 fn completion_keys_choose_and_insert_without_adding_a_tab_or_newline() {
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     app.edit(
         id,
         &EditDelta {
@@ -684,8 +684,8 @@ fn completion_keys_choose_and_insert_without_adding_a_tab_or_newline() {
 
 #[test]
 fn pointer_hover_keeps_the_caret_and_invalidates_old_pointer_targets() {
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     app.edit(
         id,
         &EditDelta {
@@ -707,7 +707,7 @@ fn edit_value(text: &str, bytes: std::ops::Range<usize>, replacement: &str) -> V
     json!({"range":{"start":position(text, bytes.start),"end":position(text, bytes.end)},"newText":replacement})
 }
 fn current_guard(app: &App) -> Guard {
-    let id = app.active_id();
+    let id = app.document_id();
     let caret = app.bindings(id).unwrap().selection.get().caret.byte;
     let revision = app
         .runtime
@@ -727,8 +727,8 @@ fn current_guard(app: &App) -> Guard {
 }
 #[test]
 fn formatting_and_rename_are_one_undo_and_keep_redo_selection() {
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     let original = "fn main(){let 名前=2;println!(\"{}\",名前);}";
     app.edit(
         id,
@@ -776,8 +776,8 @@ fn formatting_and_rename_are_one_undo_and_keep_redo_selection() {
 }
 #[test]
 fn language_edits_reject_changed_document_and_overlaps_without_partial_application() {
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     app.edit(
         id,
         &EditDelta {
@@ -856,8 +856,8 @@ fn reference_results_keep_unopened_file_positions_and_show_truncation() {
 }
 #[test]
 fn rename_input_escape_keeps_document_and_stale_submit_is_rejected() {
-    let app = App::new();
-    let id = app.active_id();
+    let app = App::with_document();
+    let id = app.document_id();
     app.edit(
         id,
         &EditDelta {
@@ -909,7 +909,7 @@ fn real_rust_analyzer_formats_renames_and_finds_unopened_file_references() {
     let helper_path = fixture.0.join("src/helper.rs");
     std::fs::write(&path, source).unwrap();
     std::fs::write(&helper_path, helper).unwrap();
-    let app = App::new();
+    let app = App::with_document();
     let id = {
         let mut rt = app.runtime.lock().unwrap();
         rt.explorer.root = Some(fixture.0.clone());
@@ -981,7 +981,7 @@ fn real_rust_analyzer_formats_renames_and_finds_unopened_file_references() {
             .find_path(&helper_path)
             .is_some()
     });
-    let opened = app.active_id();
+    let opened = app.document_id();
     assert_eq!(
         app.bindings(opened).unwrap().selection.get().start().byte,
         helper.find("greet").unwrap()
@@ -1073,7 +1073,7 @@ fn real_rust_analyzer_formats_renames_and_finds_unopened_file_references() {
 
 #[test]
 fn unavailable_capabilities_do_not_dispatch_commands_and_escape_cancels_pending_rename() {
-    let app = App::new();
+    let app = App::with_document();
     let root = PathBuf::from("/tmp");
     let id = {
         let mut rt = app.runtime.lock().unwrap();
@@ -1143,7 +1143,7 @@ fn unopened_reference_selection_survives_file_worker_navigation_generation() {
     let path = root.join("target.txt");
     let text = "first\nselected symbol\nlast\n";
     std::fs::write(&path, text).unwrap();
-    let app = App::new();
+    let app = App::with_document();
     app.language_navigate(
         path.clone(),
         json!({"start":{"line":1,"character":0},"end":{"line":1,"character":8}}),
@@ -1161,7 +1161,7 @@ fn unopened_reference_selection_survives_file_worker_navigation_generation() {
         assert!(Instant::now() < deadline, "{}", app.status.get());
         thread::sleep(Duration::from_millis(5));
     }
-    let selection = app.bindings(app.active_id()).unwrap().selection.get();
+    let selection = app.bindings(app.document_id()).unwrap().selection.get();
     assert_eq!(
         &text[selection.start().byte..selection.end().byte],
         "selected"

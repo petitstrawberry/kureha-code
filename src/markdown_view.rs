@@ -18,8 +18,42 @@ pub(super) struct MarkdownView {
     pub theme: Theme,
     pub font: Option<FontStack>,
     pub on_link: Arc<dyn Fn(String) + Send + Sync>,
-    pub scroll_target: State<Option<usize>>,
+    pub on_scroll: Arc<dyn Fn(f32) + Send + Sync>,
+    pub position: Arc<Mutex<PreviewPosition>>,
 }
+#[derive(Default)]
+pub(super) struct PreviewPosition {
+    pub viewport: Rect,
+    pub mapping: Vec<(f32, f32)>,
+    pub geometry: u64,
+    pub model: usize,
+}
+impl PreviewPosition {
+    pub fn preview_y(&self, source_line: f32) -> f32 {
+        interpolate(&self.mapping, source_line, false)
+    }
+    pub fn source_line(&self, preview_y: f32) -> f32 {
+        interpolate(&self.mapping, preview_y, true)
+    }
+}
+fn interpolate(points: &[(f32, f32)], value: f32, reverse: bool) -> f32 {
+    let pair = |(a, b): (f32, f32)| if reverse { (b, a) } else { (a, b) };
+    let Some(first) = points.first().copied().map(pair) else {
+        return 0.0;
+    };
+    if value <= first.0 {
+        return first.1;
+    }
+    for segment in points.windows(2) {
+        let (x0, y0) = pair(segment[0]);
+        let (x1, y1) = pair(segment[1]);
+        if value <= x1 {
+            return y0 + (y1 - y0) * ((value - x0) / (x1 - x0).max(0.01)).clamp(0.0, 1.0);
+        }
+    }
+    points.last().copied().map(pair).unwrap().1
+}
+type CellCache = BTreeMap<(usize, usize), (Vec<Run>, f32)>;
 #[derive(Clone)]
 struct Run {
     text: String,
@@ -36,6 +70,7 @@ struct Layout {
     panels: Vec<(Rect, Color)>,
     advances: BTreeMap<(bool, u32, char), f32>,
     anchors: BTreeMap<String, usize>,
+    mapping: Vec<(f32, f32)>,
     images: Vec<(Rect, Arc<scarlet_ui::buffer::Buffer>, String)>,
 }
 fn measure(text: &str, size: f32, font: Option<&FontStack>) -> f32 {
@@ -45,7 +80,11 @@ fn measure(text: &str, size: f32, font: Option<&FontStack>) -> f32 {
     ) as f32
 }
 impl MarkdownView {
+    #[cfg(test)]
     fn layout(&self, width: f32) -> Layout {
+        self.layout_cached(width, &mut CellCache::new())
+    }
+    fn layout_cached(&self, width: f32, cache: &mut CellCache) -> Layout {
         let width = width.max(1.0);
         let page = (width - 40.0).clamp(1.0, 840.0);
         let left = ((width - page) * 0.5).max(0.0);
@@ -55,7 +94,8 @@ impl MarkdownView {
         };
         let mut top = 22.0;
         let colors = self.theme.editor_colors();
-        for block in &self.document.blocks {
+        for (block_index, block) in self.document.blocks.iter().enumerate() {
+            result.mapping.push((block.source_line as f32, top));
             let indent = (block.indent.min(8) as f32 * 20.0 + block.quote.min(8) as f32 * 14.0)
                 .min(page * 0.4);
             let x = left + indent;
@@ -111,15 +151,35 @@ impl MarkdownView {
             let column_width = available / columns as f32;
             let mut bottom = top + size + 8.0;
             for (index, cell) in block.cells.iter().enumerate() {
-                bottom = bottom.max(self.wrap(
-                    cell,
-                    block,
-                    x + index as f32 * column_width + inset,
-                    top,
-                    (column_width - inset * 2.0).max(1.0),
-                    size,
-                    &mut result,
-                ));
+                let cell_width = (column_width - inset * 2.0).max(1.0);
+                let cell_left = x + index as f32 * column_width + inset;
+                if cell.iter().any(|s| s.style.image.is_some()) {
+                    bottom = bottom.max(self.wrap(
+                        cell,
+                        block,
+                        cell_left,
+                        top,
+                        cell_width,
+                        size,
+                        &mut result,
+                    ));
+                } else {
+                    let (runs, height) = cache.entry((block_index, index)).or_insert_with(|| {
+                        let mut local = Layout {
+                            advances: std::mem::take(&mut result.advances),
+                            ..Layout::default()
+                        };
+                        let height = self.wrap(cell, block, 0.0, 0.0, cell_width, size, &mut local);
+                        result.advances = local.advances;
+                        (local.runs, height)
+                    });
+                    result.runs.extend(runs.iter().cloned().map(|mut run| {
+                        run.rect.origin.x += cell_left;
+                        run.rect.origin.y += top;
+                        run
+                    }));
+                    bottom = bottom.max(top + *height);
+                }
             }
             top = bottom + if code || table { 10.0 } else { 0.0 };
             if code || table {
@@ -154,6 +214,9 @@ impl MarkdownView {
             top += if table { 0.0 } else { 14.0 };
         }
         result.size.height = top + 24.0;
+        result
+            .mapping
+            .push((self.document.source_lines as f32, result.size.height));
         result
     }
     fn wrap(
@@ -292,19 +355,11 @@ impl View for MarkdownView {
                 layout: Layout::default(),
                 valid: false,
                 pressed: None,
+                viewport: None,
+                cells: CellCache::new(),
+                previous: None,
             },
-            |render, view| {
-                let same = Arc::ptr_eq(&render.view.document, &view.document)
-                    && render.view.theme == view.theme
-                    && render.view.font.as_ref().map(FontStack::cache_id)
-                        == view.font.as_ref().map(FontStack::cache_id);
-                render.view = view.clone();
-                if !same {
-                    render.valid = false;
-                    render.pressed = None;
-                }
-                UpdateResult::Updated
-            },
+            |render, view| render.update(view),
             |_| Vec::new(),
         ))
     }
@@ -317,8 +372,52 @@ struct Renderer {
     layout: Layout,
     valid: bool,
     pressed: Option<String>,
+    viewport: Option<Rect>,
+    cells: CellCache,
+    previous: Option<(Layout, CellCache, bool)>,
 }
 impl Renderer {
+    fn update(&mut self, view: &MarkdownView) -> UpdateResult {
+        let same_style = self.view.theme == view.theme
+            && self.view.font.as_ref().map(FontStack::cache_id)
+                == view.font.as_ref().map(FontStack::cache_id);
+        let same = Arc::ptr_eq(&self.view.document, &view.document) && same_style;
+        let retain = |cells: &mut CellCache| {
+            if !same_style {
+                cells.clear();
+            } else if !Arc::ptr_eq(&self.view.document.blocks, &view.document.blocks) {
+                cells.retain(|(index, _), _| {
+                    match (
+                        self.view.document.blocks.get(*index),
+                        view.document.blocks.get(*index),
+                    ) {
+                        (Some(a), Some(b)) => {
+                            a.kind == b.kind
+                                && a.indent == b.indent
+                                && a.quote == b.quote
+                                && a.cells == b.cells
+                        }
+                        _ => false,
+                    }
+                });
+            }
+        };
+        retain(&mut self.cells);
+        if let Some((_, cells, valid)) = &mut self.previous {
+            retain(cells);
+            if !same {
+                *valid = false;
+            }
+        }
+        self.view = view.clone();
+        if !same {
+            self.valid = false;
+            self.pressed = None;
+            UpdateResult::Updated
+        } else {
+            UpdateResult::NoChange
+        }
+    }
     fn link(&self, x: i32, y: i32) -> Option<String> {
         if let Some((_, _, link)) = self
             .layout
@@ -344,11 +443,43 @@ impl ElementRenderObject for Renderer {
         } else {
             840.0
         };
-        if !self.valid || self.layout.size.width != width {
-            self.layout = self.view.layout(width);
+        let width_changed = self.layout.size.width != width;
+        if width_changed {
+            // Split containers can measure a provisional width before committing
+            // their divider. Keep both geometries instead of re-shaping on each rebuild.
+            let (layout, cells, valid) = self
+                .previous
+                .take()
+                .filter(|(layout, _, _)| layout.size.width == width)
+                .unwrap_or_default();
+            self.previous = Some((
+                std::mem::replace(&mut self.layout, layout),
+                std::mem::replace(&mut self.cells, cells),
+                std::mem::replace(&mut self.valid, valid),
+            ));
+        }
+        if !self.valid || width_changed {
+            if !self.valid {
+                self.layout = self.view.layout_cached(width, &mut self.cells);
+            }
+            let mut position = self.view.position.lock().unwrap();
+            position.mapping = self.layout.mapping.clone();
+            position.geometry += 1;
+            position.model = Arc::as_ptr(&self.view.document) as usize;
             self.valid = true;
         }
         self.layout.size
+    }
+    fn depends_on_viewport(&self) -> bool {
+        true
+    }
+    fn set_viewport_hint(&mut self, viewport: Rect) -> bool {
+        if self.viewport == Some(viewport) {
+            return false;
+        }
+        self.viewport = Some(viewport);
+        self.view.position.lock().unwrap().viewport = viewport;
+        true
     }
     fn update_needs_layout(&self) -> bool {
         !self.valid
@@ -396,7 +527,7 @@ impl ElementRenderObject for Renderer {
                         .and_then(|a| kureha_code::markdown_resources::decode_path(a).ok())
                         .and_then(|a| self.layout.anchors.get(&a))
                     {
-                        self.view.scroll_target.set(Some(*anchor));
+                        (self.view.on_scroll)(*anchor as f32);
                     } else {
                         (self.view.on_link)(link);
                     }
@@ -413,8 +544,12 @@ impl ElementRenderObject for Renderer {
     }
     fn paint<'a>(&'a self, ctx: &mut PaintContext<'a>, origin: Point) -> bool {
         let colors = self.view.theme.editor_colors();
+        let visible = self.viewport.unwrap_or(Rect::new(Point::ZERO, self.size()));
         ctx.push_clip(Rect::new(origin, self.size()));
         for (rect, color) in &self.layout.panels {
+            if !rect.overlaps(&visible) {
+                continue;
+            }
             ctx.fill_rect(
                 Rect::from_xywh(
                     origin.x + rect.origin.x,
@@ -426,6 +561,9 @@ impl ElementRenderObject for Renderer {
             );
         }
         for (rect, buffer, _) in &self.layout.images {
+            if !rect.overlaps(&visible) {
+                continue;
+            }
             ctx.draw_buffer_rect_shared(
                 Rect::from_xywh(
                     origin.x + rect.origin.x,
@@ -439,6 +577,9 @@ impl ElementRenderObject for Renderer {
             );
         }
         for run in &self.layout.runs {
+            if !run.rect.overlaps(&visible) {
+                continue;
+            }
             let point = Point::new(origin.x + run.rect.origin.x, origin.y + run.rect.origin.y);
             let color = run.style.color.unwrap_or_else(|| {
                 if run.style.link.is_some() || run.style.emphasis {
@@ -498,7 +639,8 @@ mod tests {
             theme: Theme::Light,
             font: kureha_code::fonts::editor_stack(),
             on_link: Arc::new(|_| {}),
-            scroll_target: State::new(generate_state_id(), None),
+            on_scroll: Arc::new(|_| {}),
+            position: Default::default(),
         }
     }
     #[test]
@@ -545,6 +687,9 @@ mod tests {
             layout,
             valid: true,
             pressed: None,
+            viewport: None,
+            cells: CellCache::new(),
+            previous: None,
         };
         let pointer = renderer.layout.runs.as_ptr();
         renderer.layout(LayoutConstraints::new(0.0, 320.0, 0.0, f32::INFINITY));
@@ -552,18 +697,23 @@ mod tests {
     }
     #[test]
     fn heading_links_resolve_unicode_and_duplicate_headings() {
-        let view = view("[Go](#日本語-1)\n\n# 日本語\n\nFirst\n\n# 日本語\n");
+        let mut view = view("[Go](#日本語-1)\n\n# 日本語\n\nFirst\n\n# 日本語\n");
         let layout = view.layout(320.0);
         let target = layout.anchors["日本語-1"];
         assert!(target > layout.anchors["日本語"]);
         let run = layout.runs.iter().find(|r| r.style.link.is_some()).unwrap();
         let point = run.rect.origin;
-        let request = view.scroll_target.clone();
+        let request = Arc::new(Mutex::new(None));
+        let captured = request.clone();
+        view.on_scroll = Arc::new(move |y| *captured.lock().unwrap() = Some(y));
         let mut renderer = Renderer {
             view,
             layout,
             valid: true,
             pressed: None,
+            viewport: None,
+            cells: CellCache::new(),
+            previous: None,
         };
         let press = Event::Mouse(MouseEvent::ButtonPressed {
             button: MouseButton::Left,
@@ -579,7 +729,7 @@ mod tests {
         });
         assert!(renderer.handle_event(&press, Phase::Target));
         assert!(renderer.handle_event(&release, Phase::Target));
-        assert_eq!(request.get(), Some(target));
+        assert_eq!(*request.lock().unwrap(), Some(target as f32));
     }
     #[test]
     fn preview_scrolls_without_changing_document_or_rebuilding_content() {
@@ -603,5 +753,80 @@ mod tests {
         })));
         assert!(pipeline.render().is_some());
         pipeline.teardown();
+    }
+    #[test]
+    fn viewport_bounds_paint_commands_and_updates_reuse_unchanged_cells() {
+        let source = "Paragraph with **bold** and ordinary text.\n\n".repeat(1000);
+        let view = view(&source);
+        let mut renderer = Renderer {
+            view,
+            layout: Layout::default(),
+            valid: false,
+            pressed: None,
+            viewport: None,
+            cells: CellCache::new(),
+            previous: None,
+        };
+        let constraints = LayoutConstraints::new(0.0, 600.0, 0.0, f32::INFINITY);
+        renderer.layout(constraints);
+        let all = {
+            let mut ctx = PaintContext::new();
+            renderer.paint(&mut ctx, Point::ZERO);
+            ctx.commands().len()
+        };
+        let cell = renderer.cells[&(500, 0)].0.as_ptr();
+        let runs = renderer.layout.runs.as_ptr();
+        renderer.layout(LayoutConstraints::new(0.0, 1200.0, 0.0, f32::INFINITY));
+        renderer.layout(constraints);
+        assert_eq!(
+            renderer.layout.runs.as_ptr(),
+            runs,
+            "split measurement discarded cached layout"
+        );
+        let geometry = renderer.view.position.lock().unwrap().geometry;
+        for y in [0.0, 4000.0, 18000.0] {
+            renderer.set_viewport_hint(Rect::from_xywh(0.0, y, 600.0, 400.0));
+            let mut ctx = PaintContext::new();
+            renderer.paint(&mut ctx, Point::ZERO);
+            assert!(
+                ctx.commands().len() < 200,
+                "paint must scale with viewport: {}",
+                ctx.commands().len()
+            );
+            assert!(all > ctx.commands().len() * 50);
+        }
+        assert_eq!(
+            renderer.view.position.lock().unwrap().geometry,
+            geometry,
+            "scroll must not re-layout text"
+        );
+        let mut updated = renderer.view.clone();
+        updated.document = Arc::new(kureha_code::markdown::parse(
+            &source.replacen("Paragraph", "Edited paragraph", 1),
+            &Theme::Light,
+        ));
+        renderer.update(&updated);
+        renderer.layout(constraints);
+        assert_eq!(
+            renderer.cells[&(500, 0)].0.as_ptr(),
+            cell,
+            "unchanged paragraph was remeasured"
+        );
+        assert!(
+            renderer
+                .layout
+                .runs
+                .iter()
+                .any(|run| run.text.contains("Edited"))
+        );
+        let mut images_updated = updated.clone();
+        images_updated.document = Arc::new((*updated.document).clone());
+        renderer.update(&images_updated);
+        renderer.layout(constraints);
+        assert_eq!(
+            renderer.cells[&(500, 0)].0.as_ptr(),
+            cell,
+            "image completion remeasured text"
+        );
     }
 }

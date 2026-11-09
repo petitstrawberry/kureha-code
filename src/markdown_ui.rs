@@ -1,4 +1,4 @@
-//! Per-pane source/preview mode with a single coalescing background preview job.
+//! Independent preview panes with coalesced background parsing and source synchronization.
 use super::*;
 use kureha_code::{
     markdown::{self, Document},
@@ -35,10 +35,21 @@ struct ImageJob {
     destination: String,
     receiver: mpsc::Receiver<markdown_resources::Resource>,
 }
+#[derive(Clone)]
+pub(super) struct PreviewPane {
+    pub source: usize,
+    pub follow_file: bool,
+    pub sync_position: bool,
+    pub position: Arc<Mutex<crate::markdown_view::PreviewPosition>>,
+    pub requested_y: Option<f32>,
+    last_source_y: f32,
+    last_preview_y: f32,
+    last_geometry: u64,
+    last_document: Option<DocumentId>,
+}
 #[derive(Default)]
 pub(super) struct Previews {
-    pub modes: BTreeSet<(DocumentId, usize)>,
-    scroll_targets: BTreeMap<(DocumentId, usize), State<Option<usize>>>,
+    pub panels: BTreeMap<usize, PreviewPane>,
     entries: BTreeMap<DocumentId, Entry>,
     job: Option<Job>,
     image_job: Option<ImageJob>,
@@ -46,125 +57,211 @@ pub(super) struct Previews {
 }
 impl Previews {
     pub fn remove(&mut self, id: DocumentId) {
-        self.modes.retain(|(document, _)| *document != id);
         self.entries.remove(&id);
-        self.scroll_targets
-            .retain(|(document, _), _| *document != id);
         self.links.retain(|(document, _)| *document != id);
         if self.job.as_ref().is_some_and(|job| job.id == id) {
             self.job = None;
         }
     }
     pub fn retire_pane(&mut self, group: usize) {
-        self.modes.retain(|(_, g)| *g != group);
-        self.scroll_targets.retain(|(_, g), _| *g != group);
-    }
-    pub fn move_pane(&mut self, id: DocumentId, from: usize, to: usize, copy: bool) {
-        let scroll = if copy {
-            self.scroll_targets
-                .get(&(id, from))
-                .map(|s| State::new(generate_state_id(), s.get()))
-        } else {
-            self.scroll_targets.remove(&(id, from))
-        };
-        if let Some(scroll) = scroll {
-            self.scroll_targets.insert((id, to), scroll);
-        }
-        let preview = if copy {
-            self.modes.contains(&(id, from))
-        } else {
-            self.modes.remove(&(id, from))
-        };
-        if preview {
-            self.modes.insert((id, to));
-        } else {
-            self.modes.remove(&(id, to));
-        }
+        self.panels.remove(&group);
     }
 }
 impl App {
-    pub(super) fn markdown_previewing(&self, id: DocumentId, group: usize) -> bool {
+    pub(super) fn is_preview_pane(&self, group: usize) -> bool {
         self.runtime
             .lock()
             .unwrap()
             .markdown
-            .modes
-            .contains(&(id, group))
+            .panels
+            .contains_key(&group)
     }
-    fn can_preview_markdown(&self, id: DocumentId) -> bool {
-        self.runtime
+    pub(super) fn editor_pane_order(&self) -> Vec<usize> {
+        let panes = self.pane_order();
+        let rt = self.runtime.lock().unwrap();
+        panes
+            .into_iter()
+            .filter(|g| !rt.markdown.panels.contains_key(g))
+            .collect()
+    }
+    pub(super) fn focus_editor(&self) {
+        let group = self.focused_group.get();
+        let source = self
+            .runtime
             .lock()
             .unwrap()
-            .workspace
-            .get(id)
-            .is_some_and(|doc| {
-                doc.image.is_none() && doc.path.as_deref().is_none_or(markdown::is_markdown)
-            })
+            .markdown
+            .panels
+            .get(&group)
+            .map(|p| p.source);
+        if let Some(source) = source {
+            let editors = self.editor_pane_order();
+            if let Some(source) = editors.iter().find(|g| **g == source).or(editors.first()) {
+                self.focus_group(*source);
+            }
+        }
     }
-    pub(super) fn toggle_markdown_preview(&self) {
-        if self.blocked() {
-            return;
-        }
-        let id = self.active_id();
-        let group = self.focused_group.get();
-        if !self.markdown_previewing(id, group) && !self.can_preview_markdown(id) {
-            self.status
-                .set("Open a Markdown document to preview it".into());
-            return;
-        }
-        self.dismiss_language_panel();
-        self.invalidate_clipboard();
-        let mut rt = self.runtime.lock().unwrap();
-        if !rt.markdown.modes.remove(&(id, group)) {
-            rt.markdown.modes.insert((id, group));
-        }
-        drop(rt);
-        self.poll_markdown();
-        self.changed();
+    #[cfg(test)]
+    pub(super) fn markdown_previewing(&self, id: DocumentId, group: usize) -> bool {
+        self.is_preview_pane(group) && self.group_id(group) == Some(id)
+    }
+    pub(super) fn open_markdown_preview(&self) {
+        self.markdown_preview_to_side();
     }
     pub(super) fn markdown_preview_to_side(&self) {
         if self.blocked() {
             return;
         }
-        let id = self.active_id();
-        if !self.can_preview_markdown(id) {
-            self.status
-                .set("Open a Markdown document to preview it".into());
-            return;
-        }
+        self.focus_editor();
+        let source = self.focused_group.get();
         let existing = self
             .runtime
             .lock()
             .unwrap()
             .markdown
-            .modes
+            .panels
             .iter()
-            .find_map(|(doc, group)| (*doc == id).then_some(*group));
+            .find_map(|(group, pane)| (pane.source == source).then_some(*group));
         if let Some(group) = existing {
-            self.set_group_id(group, id);
             self.focus_group(group);
-            self.changed();
             return;
         }
+        let id = self.active_id().filter(|id| {
+            self.runtime
+                .lock()
+                .unwrap()
+                .workspace
+                .get(*id)
+                .is_some_and(|d| {
+                    d.path.as_deref().is_none_or(markdown::is_markdown) && d.image.is_none()
+                })
+        });
         self.dismiss_language_panel();
-        let group = self.add_group(id, self.focused_group.get(), tab_drag::Edge::Right);
-        self.runtime
-            .lock()
-            .unwrap()
-            .markdown
-            .modes
-            .insert((id, group));
+        self.remember_pane_sizes();
+        let group = self.allocate_empty_group();
+        self.pane_layout
+            .update(|layout| layout.split(source, group, tab_drag::Edge::Right));
+        self.runtime.lock().unwrap().markdown.panels.insert(
+            group,
+            PreviewPane {
+                source,
+                follow_file: true,
+                sync_position: true,
+                position: Default::default(),
+                requested_y: None,
+                last_source_y: -1.0,
+                last_preview_y: 0.0,
+                last_geometry: 0,
+                last_document: None,
+            },
+        );
+        if let Some(id) = id {
+            self.set_group_id(group, id);
+        }
         self.focus_group(group);
         self.poll_markdown();
         self.changed();
     }
+    pub(super) fn close_markdown_preview(&self, group: usize) {
+        let pane = self
+            .runtime
+            .lock()
+            .unwrap()
+            .markdown
+            .panels
+            .get(&group)
+            .cloned();
+        let Some(pane) = pane else {
+            return;
+        };
+        self.runtime.lock().unwrap().markdown.retire_pane(group);
+        self.panes.update(|panes| panes[group] = None);
+        if let Some(layout) = self.pane_layout.get().retain(&|g| g != group) {
+            self.pane_layout.set(layout);
+        }
+        if self.focused_group.get() == group {
+            let target = if self.group_exists(pane.source) {
+                pane.source
+            } else {
+                self.editor_pane_order()[0]
+            };
+            self.focus_group(target);
+        }
+        self.changed();
+    }
+    fn sync_preview_files(&self) {
+        let editors = self.editor_pane_order();
+        let panes = self.panes.get();
+        let mut changes = Vec::new();
+        {
+            let mut rt = self.runtime.lock().unwrap();
+            let previews: Vec<_> = rt
+                .markdown
+                .panels
+                .iter()
+                .map(|(g, p)| (*g, p.clone()))
+                .collect();
+            for (group, mut preview) in previews {
+                if !editors.contains(&preview.source) {
+                    let Some(source) = editors.first() else {
+                        continue;
+                    };
+                    preview.source = *source;
+                    rt.markdown.panels.insert(group, preview.clone());
+                }
+                if preview.follow_file {
+                    let source = panes[preview.source].filter(|id| {
+                        rt.workspace.get(*id).is_some_and(|d| {
+                            d.image.is_none() && d.path.as_deref().is_none_or(markdown::is_markdown)
+                        })
+                    });
+                    if source != panes[group] {
+                        changes.push((group, source));
+                    }
+                }
+            }
+        }
+        if !changes.is_empty() {
+            {
+                let mut rt = self.runtime.lock().unwrap();
+                for (group, _) in &changes {
+                    let pane = rt.markdown.panels.get_mut(group).unwrap();
+                    pane.requested_y = None;
+                    pane.last_document = None;
+                }
+            }
+            self.panes.update(|panes| {
+                for (group, id) in changes {
+                    panes[group] = id;
+                }
+            });
+        }
+    }
+    fn preview_follow(&self, group: usize) {
+        if let Some(pane) = self.runtime.lock().unwrap().markdown.panels.get_mut(&group) {
+            pane.follow_file = !pane.follow_file;
+        }
+        self.sync_preview_files();
+        self.changed();
+    }
+    fn preview_scroll_sync(&self, group: usize) {
+        if let Some(pane) = self.runtime.lock().unwrap().markdown.panels.get_mut(&group) {
+            pane.sync_position = !pane.sync_position;
+            pane.last_document = None;
+            pane.requested_y = None;
+        }
+        self.changed();
+    }
     pub(super) fn refresh_markdown_preview(&self) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         self.runtime.lock().unwrap().markdown.entries.remove(&id);
         self.poll_markdown();
         self.changed();
     }
     pub(super) fn poll_markdown(&self) {
+        self.sync_preview_files();
         let visible: BTreeSet<_> = self
             .panes
             .get()
@@ -174,10 +271,9 @@ impl App {
             .collect();
         let theme = self.theme.get();
         let mut rt = self.runtime.lock().unwrap();
-        let wanted: BTreeMap<_, _> = rt
-            .markdown
-            .modes
-            .intersection(&visible)
+        let wanted: BTreeMap<_, _> = visible
+            .iter()
+            .filter(|(_, group)| rt.markdown.panels.contains_key(group))
             .filter_map(|(id, _)| {
                 let doc = rt.workspace.get(*id)?;
                 Some((
@@ -393,6 +489,155 @@ impl App {
         for (id, link) in links {
             self.open_markdown_link(id, &link);
         }
+        self.sync_preview_position();
+    }
+    fn preview_source_line_height(&self) -> f32 {
+        let font_size = self.theme.get().editor_font_size();
+        self.document_font()
+            .as_ref()
+            .map_or_else(
+                || scarlet_ui::graphics::line_height_sized(font_size),
+                |font| scarlet_ui::graphics::line_height_sized_with_font_stack(font_size, font),
+            )
+            .max(1) as f32
+    }
+    fn request_preview_scroll(&self, group: usize, y: f32) {
+        let source = {
+            let mut rt = self.runtime.lock().unwrap();
+            let Some(pane) = rt.markdown.panels.get_mut(&group) else {
+                return;
+            };
+            let position = pane.position.lock().unwrap();
+            let max = (position.mapping.last().map_or(0.0, |p| p.1)
+                - position.viewport.size.height)
+                .max(0.0);
+            let y = y.clamp(0.0, max);
+            pane.requested_y = Some(y);
+            pane.sync_position
+                .then(|| (pane.source, position.source_line(y)))
+        };
+        if let Some((source, line)) = source {
+            if let Some(id) = self
+                .group_id(group)
+                .filter(|id| self.group_id(source) == Some(*id))
+            {
+                if let Some(bindings) = self.bindings_for(id, source) {
+                    let scroll = bindings.scroll.get();
+                    bindings.scroll.set(TextViewScroll {
+                        x: scroll.x,
+                        y: line * self.preview_source_line_height(),
+                    });
+                }
+            }
+        }
+        self.changed();
+    }
+    fn sync_preview_position(&self) {
+        let panes: Vec<_> = self
+            .runtime
+            .lock()
+            .unwrap()
+            .markdown
+            .panels
+            .iter()
+            .map(|(g, p)| (*g, p.clone()))
+            .collect();
+        if panes.is_empty() {
+            return;
+        }
+        let line_height = self.preview_source_line_height();
+        let mut changed = false;
+        for (group, snapshot) in panes {
+            // A document can shrink while a reveal is queued. Clamp against the
+            // latest layout, including pinned previews whose source is elsewhere.
+            if snapshot.requested_y.is_some() {
+                let mut rt = self.runtime.lock().unwrap();
+                let pane = rt.markdown.panels.get_mut(&group).unwrap();
+                let position = pane.position.lock().unwrap();
+                if position.viewport.size.height > 0.0 {
+                    let max = (position.mapping.last().map_or(0.0, |p| p.1)
+                        - position.viewport.size.height)
+                        .max(0.0);
+                    let target = pane.requested_y.unwrap().clamp(0.0, max);
+                    if (position.viewport.origin.y - target).abs() < 1.0 {
+                        pane.requested_y = None;
+                        pane.last_preview_y = position.viewport.origin.y;
+                        pane.last_geometry = position.geometry;
+                        changed = true;
+                    } else if pane.requested_y != Some(target) {
+                        pane.requested_y = Some(target);
+                        changed = true;
+                    }
+                }
+                continue;
+            }
+            let Some(id) = self.group_id(group) else {
+                continue;
+            };
+            if self.group_id(snapshot.source) != Some(id) {
+                continue;
+            }
+            let Some(bindings) = self.bindings_for(id, snapshot.source) else {
+                continue;
+            };
+            let source_scroll = bindings.scroll.get();
+            let mut reverse = None;
+            {
+                let mut rt = self.runtime.lock().unwrap();
+                let Some(model) = rt
+                    .markdown
+                    .entries
+                    .get(&id)
+                    .filter(|e| {
+                        rt.workspace
+                            .get(id)
+                            .is_some_and(|d| d.editor.revision() == e.key.revision)
+                    })
+                    .map(|e| Arc::as_ptr(&e.document) as usize)
+                else {
+                    continue;
+                };
+                let pane = rt.markdown.panels.get_mut(&group).unwrap();
+                let position = pane.position.lock().unwrap();
+                if position.model != model || position.viewport.size.height <= 0.0 {
+                    continue;
+                }
+                let y = position.viewport.origin.y;
+                let initial = pane.last_document != Some(id);
+                if pane.sync_position
+                    && (initial
+                        || (source_scroll.y - pane.last_source_y).abs() > 0.5
+                        || pane.last_geometry != position.geometry
+                            && (y - pane.last_preview_y).abs() <= 0.5)
+                {
+                    let max = (position.mapping.last().map_or(0.0, |p| p.1)
+                        - position.viewport.size.height)
+                        .max(0.0);
+                    let target = position
+                        .preview_y(source_scroll.y / line_height)
+                        .clamp(0.0, max);
+                    if (y - target).abs() > 1.0 {
+                        pane.requested_y = Some(target);
+                        changed = true;
+                    }
+                } else if pane.sync_position && (y - pane.last_preview_y).abs() > 0.5 {
+                    reverse = Some(position.source_line(y) * line_height);
+                }
+                pane.last_source_y = reverse.unwrap_or(source_scroll.y);
+                pane.last_preview_y = y;
+                pane.last_geometry = position.geometry;
+                pane.last_document = Some(id);
+            }
+            if let Some(y) = reverse {
+                bindings.scroll.set(TextViewScroll {
+                    x: source_scroll.x,
+                    y,
+                });
+            }
+        }
+        if changed {
+            self.changed();
+        }
     }
     fn open_markdown_link(&self, id: DocumentId, link: &str) {
         if link.starts_with("https://")
@@ -426,17 +671,45 @@ impl App {
             Err(error) => self.status.set(error),
         }
     }
+    pub(super) fn markdown_pane(&self, group: usize) -> impl View + Clone + use<> {
+        let theme = self.theme.get();
+        let pane = self.runtime.lock().unwrap().markdown.panels[&group].clone();
+        let id = self.group_id(group);
+        let title = id
+            .and_then(|id| {
+                self.runtime
+                    .lock()
+                    .unwrap()
+                    .workspace
+                    .get(id)
+                    .map(|d| d.name())
+            })
+            .unwrap_or_else(|| "Markdown Preview".into());
+        let close = self.clone();
+        let follow = self.clone();
+        let sync = self.clone();
+        let source = self.clone();
+        let focus = self.clone();
+        vstack! {
+            hstack! {
+                Text::new(title).font_size(12.0).color(theme.colors().foreground), Spacer::new(),
+                Button::new("File Sync").header_style().font_size(11.0).padding(4.0).text_color(theme.colors().foreground).background_color(if pane.follow_file { theme.colors().selection } else { Color::TRANSPARENT }).on_click(move || follow.preview_follow(group)),
+                Button::new("Scroll Sync").header_style().font_size(11.0).padding(4.0).text_color(theme.colors().foreground).background_color(if pane.sync_position { theme.colors().selection } else { Color::TRANSPARENT }).on_click(move || sync.preview_scroll_sync(group)),
+                Button::new("Source").header_style().font_size(11.0).padding(4.0).text_color(theme.colors().muted).on_click(move || { source.focus_group(pane.source); if let Some(id) = id { source.activate(id); } }),
+                Button::new("×").header_style().font_size(13.0).padding(4.0).text_color(theme.colors().muted).on_click(move || close.close_markdown_preview(group)),
+            }.spacing(5.0).padding(10.0).clip(),
+            match id {
+                Some(id) => Either::A(self.markdown_view(id, group)),
+                None => Either::B(VStack::new(()).frame(f32::INFINITY, f32::INFINITY).background(theme.editor_colors().background)),
+            },
+        }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY).on_event_capture(move |event| {
+            if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) { focus.focus_group(group); }
+            false
+        })
+    }
     pub(super) fn markdown_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         let theme = self.theme.get();
-        let scroll_target = self
-            .runtime
-            .lock()
-            .unwrap()
-            .markdown
-            .scroll_targets
-            .entry((id, group))
-            .or_insert_with(|| State::new(generate_state_id(), None))
-            .clone();
+        let pane = self.runtime.lock().unwrap().markdown.panels[&group].clone();
         let document = self
             .runtime
             .lock()
@@ -447,20 +720,43 @@ impl App {
             .map(|entry| entry.document.clone())
             .unwrap_or_default();
         let app = self.clone();
-        let source = self.clone();
         let focus = self.clone();
-        Surface::section(vstack! {
-            hstack! { Spacer::new(), Button::new("Source").header_style().font_size(11.0).padding(5.0)
-                .text_color(theme.colors().muted).on_click(move || { source.focus_group(group); source.toggle_markdown_preview(); }), }.padding(4.0),
-            ScrollView::new(crate::markdown_view::MarkdownView { document, theme: theme.clone(), font: self.document_font(), scroll_target: scroll_target.clone(), on_link: Arc::new(move |link| app.runtime.lock().unwrap().markdown.links.push((id, link))) })
-                .scroll_to_index_state(scroll_target, 1.0).scrollbar_color(theme.colors().muted).frame(f32::INFINITY, f32::INFINITY).clip(),
-        }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY))
-            .fill(theme.editor_colors().background).corner_radius(12.0).clip_content(true)
-            .padding_insets(EdgeInsets::new(4.0, 0.0, 4.0, 4.0))
-            .on_event_capture(move |event| {
-                if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) { focus.focus_group(group); }
-                false
-            })
+        let scroll = self.clone();
+        let viewport_height = pane.position.lock().unwrap().viewport.size.height;
+        let body = ScrollView::new(crate::markdown_view::MarkdownView {
+            document,
+            theme: theme.clone(),
+            font: self.document_font(),
+            position: pane.position.clone(),
+            on_scroll: Arc::new(move |y| scroll.request_preview_scroll(group, y)),
+            on_link: Arc::new(move |link| {
+                app.runtime.lock().unwrap().markdown.links.push((id, link))
+            }),
+        })
+        .scrollbar_color(theme.colors().muted);
+        let body = if let Some(y) = pane.requested_y {
+            body.scroll_to_vertical_range(y, y + viewport_height.max(1.0))
+        } else {
+            body
+        };
+        Surface::section(
+            body.frame(f32::INFINITY, f32::INFINITY)
+                .clip()
+                .key(format!("markdown-{id}")),
+        )
+        .fill(theme.editor_colors().background)
+        .corner_radius(12.0)
+        .clip_content(true)
+        .padding_insets(EdgeInsets::new(4.0, 0.0, 4.0, 4.0))
+        .on_event_capture(move |event| {
+            if matches!(
+                event,
+                Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })
+            ) {
+                focus.focus_group(group);
+            }
+            false
+        })
     }
 }
 
@@ -484,7 +780,7 @@ mod tests {
     }
     #[test]
     fn preview_tracks_unsaved_edits_undo_theme_moves_and_cleanup() {
-        let app = App::new();
+        let app = App::with_document();
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/preview-test.md");
         app.complete_open(
             0,
@@ -492,7 +788,7 @@ mod tests {
             "# Original\n\n![Panel](screenshots/panel-bottom.png)".into(),
             None,
         );
-        let id = app.active_id();
+        let id = app.document_id();
         app.markdown_preview_to_side();
         settle(&app);
         let group = app.focused_group.get();
@@ -546,8 +842,9 @@ mod tests {
             Theme::Dark
         );
         app.move_tab(id, group, 0, 0);
-        assert!(app.markdown_previewing(id, 0));
-        app.toggle_markdown_preview();
+        assert!(app.markdown_previewing(id, group));
+        assert!(!app.markdown_previewing(id, 0));
+        app.close_markdown_preview(group);
         assert!(app.editable(id));
         app.remove_document(id);
         assert!(
@@ -558,12 +855,12 @@ mod tests {
                 .entries
                 .contains_key(&id)
         );
-        assert!(app.runtime.lock().unwrap().markdown.modes.is_empty());
+        assert!(app.runtime.lock().unwrap().markdown.panels.is_empty());
     }
     #[test]
     fn stale_worker_results_never_replace_latest_revision() {
-        let app = App::new();
-        let id = app.active_id();
+        let app = App::with_document();
+        let id = app.document_id();
         app.markdown_preview_to_side();
         let group = app.focused_group.get();
         app.focus_group(0);
@@ -595,10 +892,9 @@ mod tests {
                 .text(),
             "Revision 19"
         );
-        app.focus_group(group);
-        app.toggle_markdown_preview();
+        app.close_markdown_preview(group);
         settle(&app);
-        app.toggle_markdown_preview();
+        app.markdown_preview_to_side();
         settle(&app);
         assert!(
             app.runtime.lock().unwrap().markdown.entries[&id]
@@ -630,8 +926,8 @@ mod tests {
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).unwrap();
             stream.write_all(&bytes).unwrap();
         });
-        let app = App::new();
-        let id = app.active_id();
+        let app = App::with_document();
+        let id = app.document_id();
         let source = format!("# Before\n\n![Image]({url})");
         app.edit(
             id,
@@ -690,7 +986,7 @@ mod tests {
         let app = App::new();
         app.set_theme(kureha_code::theme::preset("kureha").unwrap());
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/preview-test.md");
-        app.complete_open(0, path, "# Kureha Code\n\nA **native Markdown preview** with live edits, tables, and images.\n\n> 本文も画像も、エディタの中で。\n\n## Getting started\n\n1. Open a Markdown file\n2. Choose **Open Markdown Preview to Side**\n\n```rust\nfn main() {\n    println!(\"Hello, Kureha!\");\n}\n```\n\n| Feature | Status |\n| --- | --- |\n| Live preview | Ready |\n| Images | Embedded |\n\n![Editor panels](screenshots/panel-bottom.png)\n".into(), None);
+        app.complete_open(0, path, "# Kureha Code\n\nA **native Markdown preview** with live edits, tables, and images.\n\n> 本文も画像も、エディタの中で。\n\n## Getting started\n\n1. Open a Markdown file\n2. Choose **Open Markdown Preview**\n\n```rust\nfn main() {\n    println!(\"Hello, Kureha!\");\n}\n```\n\n| Feature | Status |\n| --- | --- |\n| Live preview | Ready |\n| Images | Embedded |\n\n![Editor panels](screenshots/panel-bottom.png)\n".into(), None);
         app.markdown_preview_to_side();
         settle(&app);
         let mut pipeline = RenderingPipeline::new();
@@ -722,6 +1018,201 @@ mod tests {
             image::ColorType::Rgba8,
         )
         .unwrap();
+        pipeline.teardown();
+    }
+    #[test]
+    fn independent_preview_follows_files_can_pin_and_never_owns_editor_tabs() {
+        let app = App::new();
+        app.complete_open(0, "/tmp/first.md".into(), "# First".into(), None);
+        let first = app.document_id();
+        app.markdown_preview_to_side();
+        let preview = app.focused_group.get();
+        settle(&app);
+        app.complete_open(0, "/tmp/second.md".into(), "# Second".into(), None);
+        settle(&app);
+        let second = app.group_id(0).unwrap();
+        assert_eq!(app.group_id(preview), Some(second));
+        app.preview_follow(preview);
+        app.activate(first); // Activation from the preview must route to its source editor.
+        settle(&app);
+        assert_eq!(app.focused_group.get(), 0);
+        assert_eq!(app.group_id(preview), Some(second));
+        assert!(app.runtime.lock().unwrap().group_tabs[preview].is_empty());
+        app.preview_follow(preview);
+        settle(&app);
+        assert_eq!(app.group_id(preview), Some(first));
+        app.complete_open(0, "/tmp/code.rs".into(), "fn main() {}".into(), None);
+        settle(&app);
+        assert_eq!(app.group_id(preview), None);
+        assert!(app.group_exists(preview));
+        app.activate(first);
+        settle(&app);
+        app.focus_group(preview);
+        app.close_active();
+        assert!(!app.group_exists(preview));
+        assert!(app.runtime.lock().unwrap().workspace.get(first).is_some());
+        assert_eq!(app.group_id(0), Some(first));
+        app.markdown_preview_to_side();
+        let preview = app.focused_group.get();
+        let documents: Vec<_> = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .documents
+            .iter()
+            .map(|d| d.id)
+            .collect();
+        for id in documents {
+            app.remove_document(id);
+        }
+        settle(&app);
+        assert_eq!(app.editor_pane_order(), vec![0]);
+        assert_eq!(app.group_id(0), None);
+        assert_eq!(app.group_id(preview), None);
+        assert!(app.runtime.lock().unwrap().workspace.documents.is_empty());
+        app.close_markdown_preview(preview);
+        assert_eq!(app.pane_order(), vec![0]);
+    }
+    #[test]
+    fn mounted_preview_syncs_scroll_both_directions_without_feedback_and_can_disable_it() {
+        use scarlet_ui::{
+            event::{MouseEvent, ScrollSource, WheelPhase},
+            pipeline::RenderingPipeline,
+        };
+        let app = App::new();
+        app.complete_open(
+            0,
+            "/tmp/long.md".into(),
+            (0..150)
+                .map(|i| format!("## Heading {i}\n\nParagraph with some text.\n\n"))
+                .collect(),
+            None,
+        );
+        let id = app.document_id();
+        app.markdown_preview_to_side();
+        let group = app.focused_group.get();
+        settle(&app);
+        let position = app.runtime.lock().unwrap().markdown.panels[&group]
+            .position
+            .clone();
+        let window = || {
+            Window::new("Preview sync", app.content())
+                .decorated(false)
+                .size(Size::new(1200.0, 760.0))
+        };
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_paint_enabled(false);
+        pipeline.set_root(window().create_element());
+        let pump = |pipeline: &mut RenderingPipeline| {
+            for _ in 0..6 {
+                pipeline
+                    .element_tree_mut()
+                    .root_mut()
+                    .unwrap()
+                    .update(&window());
+                pipeline.layout_initial();
+                pipeline.render();
+                app.poll_markdown();
+            }
+        };
+        pump(&mut pipeline);
+        assert!(position.lock().unwrap().viewport.size.height > 100.0);
+        let bindings = app.bindings_for(id, 0).unwrap();
+        bindings.scroll.set(TextViewScroll { x: 0.0, y: 500.0 });
+        pump(&mut pipeline);
+        let y = position.lock().unwrap().viewport.origin.y;
+        assert!(y > 300.0, "source scroll did not reveal preview: {y}");
+        assert!(
+            app.runtime.lock().unwrap().markdown.panels[&group]
+                .requested_y
+                .is_none(),
+            "reveal never settled"
+        );
+        let source_before = bindings.scroll.get().y;
+        fn viewport_point(e: &dyn Element, origin: Point) -> Option<Point> {
+            let point = Point::new(origin.x + e.position().x, origin.y + e.position().y);
+            if e.type_name_debug().contains("ScrollViewRenderObject") && contains_markdown(e) {
+                return Some(Point::new(point.x + 30.0, point.y + 80.0));
+            }
+            e.children()
+                .iter()
+                .find_map(|child| viewport_point(child.as_ref(), point))
+        }
+        fn contains_markdown(e: &dyn Element) -> bool {
+            e.type_name_debug().contains("markdown_view::Renderer")
+                || e.children()
+                    .iter()
+                    .any(|child| contains_markdown(child.as_ref()))
+        }
+        let point = viewport_point(pipeline.element_tree().root().unwrap(), Point::ZERO)
+            .expect("preview viewport");
+        let wheel = |pipeline: &mut RenderingPipeline| {
+            assert!(
+                pipeline.handle_event(&Event::Mouse(MouseEvent::Wheel {
+                    delta_x: 0,
+                    delta_y: -240,
+                    x: point.x as i32,
+                    y: point.y as i32,
+                    phase: WheelPhase::Moved,
+                    source: ScrollSource::Trackpad
+                })),
+                "wheel unhandled at {point:?}"
+            );
+            pipeline.render();
+        };
+        // No click/focus change: scrolling either side must drive the other side.
+        wheel(&mut pipeline);
+        pump(&mut pipeline);
+        assert!(
+            bindings.scroll.get().y > source_before + 30.0,
+            "preview did not move source: source {} -> {}, preview {} -> {}",
+            source_before,
+            bindings.scroll.get().y,
+            y,
+            position.lock().unwrap().viewport.origin.y
+        );
+        let stable = bindings.scroll.get().y;
+        pump(&mut pipeline);
+        assert!(
+            (stable - bindings.scroll.get().y).abs() < 1.0,
+            "scroll feedback loop"
+        );
+        app.preview_scroll_sync(group);
+        wheel(&mut pipeline);
+        pump(&mut pipeline);
+        assert!(
+            (stable - bindings.scroll.get().y).abs() < 1.0,
+            "disabled sync moved source"
+        );
+        app.request_preview_scroll(group, 2000.0);
+        app.focus_group(0);
+        let length = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .get(id)
+            .unwrap()
+            .editor
+            .document
+            .len();
+        app.edit(
+            id,
+            &EditDelta {
+                replaced_range: 0..length,
+                inserted: "# Short".into(),
+            },
+        );
+        settle(&app);
+        pump(&mut pipeline);
+        assert!(
+            app.runtime.lock().unwrap().markdown.panels[&group]
+                .requested_y
+                .is_none(),
+            "shrinking document left a stale reveal"
+        );
+        assert_eq!(position.lock().unwrap().viewport.origin.y, 0.0);
         pipeline.teardown();
     }
 }

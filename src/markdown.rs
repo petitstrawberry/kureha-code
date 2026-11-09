@@ -19,7 +19,7 @@ pub struct Style {
     pub image_id: usize,
     pub color: Option<Color>,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Span {
     pub text: String,
     pub style: Style,
@@ -40,6 +40,7 @@ pub struct Block {
     pub indent: usize,
     pub quote: usize,
     pub marker: String,
+    pub source_line: usize,
 }
 impl Block {
     fn push(&mut self, text: &str, style: &Style) {
@@ -66,7 +67,8 @@ impl Block {
 }
 #[derive(Clone, Default)]
 pub struct Document {
-    pub blocks: Vec<Block>,
+    pub blocks: std::sync::Arc<Vec<Block>>,
+    pub source_lines: usize,
     pub images: std::collections::BTreeMap<String, crate::markdown_resources::Resource>,
 }
 
@@ -89,7 +91,7 @@ pub fn parse(source: &str, theme: &Theme) -> Document {
             &Style::default(),
         );
         return Document {
-            blocks: vec![block],
+            blocks: std::sync::Arc::new(vec![block]),
             ..Document::default()
         };
     }
@@ -109,7 +111,11 @@ pub fn parse(source: &str, theme: &Theme) -> Document {
         block.cells.clear();
         block.kind = Kind::Paragraph;
     }
-    for event in Parser::new_ext(source, options) {
+    let newlines: Vec<_> = source.match_indices('\n').map(|(i, _)| i).collect();
+    for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
+        if block.cells.is_empty() {
+            block.source_line = newlines.partition_point(|i| *i < range.start);
+        }
         if blocks.len() >= MAX_BLOCKS {
             break;
         }
@@ -249,7 +255,10 @@ pub fn parse(source: &str, theme: &Theme) -> Document {
     }
     flush(&mut block, &mut blocks);
     if blocks.len() >= MAX_BLOCKS {
-        let mut notice = Block::default();
+        let mut notice = Block {
+            source_line: newlines.len(),
+            ..Block::default()
+        };
         notice.push(
             "Preview block limit reached. Open Source to view the full document.",
             &Style::default(),
@@ -318,7 +327,8 @@ pub fn parse(source: &str, theme: &Theme) -> Document {
         }
     }
     Document {
-        blocks,
+        blocks: std::sync::Arc::new(blocks),
+        source_lines: newlines.len() + 1,
         ..Document::default()
     }
 }
