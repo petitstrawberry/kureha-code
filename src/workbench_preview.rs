@@ -15,12 +15,25 @@ fn workbench_preview() {
     let directory =
         PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
     std::fs::create_dir_all(&directory).unwrap();
-    let themes = Theme::ALL.into_iter()
-        .chain(kureha_code::theme::PRESETS.iter().map(|(id, _)| kureha_code::theme::preset(id).unwrap()))
-        .chain([kureha_code::theme::parse_theme("name='Editor Only'\nbase='light'\n[editor]\ntheme='tokyo-night'\nfont_size=18").unwrap()]);
+    let themes = Theme::ALL
+        .into_iter()
+        .chain(
+            kureha_code::theme::PRESETS
+                .iter()
+                .map(|(id, _)| kureha_code::theme::preset(id).unwrap()),
+        )
+        .chain([kureha_code::theme::parse_theme(
+            "name='Editor Only'\nbase='light'\n[editor]\ntheme='tokyo-night'\nfont_size=18",
+        )
+        .unwrap()]);
     for theme in themes {
-        for scene in ["empty", "workbench", "find", "palette", "search"] {
-            if !matches!(theme, Theme::Light | Theme::Dark) && scene != "workbench" { continue; }
+        for scene in ["empty", "workbench", "find", "palette", "search", "themes"] {
+            if !matches!(theme, Theme::Light | Theme::Dark)
+                && scene != "workbench"
+                && !(theme.name() == "Kureha" && scene == "themes")
+            {
+                continue;
+            }
             let app = App::new();
             app.set_theme(theme.clone());
             if scene != "empty" {
@@ -81,6 +94,7 @@ fn workbench_preview() {
                     app.show_commands();
                     app.poll_navigation();
                 }
+                "themes" => app.show_theme_picker(false),
                 "search" => app.show_project_search(),
                 _ => {}
             }

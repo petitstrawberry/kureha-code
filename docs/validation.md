@@ -406,3 +406,45 @@ Validation on macOS AArch64 with the published ScarletUI pin:
 `webview.md` is a design, not an implemented HTML/Markdown preview. It describes
 extracting Myrica's reusable session/engine layer and supporting both frame and
 platform-native child-view presentation. No Myrica working files were changed.
+
+
+## Stable Quick Open and live theme selection — 2026-11-09
+
+Quick Open previously cleared its rows on every query edit before its worker
+finished. This collapsed the popup between keystrokes; commands were filtered
+synchronously and did not show the intermediate empty frame. File queries now
+retain the previous rows and selection until the latest generation publishes.
+Enter/click acceptance still requires the displayed query to match the current
+query. Root/mode changes and terminal errors clear irrelevant rows, and unchanged
+loading hints no longer trigger repeated state notifications.
+
+The command palette now exposes Select Color Theme and Select Editor Color
+Theme as parent actions, with searchable candidate lists beneath them. Keyboard
+selection and pointer hover preview immediately. Enter/click commits; Escape,
+returning to Commands or switching navigation restores the original palette.
+A settings reload supersedes an active preview. Editor-only choices preserve
+workbench colors and custom fonts. View menu and Primary+K Primary+T open the
+same picker. Previewing does not write custom settings.
+
+The startup default is now Kureha: pale pink glass, rose selection/accent and a
+near-white editor with coordinated syntax colors. Light retains the previous
+blue palette. Existing custom theme files still override the default; only the
+bundled template for newly created settings changed.
+
+Validation on macOS AArch64:
+
+- 192 tests passed (108 library, 84 application); five optional/manual tests
+  ignored. Locked/offline release build passed.
+- The deterministic pending-worker regression failed before the Quick Open fix
+  and passed afterward. It covers repeated typing, retained rows and text-field
+  identity, stale acceptance rejection and eventual newest-query publication.
+- Theme tests cover nested entry, live filtering, commit/cancel, parent return,
+  settings replacement, editor-only colors/fonts and pointer preview without
+  losing query focus. Bundled-palette icon contrast tests include Kureha.
+- Twenty-two CPU fixtures rendered successfully. Kureha workbench and chooser
+  were inspected and preserved in `screenshots/kureha-theme.png` and
+  `screenshots/theme-picker.png`.
+- Native macOS WGPU confirmed Cmd+Shift+P → Select Color Theme, keyboard preview
+  of Light/Dark, Escape restoration to Kureha, and continued Cmd+P typing with
+  updated results and stable populated-panel height. Other platforms are not
+  verified by this pass.

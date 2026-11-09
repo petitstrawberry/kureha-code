@@ -20,11 +20,15 @@ enum Mode {
     Files,
     Commands,
     Line,
+    Themes {
+        editor_only: bool,
+    },
 }
 #[derive(Clone, Debug)]
 enum Action {
     File(PathBuf),
     Command(&'static str),
+    Theme(kureha_code::theme::Theme),
 }
 #[derive(Clone, Debug)]
 struct Row {
@@ -74,6 +78,7 @@ pub(crate) struct Navigation {
     selected: State<Option<usize>>,
     hint: State<String>,
     service: Arc<Mutex<Service>>,
+    preview_original: Arc<Mutex<Option<kureha_code::theme::Theme>>>,
     pub(super) row_inputs: super::ui::RowInputs,
 }
 impl Navigation {
@@ -118,6 +123,7 @@ impl Navigation {
             selected: State::initial(generate_state_id()),
             hint: State::new(generate_state_id(), String::new()),
             service: Arc::new(Mutex::new(Service::default())),
+            preview_original: Default::default(),
             row_inputs: Default::default(),
         }
     }
@@ -154,6 +160,11 @@ impl Navigation {
         service.requested = false;
         if let Some(worker) = &service.worker {
             worker.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+    fn set_hint(&self, hint: String) {
+        if self.hint.get() != hint {
+            self.hint.set(hint);
         }
     }
     fn show_rows(&self, rows: Vec<Row>) {
@@ -280,35 +291,29 @@ const COMMANDS: &[CommandDescriptor] = &[
         ""
     ),
     command!(
-        "theme-light",
-        "Preferences: Color Theme — Light",
-        "appearance colors",
+        "select-color-theme",
+        "Preferences: Select Color Theme",
+        "appearance colors palette",
+        "Primary+K Primary+T"
+    ),
+    command!(
+        "select-editor-theme",
+        "Preferences: Select Editor Color Theme",
+        "syntax colors palette",
         ""
     ),
     command!(
-        "theme-dark",
-        "Preferences: Color Theme — Dark",
-        "appearance colors",
+        "theme-edit",
+        "Preferences: Customize Theme…",
+        "appearance colors settings toml",
         ""
     ),
-    command!("theme-dracula", "Preferences: Color Theme — Dracula", "appearance colors", ""),
-    command!("theme-monokai", "Preferences: Color Theme — Monokai", "appearance colors", ""),
-    command!("theme-nord", "Preferences: Color Theme — Nord", "appearance colors", ""),
-    command!("theme-solarized-dark", "Preferences: Color Theme — Solarized Dark", "appearance colors", ""),
-    command!("theme-solarized-light", "Preferences: Color Theme — Solarized Light", "appearance colors", ""),
-    command!("theme-gruvbox-dark", "Preferences: Color Theme — Gruvbox Dark", "appearance colors", ""),
-    command!("theme-tokyo-night", "Preferences: Color Theme — Tokyo Night", "appearance colors", ""),
-    command!("editor-theme-light", "Preferences: Editor Color Theme — Light", "syntax colors", ""),
-    command!("editor-theme-dark", "Preferences: Editor Color Theme — Dark", "syntax colors", ""),
-    command!("editor-theme-dracula", "Preferences: Editor Color Theme — Dracula", "syntax colors", ""),
-    command!("editor-theme-monokai", "Preferences: Editor Color Theme — Monokai", "syntax colors", ""),
-    command!("editor-theme-nord", "Preferences: Editor Color Theme — Nord", "syntax colors", ""),
-    command!("editor-theme-solarized-dark", "Preferences: Editor Color Theme — Solarized Dark", "syntax colors", ""),
-    command!("editor-theme-solarized-light", "Preferences: Editor Color Theme — Solarized Light", "syntax colors", ""),
-    command!("editor-theme-gruvbox-dark", "Preferences: Editor Color Theme — Gruvbox Dark", "syntax colors", ""),
-    command!("editor-theme-tokyo-night", "Preferences: Editor Color Theme — Tokyo Night", "syntax colors", ""),
-    command!("theme-edit", "Preferences: Customize Theme…", "appearance colors settings toml", ""),
-    command!("theme-reload", "Preferences: Reload Custom Theme", "appearance colors settings", ""),
+    command!(
+        "theme-reload",
+        "Preferences: Reload Custom Theme",
+        "appearance colors settings",
+        ""
+    ),
     command!("minimap", "View: Toggle Minimap", "overview", ""),
     command!(
         "terminal",
@@ -364,8 +369,18 @@ const COMMANDS: &[CommandDescriptor] = &[
         "completion autocomplete lsp",
         "Ctrl+Space"
     ),
-    command!("go-back", "Go: Back", "navigation history previous location", "GoBack"),
-    command!("go-forward", "Go: Forward", "navigation history next location", "GoForward"),
+    command!(
+        "go-back",
+        "Go: Back",
+        "navigation history previous location",
+        "GoBack"
+    ),
+    command!(
+        "go-forward",
+        "Go: Forward",
+        "navigation history next location",
+        "GoForward"
+    ),
     command!("next-tab", "View: Next Editor", "tab", "Ctrl+Tab"),
     command!(
         "previous-tab",
@@ -382,6 +397,97 @@ const COMMANDS: &[CommandDescriptor] = &[
 ];
 
 impl App {
+    pub(super) fn close_navigation(&self) {
+        let original = self.nav.preview_original.lock().unwrap().take();
+        self.nav.close();
+        if let Some(original) = original {
+            if self.theme.get() != original {
+                self.apply_theme(original);
+            }
+        }
+    }
+    pub(super) fn show_theme_picker(&self, editor_only: bool) {
+        self.show_navigation(Mode::Themes { editor_only });
+    }
+    fn preview_selected_theme(&self) {
+        if !matches!(self.nav.mode.get(), Mode::Themes { .. }) {
+            return;
+        }
+        let query = (self.nav.effective_mode(), self.nav.query.get());
+        if self.nav.service.lock().unwrap().displayed_query.as_ref() != Some(&query) {
+            return;
+        }
+        let selected = self
+            .nav
+            .selected
+            .get()
+            .and_then(|index| self.nav.rows.get().get(index).cloned());
+        if let Some(Row {
+            action: Action::Theme(theme),
+            ..
+        }) = selected
+        {
+            if self.theme.get() != theme {
+                self.apply_theme(theme);
+            }
+        }
+    }
+    fn theme_rows(&self, editor_only: bool, query: &str) -> Vec<Row> {
+        use kureha_code::theme::{PRESETS, Theme, preset};
+        let original = self
+            .nav
+            .preview_original
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| self.theme.get());
+        let mut choices = vec![preset("kureha").unwrap(), Theme::Light, Theme::Dark];
+        choices.extend(
+            PRESETS
+                .iter()
+                .filter(|(id, _)| *id != "kureha")
+                .filter_map(|(id, _)| preset(id)),
+        );
+        let mut rows = choices
+            .into_iter()
+            .map(|choice| {
+                let label = choice.name().to_owned();
+                let theme = if editor_only {
+                    original.with_editor_theme(&choice)
+                } else {
+                    choice
+                };
+                Row {
+                    key: format!("theme:{label}"),
+                    label,
+                    detail: if theme == original {
+                        "Current".into()
+                    } else {
+                        String::new()
+                    },
+                    action: Action::Theme(theme),
+                }
+            })
+            .collect::<Vec<_>>();
+        // Keep a customized palette available, including editor-only overrides.
+        if !rows
+            .iter()
+            .any(|row| matches!(&row.action, Action::Theme(theme) if *theme == original))
+        {
+            rows.insert(
+                0,
+                Row {
+                    label: original.name().into(),
+                    detail: "Current · customized".into(),
+                    key: "theme:current-custom".into(),
+                    action: Action::Theme(original),
+                },
+            );
+        }
+        let query = query.trim().to_lowercase();
+        rows.retain(|row| row.label.to_lowercase().contains(&query));
+        rows
+    }
     pub(crate) fn show_quick_open(&self) {
         self.show_navigation(Mode::Files);
     }
@@ -399,7 +505,10 @@ impl App {
         self.find_open.set(false);
         self.project.close();
         self.terminal.blur();
-        self.nav.close();
+        self.close_navigation();
+        if matches!(mode, Mode::Themes { .. }) {
+            *self.nav.preview_original.lock().unwrap() = Some(self.theme.get());
+        }
         self.nav.service.lock().unwrap().error = None;
         self.nav.query.set(String::new());
         self.nav.show_rows(Vec::new());
@@ -409,14 +518,35 @@ impl App {
     /// Call before workbench shortcuts. While open, other shortcut handlers
     /// should stop dispatching and return false to the focused TextField.
     pub(crate) fn navigation_key(&self, key: KeyCode, modifiers: KeyModifiers) -> bool {
-        if !self.nav.is_open() && cfg!(target_os = "macos") && modifiers.control && !modifiers.super_key && !modifiers.alt && matches!(key, KeyCode::Char('-' | '_')) {
-            if modifiers.shift { self.go_forward(); } else { self.go_back(); }
+        if !self.nav.is_open()
+            && cfg!(target_os = "macos")
+            && modifiers.control
+            && !modifiers.super_key
+            && !modifiers.alt
+            && matches!(key, KeyCode::Char('-' | '_'))
+        {
+            if modifiers.shift {
+                self.go_forward();
+            } else {
+                self.go_back();
+            }
             return true;
         }
-        if !self.nav.is_open() && !cfg!(target_os = "macos") && modifiers.alt && !modifiers.primary() && !modifiers.shift {
+        if !self.nav.is_open()
+            && !cfg!(target_os = "macos")
+            && modifiers.alt
+            && !modifiers.primary()
+            && !modifiers.shift
+        {
             match key {
-                KeyCode::Left => { self.go_back(); return true; }
-                KeyCode::Right => { self.go_forward(); return true; }
+                KeyCode::Left => {
+                    self.go_back();
+                    return true;
+                }
+                KeyCode::Right => {
+                    self.go_forward();
+                    return true;
+                }
                 _ => {}
             }
         }
@@ -448,7 +578,7 @@ impl App {
             return false;
         }
         match key {
-            KeyCode::Escape => self.nav.close(),
+            KeyCode::Escape => self.close_navigation(),
             KeyCode::Enter => self.accept_navigation(),
             KeyCode::Up | KeyCode::Down => {
                 self.poll_navigation();
@@ -461,6 +591,7 @@ impl App {
                         (current + count - 1) % count
                     };
                     self.nav.selected.set(Some(next));
+                    self.preview_selected_theme();
                 }
             }
             _ => return false,
@@ -517,6 +648,13 @@ impl App {
         }
         let request = (mode, query.clone());
         if service.last_query.as_ref() != Some(&request) {
+            // Keep the previous file results until the worker publishes the next
+            // set. Clearing them here collapses and re-expands the popup per key.
+            let retain_results = mode == Mode::Files
+                && service
+                    .last_query
+                    .as_ref()
+                    .is_some_and(|(mode, _)| *mode == Mode::Files);
             service.last_query = Some(request.clone());
             service.displayed_query = None;
             service.generation = service.generation.wrapping_add(1);
@@ -527,7 +665,9 @@ impl App {
                     worker.cancel.store(true, Ordering::Relaxed);
                 }
             }
-            self.nav.show_rows(Vec::new());
+            if !retain_results {
+                self.nav.show_rows(Vec::new());
+            }
         }
         let completed =
             service
@@ -553,7 +693,8 @@ impl App {
                     Ok(WorkerResult::Index(Err(error))) | Err(error) => {
                         service.error = Some(error.clone());
                         service.requested = false;
-                        self.nav.hint.set(error);
+                        self.nav.show_rows(Vec::new());
+                        self.nav.set_hint(error);
                     }
                     Ok(WorkerResult::Matches(hits))
                         if worker.generation == service.generation && mode == Mode::Files =>
@@ -578,7 +719,7 @@ impl App {
                             .collect::<Vec<_>>();
                         let count = rows.len();
                         self.nav.show_rows(rows);
-                        self.nav.hint.set(index_hint(index, count));
+                        self.nav.set_hint(index_hint(index, count));
                         service.displayed_query = Some(request.clone());
                     }
                     _ => {}
@@ -586,6 +727,8 @@ impl App {
             }
         }
         if !service.requested {
+            drop(service);
+            self.preview_selected_theme();
             return;
         }
         match mode {
@@ -606,8 +749,7 @@ impl App {
                 let count = rows.len();
                 self.nav.show_rows(rows);
                 self.nav
-                    .hint
-                    .set(navigation::validate_query(&query).err().map_or_else(
+                    .set_hint(navigation::validate_query(&query).err().map_or_else(
                         || {
                             format!(
                                 "{count} commands · ↑ ↓ to select · Enter to run · Esc to close"
@@ -618,8 +760,36 @@ impl App {
                 service.requested = false;
                 service.displayed_query = Some(request);
             }
+            Mode::Themes { editor_only } => {
+                let rows = if navigation::validate_query(&query).is_ok() {
+                    self.theme_rows(editor_only, &query)
+                } else {
+                    Vec::new()
+                };
+                let selected = if query.trim().is_empty() {
+                    rows.iter()
+                        .position(|row| row.detail.starts_with("Current"))
+                } else {
+                    None
+                };
+                let empty = rows.is_empty();
+                self.nav.show_rows(rows);
+                if selected.is_some() {
+                    self.nav.selected.set(selected);
+                }
+                self.nav.set_hint(
+                    if empty {
+                        "No matching themes"
+                    } else {
+                        "↑ ↓ or hover to preview · Enter to keep · Esc to restore"
+                    }
+                    .into(),
+                );
+                service.requested = false;
+                service.displayed_query = Some(request);
+            }
             Mode::Line => {
-                self.nav.hint.set(if query.trim().is_empty() {
+                self.nav.set_hint(if query.trim().is_empty() {
                     "Enter line:column · Enter to jump · Esc to close".into()
                 } else {
                     navigation::parse_line_column(&query)
@@ -633,12 +803,13 @@ impl App {
             }
             Mode::Files => {
                 if let Err(error) = navigation::validate_query(&query) {
-                    self.nav.hint.set(error.to_string());
+                    self.nav.show_rows(Vec::new());
+                    self.nav.set_hint(error.to_string());
                     service.requested = false;
                     return;
                 }
                 let Some(root) = service.root.clone() else {
-                    self.nav.hint.set(
+                    self.nav.set_hint(
                         "Open a folder to search files · Type > for commands or : for a line"
                             .into(),
                     );
@@ -646,7 +817,7 @@ impl App {
                     return;
                 };
                 if service.worker.is_some() {
-                    self.nav.hint.set(
+                    self.nav.set_hint(
                         if service.index.is_some() {
                             "Searching files…"
                         } else {
@@ -657,7 +828,8 @@ impl App {
                     return;
                 }
                 if let Some(error) = &service.error {
-                    self.nav.hint.set(error.clone());
+                    self.nav.show_rows(Vec::new());
+                    self.nav.set_hint(error.clone());
                     service.requested = false;
                     return;
                 }
@@ -694,7 +866,7 @@ impl App {
                             generation: service.generation,
                             kind,
                         });
-                        self.nav.hint.set(
+                        self.nav.set_hint(
                             if kind == WorkerKind::Index {
                                 "Indexing project files…"
                             } else {
@@ -705,13 +877,14 @@ impl App {
                     }
                     Err(error) => {
                         self.nav
-                            .hint
-                            .set(format!("Could not start file search: {error}"));
+                            .set_hint(format!("Could not start file search: {error}"));
                     }
                 }
                 service.requested = false;
             }
         }
+        drop(service);
+        self.preview_selected_theme();
     }
     fn accept_navigation(&self) {
         if self.blocked() {
@@ -722,7 +895,7 @@ impl App {
             let position = match navigation::parse_line_column(&self.nav.query.get()) {
                 Ok(position) => position,
                 Err(error) => {
-                    self.nav.hint.set(error.to_string());
+                    self.nav.set_hint(error.to_string());
                     return;
                 }
             };
@@ -736,8 +909,10 @@ impl App {
             if let Some(doc) = self.runtime.lock().unwrap().workspace.get_mut(id) {
                 doc.editor.moved(selection);
             }
-            if bindings.selection.get() != selection { self.remember_location(); }
-            self.nav.close();
+            if bindings.selection.get() != selection {
+                self.remember_location();
+            }
+            self.close_navigation();
             bindings.selection.set(selection);
             self.invalidate_clipboard();
             self.update_position();
@@ -753,10 +928,14 @@ impl App {
         let Some(row) = self.nav.rows.get().get(index).cloned() else {
             return;
         };
-        self.nav.close();
+        if matches!(row.action, Action::Theme(_)) {
+            self.nav.preview_original.lock().unwrap().take();
+        }
+        self.close_navigation();
         match row.action {
             Action::File(path) => self.open(path),
             Action::Command(id) => self.execute_navigation_command(id),
+            Action::Theme(theme) => self.apply_theme(theme),
         }
     }
     fn execute_navigation_command(&self, id: &str) {
@@ -787,26 +966,10 @@ impl App {
             "split-down" => self.split_editor(true),
             "focus-other" => self.focus_other_group(),
             "close-split" => self.close_split(),
-            "theme-dracula" => self.set_theme(kureha_code::theme::preset("dracula").unwrap()),
-            "theme-monokai" => self.set_theme(kureha_code::theme::preset("monokai").unwrap()),
-            "theme-nord" => self.set_theme(kureha_code::theme::preset("nord").unwrap()),
-            "theme-solarized-dark" => self.set_theme(kureha_code::theme::preset("solarized-dark").unwrap()),
-            "theme-solarized-light" => self.set_theme(kureha_code::theme::preset("solarized-light").unwrap()),
-            "theme-gruvbox-dark" => self.set_theme(kureha_code::theme::preset("gruvbox-dark").unwrap()),
-            "theme-tokyo-night" => self.set_theme(kureha_code::theme::preset("tokyo-night").unwrap()),
-            "editor-theme-light" => self.select_editor_preset("light"),
-            "editor-theme-dark" => self.select_editor_preset("dark"),
-            "editor-theme-dracula" => self.select_editor_preset("dracula"),
-            "editor-theme-monokai" => self.select_editor_preset("monokai"),
-            "editor-theme-nord" => self.select_editor_preset("nord"),
-            "editor-theme-solarized-dark" => self.select_editor_preset("solarized-dark"),
-            "editor-theme-solarized-light" => self.select_editor_preset("solarized-light"),
-            "editor-theme-gruvbox-dark" => self.select_editor_preset("gruvbox-dark"),
-            "editor-theme-tokyo-night" => self.select_editor_preset("tokyo-night"),
+            "select-color-theme" => self.show_theme_picker(false),
+            "select-editor-theme" => self.show_theme_picker(true),
             "theme-edit" => self.open_theme_settings(),
             "theme-reload" => self.reload_theme_settings(),
-            "theme-light" => self.set_theme(kureha_code::theme::Theme::Light),
-            "theme-dark" => self.set_theme(kureha_code::theme::Theme::Dark),
             "minimap" => self.toggle_minimap(),
             "terminal" => self.toggle_terminal(),
             "problems" => self.show_problems(),
@@ -835,27 +998,41 @@ impl App {
         let submit = self.clone();
         let close = self.clone();
         let rows = self.clone();
+        let back = self.clone();
+        let themes = matches!(self.nav.mode.get(), Mode::Themes { .. });
         let expected_query = self.nav.query.get();
         let placeholder = match self.nav.mode.get() {
             Mode::Commands => "Type a command",
             Mode::Line => "Go to line:column",
+            Mode::Themes { editor_only: false } => "Select Color Theme",
+            Mode::Themes { editor_only: true } => "Select Editor Color Theme",
             _ => "Search files by name · > commands · : line",
         };
         let height = if self.nav.effective_mode() == Mode::Line {
             0.0
         } else {
-            (self.nav.rows.get().len().min(8) as f32 * 34.0).min(280.0)
+            (self.nav.rows.get().len().min(if themes { 7 } else { 8 }) as f32 * 34.0).min(280.0)
         };
         if_view!(self.nav.is_open(),
             super::popup::Anchored::top_center(vstack! {
+                if_view!(themes,
+                    hstack! {
+                        Button::new("Commands").icon(Icon::ArrowLeft).header_style().font_size(12.0)
+                            .text_color(colors.foreground).background_color(Color::TRANSPARENT)
+                            .on_click(move || back.show_commands()),
+                        Spacer::new(),
+                    }.frame(f32::INFINITY, 24.0),
+                    VStack::new(())),
                 TextField::new(self.nav.query.clone()).placeholder(placeholder).placeholder_color(colors.muted).font_size(13.0)
                     .text_color(colors.foreground).background_color(colors.elevated)
                     .border_color(colors.border).focused_border_color(colors.accent).material(self.theme.get().input_material())
                     .autofocus(true).on_submit(move || submit.accept_navigation())
-                    .on_cancel(move || close.nav.close()).frame(f32::INFINITY, 32.0),
+                    .on_cancel(move || close.close_navigation()).frame(f32::INFINITY, 32.0),
                 ListView::new(self.nav.rows.clone(), self.nav.selected.clone(), 34.0, move |index, row: Row, selected| {
                     let app = rows.clone();
                     let query = expected_query.clone();
+                    let hover_query = query.clone();
+                    let hover = app.clone();
                     let input = app.nav.row_inputs.get(format!("palette:{}", row.key));
                     super::ui::list_row(hstack! {
                         Text::new(row.label).font_size(13.0).color(colors.foreground).padding(6.0)
@@ -867,6 +1044,13 @@ impl App {
                             if app.nav.query.get() == query {
                                 app.nav.selected.set(Some(index)); app.accept_navigation();
                             }
+                        }).on_event_capture(move |event| {
+                            if themes && matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::Moved { .. }))
+                                && hover.nav.query.get() == hover_query && hover.nav.selected.get() != Some(index) {
+                                hover.nav.selected.set(Some(index));
+                                hover.preview_selected_theme();
+                            }
+                            false
                         })
                 }).item_key(|row| row.key.clone().into()).frame(f32::INFINITY, height),
                 Text::from_state(self.nav.hint.clone()).font_size(11.0).color(colors.muted)
@@ -878,8 +1062,20 @@ impl App {
 }
 fn shortcut(shortcut: &str) -> String {
     let shortcut = match shortcut {
-        "GoBack" => if cfg!(target_os = "macos") { "Ctrl+-" } else { "Alt+Left" },
-        "GoForward" => if cfg!(target_os = "macos") { "Ctrl+Shift+-" } else { "Alt+Right" },
+        "GoBack" => {
+            if cfg!(target_os = "macos") {
+                "Ctrl+-"
+            } else {
+                "Alt+Left"
+            }
+        }
+        "GoForward" => {
+            if cfg!(target_os = "macos") {
+                "Ctrl+Shift+-"
+            } else {
+                "Alt+Right"
+            }
+        }
         value => value,
     };
     shortcut.replace(
@@ -977,6 +1173,258 @@ mod tests {
         assert_eq!(app.bindings(id).unwrap().selection.get().caret.byte, 12);
         assert_eq!(left.selection.get().caret.byte, 3);
     }
+    #[test]
+    fn theme_picker_is_nested_previews_and_restores_or_commits() {
+        use kureha_code::theme::{Theme, preset};
+        let app = app_with_text("let value = 1;");
+        let original = app.theme.get();
+        assert_eq!(original.name(), "Kureha");
+        app.show_commands();
+        assert!(
+            !app.nav
+                .rows
+                .get()
+                .iter()
+                .any(|row| row.key == "theme-monokai")
+        );
+        app.nav.query.set("Select Color Theme".into());
+        app.poll_navigation();
+        let entry = app
+            .nav
+            .rows
+            .get()
+            .iter()
+            .position(|row| row.key == "select-color-theme")
+            .unwrap();
+        app.nav.selected.set(Some(entry));
+        app.accept_navigation();
+        assert_eq!(app.nav.mode.get(), Mode::Themes { editor_only: false });
+        assert_eq!(app.theme.get(), original);
+        assert!(app.nav.rows.get().iter().any(|row| row.label == "Light"));
+        app.nav.query.set("monokai".into());
+        app.poll_navigation();
+        assert_eq!(app.theme.get(), preset("monokai").unwrap());
+        assert!(app.nav.is_open());
+        app.navigation_key(KeyCode::Escape, KeyModifiers::empty());
+        assert_eq!(app.theme.get(), original);
+        assert!(!app.nav.is_open());
+
+        app.show_theme_picker(false);
+        app.nav.query.set("Nord".into());
+        app.poll_navigation();
+        app.accept_navigation();
+        let committed = preset("nord").unwrap();
+        assert_eq!(app.theme.get(), committed);
+        app.close_navigation();
+        assert_eq!(app.theme.get(), committed);
+        app.show_theme_picker(false);
+        app.nav.query.set("Monokai".into());
+        app.poll_navigation();
+        app.show_commands(); // Back to the parent cancels the pending choice.
+        assert_eq!(app.theme.get(), committed);
+        app.show_theme_picker(false);
+        app.nav.query.set("Kureha".into());
+        app.poll_navigation();
+        app.set_theme(Theme::Light); // A settings reload supersedes the preview.
+        app.close_navigation();
+        assert_eq!(app.theme.get(), Theme::Light);
+    }
+
+    #[test]
+    fn editor_theme_preview_restores_custom_fonts_and_preserves_workbench_colors() {
+        let app = app_with_text("source");
+        let custom =
+            kureha_code::theme::parse_theme("name='Custom'\nbase='kureha'\n[editor]\nfont_size=18")
+                .unwrap();
+        app.set_theme(custom.clone());
+        app.show_theme_picker(true);
+        assert_eq!(app.theme.get(), custom);
+        app.nav.query.set("monokai".into());
+        app.poll_navigation();
+        assert_eq!(app.theme.get().colors(), custom.colors());
+        assert_eq!(app.theme.get().editor_font_size(), 18.0);
+        assert_eq!(
+            app.theme.get().editor_colors(),
+            kureha_code::theme::preset("monokai")
+                .unwrap()
+                .editor_colors()
+        );
+        app.navigation_key(KeyCode::Escape, KeyModifiers::empty());
+        assert_eq!(app.theme.get(), custom);
+        app.show_theme_picker(true);
+        app.nav.query.set("Nord".into());
+        app.poll_navigation();
+        let preview = app.theme.get();
+        app.accept_navigation();
+        assert_eq!(app.theme.get(), preview);
+        assert_eq!(app.theme.get().colors(), custom.colors());
+    }
+
+    #[test]
+    fn mounted_theme_hover_previews_without_losing_query_focus() {
+        use scarlet_ui::{
+            event::MouseEvent, pipeline::RenderingPipeline, views::modifiers::OnEventRenderObject,
+        };
+        let app = app_with_text("source");
+        let original = app.theme.get();
+        app.show_theme_picker(false);
+        app.nav.query.set("Dark".into());
+        app.poll_navigation();
+        let window = || {
+            Window::new("Theme picker", app.content())
+                .decorated(false)
+                .size(Size::new(1100.0, 760.0))
+        };
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(window().create_element());
+        pipeline.layout_initial();
+        pipeline.render();
+        fn rows(e: &dyn Element, parent: Point, found: &mut Vec<Rect>) {
+            let origin = Point::new(parent.x + e.position().x, parent.y + e.position().y);
+            if e.bounds().size.height == 34.0
+                && e.bounds().size.width > 500.0
+                && e.render_object()
+                    .is_some_and(|r| r.as_any().is::<OnEventRenderObject>())
+            {
+                found.push(Rect::new(origin, e.bounds().size));
+            }
+            for child in e.children() {
+                rows(child.as_ref(), origin, found);
+            }
+        }
+        let mut bounds = Vec::new();
+        rows(
+            pipeline.element_tree().root().unwrap(),
+            Point::ZERO,
+            &mut bounds,
+        );
+        bounds.sort_by(|a, b| a.origin.y.total_cmp(&b.origin.y));
+        bounds.dedup_by(|a, b| a.origin.y == b.origin.y);
+        assert!(bounds.len() >= 2);
+        let row = bounds[1];
+        pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
+            x: (row.origin.x + 80.0) as i32,
+            y: (row.origin.y + 17.0) as i32,
+        }));
+        assert_eq!(app.nav.selected.get(), Some(1));
+        assert_eq!(
+            app.theme.get(),
+            kureha_code::theme::preset("solarized-dark").unwrap()
+        );
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.render();
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c: 'x' }));
+        assert_eq!(app.nav.query.get(), "Darkx");
+        assert_eq!(
+            app.bindings(app.active_id())
+                .unwrap()
+                .document
+                .get()
+                .as_str(),
+            "source"
+        );
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+            keycode: KeyCode::Escape,
+            modifiers: KeyModifiers::empty(),
+        }));
+        assert_eq!(app.theme.get(), original);
+        pipeline.teardown();
+    }
+
+    #[test]
+    fn quick_open_retains_results_and_geometry_while_a_new_query_is_pending() {
+        use scarlet_ui::pipeline::RenderingPipeline;
+        let app = app_with_text("");
+        let root = PathBuf::from("/project");
+        app.runtime.lock().unwrap().explorer.root = Some(root.clone());
+        app.nav.mode.set(Mode::Files);
+        let index = Arc::new(Index {
+            root: root.clone(),
+            files: vec![root.join("old.rs"), root.join("new.rs")],
+            ..Index::default()
+        });
+        app.nav.show_rows(vec![Row {
+            label: "old.rs".into(),
+            detail: "old.rs".into(),
+            key: "old.rs".into(),
+            action: Action::File(root.join("old.rs")),
+        }]);
+        let (sender, receiver) = mpsc::sync_channel(1);
+        {
+            let mut service = app.nav.service.lock().unwrap();
+            service.root = Some(root.clone());
+            service.index = Some(index);
+            service.last_query = Some((Mode::Files, "old".into()));
+            service.displayed_query = service.last_query.clone();
+            // Keep an old filter pending deterministically, without sleeps.
+            service.worker = Some(Worker {
+                receiver,
+                cancel: Arc::new(AtomicBool::new(false)),
+                generation: 0,
+                kind: WorkerKind::Matches,
+            });
+        }
+        let window = || {
+            Window::new("Quick Open", app.navigation_overlay())
+                .decorated(false)
+                .size(Size::new(800.0, 600.0))
+        };
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_paint_enabled(false);
+        pipeline.set_root(window().create_element());
+        pipeline.layout_initial();
+        pipeline.render();
+        fn panel(e: &dyn Element) -> Option<(scarlet_ui::element::ElementId, Rect)> {
+            if e.type_name_debug().contains("TextFieldRenderObject") {
+                return Some((e.id(), e.bounds()));
+            }
+            e.children().iter().find_map(|c| panel(c.as_ref()))
+        }
+        let original_field = panel(pipeline.element_tree().root().unwrap()).unwrap();
+        for query in ["n", "ne", "new"] {
+            app.nav.query.set(query.into());
+            app.poll_navigation();
+            assert_eq!(
+                app.nav.rows.get()[0].label,
+                "old.rs",
+                "pending query erased visible results"
+            );
+            assert_eq!(app.nav.selected.get(), Some(0));
+            app.accept_navigation();
+            assert!(app.nav.is_open());
+            assert!(
+                app.runtime.lock().unwrap().job.is_none(),
+                "stale visible row was accepted"
+            );
+            pipeline
+                .element_tree_mut()
+                .root_mut()
+                .unwrap()
+                .update(&window());
+            pipeline.render();
+            assert_eq!(
+                panel(pipeline.element_tree().root().unwrap()).unwrap(),
+                original_field
+            );
+        }
+        drop(sender);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while app.nav.service.lock().unwrap().displayed_query.as_ref()
+            != Some(&(Mode::Files, "new".into()))
+        {
+            app.poll_navigation();
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        assert_eq!(app.nav.rows.get().len(), 1);
+        assert_eq!(app.nav.rows.get()[0].label, "new.rs");
+        pipeline.teardown();
+    }
+
     #[test]
     fn stale_worker_matches_never_open_the_previous_querys_file() {
         let app = app_with_text("");
@@ -1284,7 +1732,7 @@ mod tests {
             "split-right",
             "definition",
             "terminal",
-            "theme-dark",
+            "select-color-theme",
             "go-line",
         ] {
             assert!(ids.contains(required));

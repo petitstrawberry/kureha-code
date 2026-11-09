@@ -133,7 +133,7 @@ impl App {
             bindings.selection.set(selection);
             bindings.scroll.set(target.scroll);
             self.dismiss_language_panel();
-            self.nav.close();
+            self.close_navigation();
             self.invalidate_clipboard();
             self.update_position();
         }
