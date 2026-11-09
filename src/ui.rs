@@ -328,7 +328,7 @@ impl App {
     pub(super) fn content(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let keys = self.clone();
-        ZStack::new((vstack! {
+        let content = ZStack::new((vstack! {
             SplitView::new(
                 Surface::section(if_view!(self.project.is_open(), self.project_search_view(), self.explorer_view()))
                     .surface_style(theme.chrome_style()).corner_radius(16.0).clip_content(true),
@@ -351,6 +351,7 @@ impl App {
         .background(theme.workspace_background()), self.navigation_overlay())).alignment(Alignment::TopLeading)
         .frame(f32::INFINITY,f32::INFINITY)
         .on_event_capture(move |event| {
+            if keys.tab_drag_event(event) { return true; }
             let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event else {
                 return false;
             };
@@ -423,7 +424,8 @@ impl App {
                 _ => return false,
             }
             true
-        })
+        });
+        self.tab_region(content, tab_drag::RegionId::Root)
     }
     fn editor_area(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
@@ -442,10 +444,10 @@ impl App {
     fn editor_groups(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         SplitView::new(
-            self.editor_group(0),
+            self.editor_group(if self.split_reversed.get() { 1 } else { 0 }),
             if_view!(
                 self.second.get().is_some(),
-                self.editor_group(1),
+                self.editor_group(if self.split_reversed.get() { 0 } else { 1 }),
                 VStack::new(())
             ),
         )
@@ -475,15 +477,18 @@ impl App {
         .frame(f32::INFINITY, f32::INFINITY)
     }
     fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
-        Surface::section(
-            vstack! { self.tabs_view(group), self.editor_view(self.group_id(group), group), }
-                .spacing(0.0)
-                .frame(f32::INFINITY, f32::INFINITY),
+        self.tab_region(
+            Surface::section(
+                vstack! { self.tabs_view(group), self.document_view(self.group_id(group), group), }
+                    .spacing(0.0)
+                    .frame(f32::INFINITY, f32::INFINITY),
+            )
+            .surface_style(self.theme.get().chrome_style())
+            .corner_radius(16.0)
+            .clip_content(true)
+            .key(format!("editor-group-{group}")),
+            tab_drag::RegionId::Group(group),
         )
-        .surface_style(self.theme.get().chrome_style())
-        .corner_radius(16.0)
-        .clip_content(true)
-        .key(format!("editor-group-{group}"))
     }
     fn bottom_panel(&self) -> impl View + Clone + use<> {
         let close = self.clone();
@@ -505,7 +510,7 @@ impl App {
         let active = self.group_id(group);
         let summaries = {
             let rt = self.runtime.lock().unwrap();
-            rt.workspace.documents.iter().filter(|doc| rt.group_tabs[group].contains(&doc.id)).map(|doc| {
+            rt.group_tabs[group].iter().filter_map(|id| rt.workspace.get(*id)).map(|doc| {
                 let saving = matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id, .. }) if *id == doc.id);
                 (doc.id, doc.path.clone(), format!("{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if saving { " …" } else { "" }))
             }).collect::<Vec<_>>()
@@ -527,8 +532,8 @@ impl App {
                     .on_click(move || {close.focus_group(group); close.request_close(Some(id));}).frame(28.0, 32.0),
             }.spacing(0.0).frame(width, 32.0);
             let surface = Surface::section(content).corner_radius(10.0).clip_content(true);
-            if id == active { surface.surface_style(theme.tab_style()) }
-                else { surface.fill(Color::TRANSPARENT) }.key(id)
+            self.tab_region(if id == active { surface.surface_style(theme.tab_style()) }
+                else { surface.fill(Color::TRANSPARENT) }, tab_drag::RegionId::Tab(group, id)).key(id)
         }).collect::<Vec<_>>();
         let back = self.clone();
         let forward = self.clone();
@@ -545,7 +550,7 @@ impl App {
                 .frame(f32::INFINITY, 34.0),
         }.spacing(2.0).padding_insets(EdgeInsets::new(8.0, 8.0, 8.0, 6.0))
     }
-    fn editor_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
+    pub(super) fn editor_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         let bindings = self.bindings_for(id, group).unwrap();
         let edited = self.clone();
         let keys = self.clone();

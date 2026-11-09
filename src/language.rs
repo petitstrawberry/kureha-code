@@ -802,6 +802,10 @@ impl App {
         }
         let status = {
             let mut rt = self.runtime.lock().unwrap();
+            let image = rt
+                .workspace
+                .get(active)
+                .is_some_and(|doc| doc.image.is_some());
             let service = &mut rt.language;
             let current = snapshots
                 .iter()
@@ -833,6 +837,8 @@ impl App {
                         }
                     })
                     .unwrap_or_default()
+            } else if image {
+                "Image preview".into()
             } else {
                 "Plain text".into()
             };

@@ -262,6 +262,9 @@ impl App {
                 .documents
                 .iter()
                 .filter_map(|doc| {
+                    if doc.image.is_some() {
+                        return None;
+                    }
                     let path = doc.path.as_ref()?;
                     path.starts_with(&context.root).then(|| {
                         (

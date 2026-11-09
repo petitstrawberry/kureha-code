@@ -50,6 +50,7 @@ impl App {
             self.second.set(Some(id));
         }
         self.split_down.set(down);
+        self.split_reversed.set(false);
         self.focus_group(1);
         self.status.set(
             if down {
@@ -73,6 +74,7 @@ impl App {
         }
         self.focus_group(0);
         self.second.set(None);
+        self.split_reversed.set(false);
         self.status.set("Second editor group closed".into());
     }
     pub(super) fn focus_other_group(&self) {

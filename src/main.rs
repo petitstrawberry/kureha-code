@@ -29,9 +29,11 @@ mod language;
 mod location_history;
 mod navigation_ui;
 mod popup;
+mod preview;
 mod project_ui;
-mod ui;
+mod tab_drag;
 mod theme_settings;
+mod ui;
 
 #[derive(Clone, Copy)]
 enum DialogPurpose {
@@ -46,6 +48,7 @@ enum FileOperation {
 }
 enum Completion {
     Open(PathBuf, String),
+    Image(PathBuf, kureha_code::media::ImageAsset),
     Save(PathBuf, Arc<str>),
 }
 type JobResult = std::result::Result<Completion, String>;
@@ -90,6 +93,7 @@ enum ClipboardJob {
 #[derive(Default)]
 struct Runtime {
     history: location_history::History,
+    image_zoom: BTreeMap<(DocumentId, usize), f32>,
     workspace: Workspace,
     explorer: Explorer,
     owner: Option<WindowId>,
@@ -110,6 +114,7 @@ struct Runtime {
 }
 #[derive(Clone)]
 struct App {
+    tab_drag: tab_drag::DragState,
     nav: navigation_ui::Navigation,
     project: project_ui::ProjectSearch,
     editor_font: Option<FontStack>,
@@ -122,6 +127,7 @@ struct App {
     second: State<Option<DocumentId>>,
     focused_group: State<usize>,
     split_down: State<bool>,
+    split_reversed: State<bool>,
     chrome: State<u64>,
     status: State<String>,
     position: State<String>,
@@ -155,6 +161,7 @@ impl App {
             }));
         }
         Self {
+            tab_drag: Default::default(),
             nav: navigation_ui::Navigation::new(),
             project: project_ui::ProjectSearch::new(),
             editor_font: kureha_code::fonts::editor_stack(),
@@ -171,6 +178,7 @@ impl App {
             second,
             focused_group,
             split_down: State::new(generate_state_id(), false),
+            split_reversed: State::new(generate_state_id(), false),
             navigation,
             chrome: State::new(generate_state_id(), 0),
             status: State::new(generate_state_id(), "Ready".into()),
@@ -193,7 +201,10 @@ impl App {
         self.changed();
     }
     fn document_font(&self) -> Option<FontStack> {
-        self.theme.get().editor_font().or_else(|| self.editor_font.clone())
+        self.theme
+            .get()
+            .editor_font()
+            .or_else(|| self.editor_font.clone())
     }
     fn select_editor_preset(&self, name: &str) {
         let preset = match name {
@@ -201,7 +212,9 @@ impl App {
             "dark" => Some(kureha_code::theme::Theme::Dark),
             name => kureha_code::theme::preset(name),
         };
-        if let Some(preset) = preset { self.set_theme(self.theme.get().with_editor_theme(&preset)); }
+        if let Some(preset) = preset {
+            self.set_theme(self.theme.get().with_editor_theme(&preset));
+        }
     }
     fn toggle_minimap(&self) {
         self.minimap_visible.update(|shown| *shown = !*shown);
@@ -276,7 +289,7 @@ impl App {
         let rt = self.runtime.lock().unwrap();
         rt.dialog.is_none()
             && rt.close.is_none()
-            && rt.workspace.get(id).is_some()
+            && rt.workspace.get(id).is_some_and(|doc| doc.image.is_none())
             && !matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id: saving, .. }) if *saving == id)
     }
     fn sync_editor(&self, id: DocumentId) {
@@ -427,6 +440,7 @@ impl App {
                 .map(|tabs| tabs.iter().position(|tab| *tab == id).unwrap_or(0));
             rt.workspace.remove(id);
             rt.history.remove(id);
+            rt.image_zoom.retain(|(document, _), _| *document != id);
             for tabs in &mut rt.group_tabs {
                 tabs.retain(|tab| *tab != id);
             }
@@ -546,6 +560,12 @@ impl App {
         self.advance_close();
     }
     fn picker(&self, purpose: DialogPurpose) {
+        if let DialogPurpose::Save(id) = purpose {
+            if self.is_image(id) {
+                self.status.set("Image preview is read-only".into());
+                return;
+            }
+        }
         let (owner, path, name, root) = {
             let rt = self.runtime.lock().unwrap();
             if rt.job.is_some() || rt.dialog.is_some() {
@@ -626,6 +646,9 @@ impl App {
         let group = self.focused_group.get();
         self.worker(FileOperation::Open { group }, move || {
             let path = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+            if kureha_code::media::is_image(&path) {
+                return kureha_code::media::read(&path).map(|image| Completion::Image(path, image));
+            }
             files::read(&path)
                 .map(|text| Completion::Open(path, text))
                 .map_err(|e| e.to_string())
@@ -691,6 +714,10 @@ impl App {
         }
     }
     fn save_to(&self, id: DocumentId, path: PathBuf) {
+        if self.is_image(id) {
+            self.status.set("Image preview is read-only".into());
+            return;
+        }
         let (document, revision, crlf, original_path, disk_text) = {
             let rt = self.runtime.lock().unwrap();
             if rt.job.is_some() || rt.dialog.is_some() {
@@ -1235,31 +1262,10 @@ impl App {
     fn complete_file(&self, operation: FileOperation, result: JobResult) {
         match (operation, result) {
             (FileOperation::Open { group }, Ok(Completion::Open(path, text))) => {
-                let group_closed = group == 1 && self.second.get().is_none();
-                let destination = if group_closed { 0 } else { group };
-                let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
-                if !group_closed && existing != Some(self.group_id(destination)) {
-                    self.remember_location_in(destination);
-                }
-                let (id, index) = {
-                    let mut rt = self.runtime.lock().unwrap();
-                    let id = rt.workspace.open(path.clone(), &text);
-                    if !rt.group_tabs[destination].contains(&id) {
-                        rt.group_tabs[destination].push(id);
-                    }
-                    (id, rt.workspace.index(id).unwrap())
-                };
-                self.language_opened(&path, id);
-                // Completing an open updates its originating pane, without
-                // taking focus from another pane or reopening a closed split.
-                if !group_closed {
-                    if destination == 0 {
-                        self.active.set(index);
-                    } else {
-                        self.second.set(Some(id));
-                    }
-                }
-                self.status.set("Ready".into());
+                self.complete_open(group, path, text, None)
+            }
+            (FileOperation::Open { group }, Ok(Completion::Image(path, image))) => {
+                self.complete_open(group, path, String::new(), Some(image))
             }
             (FileOperation::Save { id, revision }, Ok(Completion::Save(path, disk_text))) => {
                 let (exists, clean, name) = {
@@ -1298,11 +1304,62 @@ impl App {
         }
         self.changed();
     }
+    fn complete_open(
+        &self,
+        group: usize,
+        path: PathBuf,
+        text: String,
+        image: Option<kureha_code::media::ImageAsset>,
+    ) {
+        let group_closed = group == 1 && self.second.get().is_none();
+        let destination = if group_closed { 0 } else { group };
+        let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
+        if !group_closed && existing != Some(self.group_id(destination)) {
+            self.remember_location_in(destination);
+        }
+        let (id, index) = {
+            let mut rt = self.runtime.lock().unwrap();
+            let id = if let Some(image) = image {
+                rt.workspace.open_image(path.clone(), image)
+            } else {
+                rt.workspace.open(path.clone(), &text)
+            };
+            if !rt.group_tabs[destination].contains(&id) {
+                rt.group_tabs[destination].push(id);
+            }
+            (id, rt.workspace.index(id).unwrap())
+        };
+        self.language_opened(&path, id);
+        // Completing an open updates its originating pane, without
+        // taking focus from another pane or reopening a closed split.
+        if !group_closed {
+            if destination == 0 {
+                self.active.set(index);
+            } else {
+                self.second.set(Some(id));
+            }
+        }
+        self.status.set("Ready".into());
+    }
     fn update_position(&self) {
         let id = self.active_id();
         let selection = self.bindings(id).unwrap().selection.get();
         let rt = self.runtime.lock().unwrap();
         let doc = rt.workspace.get(id).unwrap();
+        if let Some(image) = &doc.image {
+            let label = format!(
+                "{} × {} · {} · {:.1} KiB",
+                image.bitmap.width(),
+                image.bitmap.height(),
+                image.format,
+                image.bytes as f32 / 1024.0
+            );
+            drop(rt);
+            if self.position.get() != label {
+                self.position.set(label);
+            }
+            return;
+        }
         let byte = selection.caret.byte.min(doc.editor.document.len());
         let line = doc.editor.document.line_index_at_byte(byte);
         let start = doc.editor.document.line_range(line).map_or(0, |r| r.start);
@@ -1349,6 +1406,7 @@ impl View for App {
             &self.second,
             &self.focused_group,
             &self.split_down,
+            &self.split_reversed,
             &self.find_options,
             &self.find_open,
             &self.theme,
