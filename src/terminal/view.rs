@@ -30,7 +30,11 @@ impl View for LiveView {
     }
 
     fn listenables(&self) -> Vec<&dyn Listenable> {
-        vec![&self.terminal.shared.cursor, &self.terminal.shared.focused]
+        vec![
+            &self.terminal.shared.cursor,
+            &self.terminal.shared.focused,
+            &self.terminal.shared.palette,
+        ]
     }
 
     fn as_any(&self) -> &dyn Any {

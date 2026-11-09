@@ -15,7 +15,7 @@ pub(super) enum RegionId {
     Panel,
     Session(u64),
     Group(usize),
-    Tab(usize, DocumentId),
+    Tab(usize, TabId),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Edge {
@@ -33,7 +33,7 @@ enum Destination {
 #[derive(Clone, Copy)]
 struct Gesture {
     group: usize,
-    id: DocumentId,
+    id: TabId,
     start: Point,
     dragging: bool,
     target: Option<Destination>,
@@ -328,12 +328,12 @@ impl App {
         }
     }
 
-    pub(super) fn move_tab(&self, id: DocumentId, source: usize, target: usize, index: usize) {
+    pub(super) fn move_tab(&self, id: TabId, source: usize, target: usize, index: usize) {
         self.move_tab_internal(id, source, target, index, true);
     }
     pub(super) fn move_tab_internal(
         &self,
-        id: DocumentId,
+        id: TabId,
         source: usize,
         target: usize,
         mut index: usize,
@@ -378,7 +378,7 @@ impl App {
             index = index.min(rt.group_tabs[target].len());
             rt.group_tabs[target].insert(index, id);
             if source != target {
-                rt.markdown.move_pane(id, source, target, false);
+                rt.markdown.move_view(id, source, target, false);
                 if let Some(zoom) = rt.image_zoom.remove(&(id, source)) {
                     rt.image_zoom.insert((id, target), zoom);
                 }
@@ -390,7 +390,7 @@ impl App {
                 to.selection.set(from.selection.get());
                 to.scroll.set(from.scroll.get());
             }
-            if source_active == id {
+            if source_active == Some(id) {
                 if let Some(next) = next {
                     self.focus_group(source);
                     self.activate_unchecked(next);
@@ -407,22 +407,16 @@ impl App {
     }
 
     #[cfg(test)]
-    pub(super) fn split_tab(&self, id: DocumentId, source: usize, edge: Edge) {
+    pub(super) fn split_tab(&self, id: TabId, source: usize, edge: Edge) {
         self.split_tab_beside(id, source, source, edge);
     }
-    pub(super) fn split_tab_beside(
-        &self,
-        id: DocumentId,
-        source: usize,
-        beside: usize,
-        edge: Edge,
-    ) {
+    pub(super) fn split_tab_beside(&self, id: TabId, source: usize, beside: usize, edge: Edge) {
         self.split_tab_at(id, source, Some(beside), edge);
     }
-    pub(super) fn split_tab_outer(&self, id: DocumentId, source: usize, edge: Edge) {
+    pub(super) fn split_tab_outer(&self, id: TabId, source: usize, edge: Edge) {
         self.split_tab_at(id, source, None, edge);
     }
-    fn split_tab_at(&self, id: DocumentId, source: usize, beside: Option<usize>, edge: Edge) {
+    fn split_tab_at(&self, id: TabId, source: usize, beside: Option<usize>, edge: Edge) {
         if self.blocked()
             || !self.group_exists(source)
             || beside.is_some_and(|g| !self.group_exists(g))
@@ -448,18 +442,19 @@ impl App {
         to.scroll.set(from.scroll.get());
         let next = {
             let mut rt = self.runtime.lock().unwrap();
-            if rt.group_tabs[source].len() > 1 || detach {
+            let remove = rt.group_tabs[source].len() > 1 || detach;
+            if remove {
                 rt.group_tabs[source].retain(|tab| *tab != id);
             }
-            rt.markdown.move_pane(id, source, group, true);
-            if !rt.group_tabs[source].contains(&id) {
-                rt.markdown.modes.remove(&(id, source));
-            }
+            rt.markdown.move_view(id, source, group, !remove);
             if let Some(zoom) = rt.image_zoom.get(&(id, source)).copied() {
                 rt.image_zoom.insert((id, group), zoom);
             }
-            if rt.group_tabs[source].contains(&self.group_id(source)) {
-                Some(self.group_id(source))
+            if self
+                .group_id(source)
+                .is_some_and(|id| rt.group_tabs[source].contains(&id))
+            {
+                self.group_id(source)
             } else {
                 rt.group_tabs[source].first().copied()
             }
@@ -478,7 +473,7 @@ impl App {
 
 fn destination(
     geometry: &BTreeMap<RegionId, Rect>,
-    tabs: &[Vec<DocumentId>],
+    tabs: &[Vec<TabId>],
     order: &[usize],
     p: Point,
 ) -> Option<Destination> {
@@ -896,10 +891,10 @@ mod tests {
     use scarlet_ui::{event::KeyModifiers, pipeline::RenderingPipeline};
     #[test]
     fn moving_dirty_tabs_keeps_document_history_and_collapses_empty_groups() {
-        let app = App::new();
-        let first = app.active_id();
+        let app = App::with_document();
+        let first = app.document_id();
         app.new_document();
-        let second = app.active_id();
+        let second = app.document_id();
         app.edit(
             second,
             &EditDelta {
@@ -942,7 +937,7 @@ mod tests {
         app.move_tab(first, 0, 2, usize::MAX);
         assert_eq!(app.pane_order(), vec![2]);
         assert_eq!(app.focused_group.get(), 2);
-        assert_eq!(app.active_id(), first);
+        assert_eq!(app.document_id(), first);
         assert_eq!(
             app.runtime.lock().unwrap().group_tabs[2],
             vec![second, first]
@@ -952,10 +947,10 @@ mod tests {
     #[test]
     fn outer_edge_drop_spans_entire_editor_and_keeps_existing_stack_on_every_side() {
         for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
-            let app = App::new();
+            let app = App::with_document();
             app.split_editor(true);
             app.new_document();
-            let id = app.active_id();
+            let id = app.document_id();
             let before = app.pane_layout.get();
             let selection = TextSelection::collapsed(0);
             app.bindings(id).unwrap().selection.set(selection);
@@ -1030,7 +1025,7 @@ mod tests {
                 y: point.y as i32,
                 click_count: 1,
             }));
-            assert_eq!(app.active_id(), id);
+            assert_eq!(app.document_id(), id);
             let groups::PaneLayout::Split {
                 first,
                 second,
@@ -1072,7 +1067,7 @@ mod tests {
 
     #[test]
     fn panel_drag_docks_independently_of_nested_editors_and_toggle_preserves_sessions() {
-        let app = App::new();
+        let app = App::with_document();
         app.split_editor(true);
         app.focus_group(0);
         app.split_editor(false);
@@ -1140,7 +1135,7 @@ mod tests {
 
     #[test]
     fn nested_splits_keep_bottom_full_width_and_can_become_three_columns() {
-        let app = App::new();
+        let app = App::with_document();
         app.split_editor(true); // bottom 1
         app.focus_group(0);
         app.split_editor(false); // upper right 2
@@ -1179,8 +1174,8 @@ mod tests {
         // A unique tab dragged out of the bottom pane removes that old pane.
         app.focus_group(1);
         app.new_document();
-        let moved = app.active_id();
-        let shared = app.group_id(0);
+        let moved = app.document_id();
+        let shared = app.group_id(0).unwrap();
         app.request_close(Some(shared));
         app.split_tab_beside(moved, 1, 2, Edge::Right);
         assert_eq!(app.pane_order(), vec![0, 2, 3]);
@@ -1193,10 +1188,10 @@ mod tests {
 
     #[test]
     fn mounted_drag_splits_survives_rebuild_and_moves_between_panes() {
-        let app = App::new();
-        let first = app.active_id();
+        let app = App::with_document();
+        let first = app.document_id();
         app.new_document();
-        let second = app.active_id();
+        let second = app.document_id();
         let window = || {
             Window::new("Tab drag", app.content())
                 .decorated(false)

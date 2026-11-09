@@ -11,6 +11,8 @@ use std::{
 };
 
 pub type DocumentId = u64;
+/// Tab identities share the document ID allocator but need not own a document.
+pub type TabId = u64;
 
 #[derive(Clone)]
 pub struct Bindings {
@@ -103,12 +105,10 @@ pub struct Workspace {
 
 impl Default for Workspace {
     fn default() -> Self {
-        let mut workspace = Self {
+        Self {
             documents: Vec::new(),
             next_id: 1,
-        };
-        workspace.new_document();
-        workspace
+        }
     }
 }
 
@@ -147,17 +147,18 @@ impl Workspace {
         doc.disk_text = None;
         id
     }
-    fn add(&mut self, path: Option<PathBuf>, text: &str) -> DocumentId {
+    pub fn new_tab_id(&mut self) -> TabId {
         let id = self.next_id;
         self.next_id += 1;
+        id
+    }
+    fn add(&mut self, path: Option<PathBuf>, text: &str) -> DocumentId {
+        let id = self.new_tab_id();
         self.documents.push(Document::new(id, path, text));
         id
     }
     pub fn remove(&mut self, id: DocumentId) {
         self.documents.retain(|doc| doc.id != id);
-        if self.documents.is_empty() {
-            self.new_document();
-        }
     }
     /// A save completion belongs to its original tab, never whichever tab is
     /// active now. Edits made after the snapshot stay dirty.
@@ -179,7 +180,7 @@ mod tests {
     #[test]
     fn documents_keep_independent_history_caret_scroll_and_dirty_state() {
         let mut workspace = Workspace::default();
-        let first = workspace.documents[0].id;
+        let first = workspace.new_document();
         let second = workspace.open("other.rs".into(), "other");
         let doc = workspace.get_mut(first).unwrap();
         doc.editor.edit(&EditDelta {
@@ -213,7 +214,7 @@ mod tests {
     #[test]
     fn save_completion_cannot_clean_newer_edits_or_a_reused_tab_position() {
         let mut workspace = Workspace::default();
-        let first = workspace.documents[0].id;
+        let first = workspace.new_document();
         let doc = workspace.get_mut(first).unwrap();
         doc.editor.edit(&EditDelta {
             replaced_range: 0..0,
@@ -227,7 +228,8 @@ mod tests {
         assert!(workspace.saved(first, revision, "first.rs".into()));
         assert!(workspace.get(first).unwrap().editor.dirty());
         workspace.remove(first);
-        let replacement = workspace.documents[0].id;
+        assert!(workspace.documents.is_empty());
+        let replacement = workspace.new_document();
         assert_ne!(first, replacement);
         assert!(!workspace.saved(first, revision, "wrong.rs".into()));
         assert!(workspace.get(replacement).unwrap().path.is_none());

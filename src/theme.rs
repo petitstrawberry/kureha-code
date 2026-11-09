@@ -130,6 +130,31 @@ impl Theme {
         colors
     }
 
+    pub fn terminal_palette(&self) -> crate::terminal::TerminalPalette {
+        if let Self::Custom(theme) = self {
+            return theme.terminal;
+        }
+        let c = self.colors();
+        let ansi = if self == &Self::Light {
+            [
+                0x363b44, 0xb63851, 0x3d7350, 0x876024, 0x326cad, 0x8851a1, 0x267885, 0xe0e5ed,
+                0x667080, 0xc23a55, 0x347747, 0x936018, 0x286dbb, 0x9746a3, 0x167b8b, 0xf5f7fa,
+            ]
+        } else {
+            [
+                0x303640, 0xe78291, 0x9ac98a, 0xe3c784, 0x8ab4e6, 0xc6a0dc, 0x86c9c4, 0xd4d8df,
+                0x737e91, 0xf397a4, 0xb1d8a3, 0xf0d9a5, 0xa9c8f0, 0xd8b6e9, 0xa5dcd7, 0xf1f3f5,
+            ]
+        }
+        .map(|rgb| Color::rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8));
+        crate::terminal::TerminalPalette {
+            background: c.background,
+            foreground: c.foreground,
+            cursor: c.accent.with_opacity(0.65),
+            ansi,
+        }
+    }
+
     /// The exposed workspace behind the inset panes.
     pub fn workspace_background(&self) -> Color {
         match self {
@@ -202,9 +227,10 @@ impl Theme {
         }
         Ok(self)
     }
-    pub fn with_editor_theme(&self, editor: &Theme) -> Theme {
+    pub fn with_code_theme(&self, editor: &Theme) -> Theme {
         let mut combined = custom::definition(self);
         combined.editor_colors = editor.editor_colors();
+        combined.terminal = editor.terminal_palette();
         combined.syntax = editor.syntect_theme();
         Theme::Custom(std::sync::Arc::new(combined))
     }

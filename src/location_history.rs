@@ -31,7 +31,10 @@ impl History {
 }
 impl App {
     fn location_in(&self, group: usize) -> Option<Location> {
-        let id = self.group_id(group);
+        if self.preview_tab(group).is_some() {
+            return None;
+        }
+        let id = self.group_document(group)?;
         let bindings = self.bindings_for(id, group)?;
         Some(Location {
             id,
@@ -148,8 +151,8 @@ mod tests {
     use serde_json::json;
 
     fn populated() -> App {
-        let app = App::new();
-        let id = app.active_id();
+        let app = App::with_document();
+        let id = app.document_id();
         {
             let mut rt = app.runtime.lock().unwrap();
             let doc = rt.workspace.get_mut(id).unwrap();
@@ -163,7 +166,7 @@ mod tests {
     #[test]
     fn definition_jump_back_and_forward_restore_selection_and_viewport_after_render() {
         let app = populated();
-        let id = app.active_id();
+        let id = app.document_id();
         let bindings = app.bindings(id).unwrap();
         let window = || {
             Window::new("History", app.content())
@@ -219,16 +222,16 @@ mod tests {
     #[test]
     fn tabs_branching_closed_documents_and_history_limit() {
         let app = populated();
-        let first = app.active_id();
+        let first = app.document_id();
         app.new_document();
-        let second = app.active_id();
+        let second = app.document_id();
         app.go_back();
-        assert_eq!(app.active_id(), first);
+        assert_eq!(app.document_id(), first);
         app.go_forward();
-        assert_eq!(app.active_id(), second);
+        assert_eq!(app.document_id(), second);
         app.go_back();
         app.new_document();
-        let third = app.active_id();
+        let third = app.document_id();
         assert!(
             !app.can_go_forward(),
             "new navigation discards the forward branch"
@@ -238,7 +241,7 @@ mod tests {
             !app.can_go_back(),
             "closed documents must not leave dead back entries"
         );
-        assert_eq!(app.active_id(), third);
+        assert_eq!(app.document_id(), third);
         for i in 0..LIMIT + 20 {
             app.bindings(third).unwrap().scroll.set(TextViewScroll {
                 x: 0.0,
@@ -252,7 +255,7 @@ mod tests {
     #[test]
     fn history_restores_original_split_and_clamps_positions_after_edits() {
         let app = populated();
-        let first = app.active_id();
+        let first = app.document_id();
         app.split_editor(false);
         app.bindings_for(first, 1)
             .unwrap()
@@ -262,7 +265,7 @@ mod tests {
         app.focus_group(0);
         app.go_back();
         assert_eq!(app.focused_group.get(), 1);
-        assert_eq!(app.active_id(), first);
+        assert_eq!(app.document_id(), first);
         assert_eq!(app.bindings(first).unwrap().selection.get().caret.byte, 500);
         app.go_forward();
         app.bindings_for(first, 1)
@@ -273,7 +276,7 @@ mod tests {
         app.close_split();
         app.go_back();
         assert_eq!(app.focused_group.get(), 0);
-        assert_eq!(app.active_id(), first);
+        assert_eq!(app.document_id(), first);
         assert!(
             app.bindings(first)
                 .unwrap()

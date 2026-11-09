@@ -23,7 +23,7 @@ fn workbench_preview() {
                 .map(|(id, _)| kureha_code::theme::preset(id).unwrap()),
         )
         .chain([kureha_code::theme::parse_theme(
-            "name='Editor Only'\nbase='light'\n[editor]\ntheme='tokyo-night'\nfont_size=18",
+            "name='Code Colors'\nbase='light'\n[code]\ntheme='tokyo-night'\nfont_size=18",
         )
         .unwrap()]);
     for theme in themes {
@@ -34,7 +34,11 @@ fn workbench_preview() {
             {
                 continue;
             }
-            let app = App::new();
+            let app = if scene == "empty" {
+                App::new()
+            } else {
+                App::with_document()
+            };
             app.set_theme(theme.clone());
             if scene != "empty" {
                 app.runtime.lock().unwrap().explorer.root = Some("/project/kureha-code".into());
@@ -128,7 +132,7 @@ fn terminal_layout_preview() {
     let directory =
         PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
     std::fs::create_dir_all(&directory).unwrap();
-    let app = App::new();
+    let app = App::with_document();
     app.apply_theme(kureha_code::theme::preset("kureha").unwrap());
     let first = app
         .runtime
@@ -208,7 +212,7 @@ fn outer_layout_preview() {
     let directory =
         PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
     std::fs::create_dir_all(&directory).unwrap();
-    let app = App::new();
+    let app = App::with_document();
     app.apply_theme(kureha_code::theme::preset("kureha").unwrap());
     let first = app
         .runtime

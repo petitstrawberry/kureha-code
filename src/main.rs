@@ -1,7 +1,7 @@
 use kureha_code::{
     explorer::{self, Explorer, Listing, Row},
     files, search,
-    workspace::{Bindings, DocumentId, Workspace},
+    workspace::{Bindings, DocumentId, TabId, Workspace},
 };
 use scarlet_ui::{
     Event, KeyCode, MenuBarModel, MenuEntry, MenuItemModel, PlatformWindow, WindowContext,
@@ -68,7 +68,7 @@ struct TreeJob {
 }
 #[derive(Default)]
 struct CloseRequest {
-    tab: Option<DocumentId>,
+    tab: Option<TabId>,
     target: Option<DocumentId>,
     discarded: BTreeSet<DocumentId>,
 }
@@ -116,7 +116,7 @@ struct Runtime {
     language: language::Service,
     minimap: kureha_code::minimap::MinimapCache,
     pane_bindings: BTreeMap<(DocumentId, usize), Bindings>,
-    group_tabs: Vec<Vec<DocumentId>>,
+    group_tabs: Vec<Vec<TabId>>,
     save_all: Vec<DocumentId>,
 }
 #[derive(Clone)]
@@ -132,10 +132,12 @@ struct App {
     panel_position: State<terminal_ui::PanelPosition>,
     panel_fractions: State<[f32; 2]>,
     terminal: terminal_ui::Panel,
-    panes: State<Vec<Option<DocumentId>>>,
+    panes: State<Vec<Option<TabId>>>,
     pane_layout: State<groups::PaneLayout>,
     focused_group: State<usize>,
     chrome: State<u64>,
+    syntax_revision: State<u64>,
+    markdown_revision: State<u64>,
     status: State<String>,
     position: State<String>,
     language_status: State<String>,
@@ -154,11 +156,30 @@ struct App {
     navigation: Arc<AtomicU64>,
 }
 impl App {
+    #[cfg(test)]
+    fn with_document() -> Self {
+        let app = Self::new();
+        app.new_document();
+        app
+    }
+    #[cfg(test)]
+    fn document_id(&self) -> DocumentId {
+        self.active_id().expect("test requires an open document")
+    }
+    fn close_active(&self) {
+        if let Some(tab) = self.group_id(self.focused_group.get()) {
+            self.request_close(Some(tab));
+        }
+    }
+    fn save_as(&self) {
+        if let Some(id) = self.active_id() {
+            self.picker(DialogPurpose::Save(id));
+        }
+    }
     fn new() -> Self {
         let mut runtime = Runtime::default();
-        let first = runtime.workspace.documents[0].id;
-        runtime.group_tabs = vec![vec![first]];
-        let panes = State::new(generate_state_id(), vec![Some(first)]);
+        runtime.group_tabs = vec![Vec::new()];
+        let panes = State::new(generate_state_id(), vec![None]);
         let focused_group = State::new(generate_state_id(), 0);
         let navigation = Arc::new(AtomicU64::new(0));
         for state in [&panes as &dyn Listenable, &focused_group] {
@@ -182,7 +203,7 @@ impl App {
             panel_position: State::new(generate_state_id(), terminal_ui::PanelPosition::Bottom),
             panel_fractions: State::new(generate_state_id(), [0.70, 0.67]),
             terminal: terminal_ui::Panel::new(),
-            language_status: State::new(generate_state_id(), "Plain text".into()),
+            language_status: State::new(generate_state_id(), String::new()),
             language_anchor: State::new(generate_state_id(), Point::new(60.0, 30.0)),
             caret_rect: State::new(generate_state_id(), Rect::from_xywh(60.0, 10.0, 1.0, 20.0)),
             inactive_caret_rect: State::new(generate_state_id(), Rect::zero()),
@@ -191,8 +212,10 @@ impl App {
             focused_group,
             navigation,
             chrome: State::new(generate_state_id(), 0),
+            syntax_revision: State::new(generate_state_id(), 0),
+            markdown_revision: State::new(generate_state_id(), 0),
             status: State::new(generate_state_id(), "Ready".into()),
-            position: State::new(generate_state_id(), "Ln 1, Col 1 · UTF-8 · LF".into()),
+            position: State::new(generate_state_id(), String::new()),
             tree_rows: State::initial(generate_state_id()),
             tree_selected: State::initial(generate_state_id()),
             confirmation: State::new(generate_state_id(), String::new()),
@@ -211,6 +234,9 @@ impl App {
         self.apply_theme(theme);
     }
     fn apply_theme(&self, theme: kureha_code::theme::Theme) {
+        for session in self.terminal.sessions() {
+            session.terminal.set_palette(theme.terminal_palette());
+        }
         self.theme.set(theme.clone());
         kureha_code::syntax::set_theme(theme);
         self.runtime.lock().unwrap().minimap.clear();
@@ -231,11 +257,13 @@ impl App {
     fn invalidate_clipboard(&self) {
         self.navigation.fetch_add(1, Ordering::Relaxed);
     }
-    fn active_id(&self) -> DocumentId {
-        self.group_id(self.focused_group.get())
+    fn active_id(&self) -> Option<DocumentId> {
+        self.group_document(self.focused_group.get())
     }
     fn window_title(&self) -> String {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return env!("APP_NAME").into();
+        };
         let rt = self.runtime.lock().unwrap();
         let doc = rt.workspace.get(id).unwrap();
         format!(
@@ -257,7 +285,9 @@ impl App {
         rt.dialog.is_none()
             && rt.close.is_none()
             && rt.workspace.get(id).is_some_and(|doc| doc.image.is_none())
-            && !rt.markdown.modes.contains(&(id, self.focused_group.get()))
+            && !self
+                .group_id(self.focused_group.get())
+                .is_some_and(|tab| rt.markdown.tabs.contains_key(&tab))
             && !matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id: saving, .. }) if *saving == id)
     }
     fn sync_editor(&self, id: DocumentId) {
@@ -315,7 +345,9 @@ impl App {
         }
     }
     fn undo(&self, redo: bool) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         if !self.editable(id) {
             return;
         }
@@ -330,7 +362,9 @@ impl App {
         self.changed();
     }
     fn select_all(&self) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         if !self.editable(id) {
             return;
         }
@@ -347,20 +381,22 @@ impl App {
         };
         bindings.selection.set(selection);
     }
-    fn activate(&self, id: DocumentId) {
+    fn activate(&self, id: TabId) {
         if self.blocked() {
             return;
         }
-        if self.active_id() != id && self.runtime.lock().unwrap().workspace.get(id).is_some() {
+        if self.active_id() != Some(id)
+            && self.runtime.lock().unwrap().document_for_tab(id).is_some()
+        {
             self.remember_location();
         }
         self.activate_unchecked(id);
     }
-    fn activate_unchecked(&self, id: DocumentId) {
+    fn activate_unchecked(&self, id: TabId) {
         let group = self.focused_group.get();
         let exists = {
             let mut rt = self.runtime.lock().unwrap();
-            let exists = rt.workspace.get(id).is_some();
+            let exists = rt.document_for_tab(id).is_some();
             if exists && !rt.group_tabs[group].contains(&id) {
                 rt.group_tabs[group].push(id);
             }
@@ -375,7 +411,9 @@ impl App {
         if self.blocked() {
             return;
         }
-        let id = self.active_id();
+        let Some(id) = self.group_id(self.focused_group.get()) else {
+            return;
+        };
         let next = {
             let rt = self.runtime.lock().unwrap();
             let tabs = &rt.group_tabs[self.focused_group.get()];
@@ -402,36 +440,51 @@ impl App {
         let mut panes = self.panes.get();
         {
             let mut rt = self.runtime.lock().unwrap();
+            let remove: BTreeSet<_> = rt
+                .markdown
+                .tabs
+                .iter()
+                .filter_map(|(tab, p)| (p.document == id).then_some(*tab))
+                .chain(std::iter::once(id))
+                .collect();
             rt.workspace.remove(id);
             rt.history.remove(id);
             rt.image_zoom.retain(|(document, _), _| *document != id);
             rt.markdown.remove(id);
             rt.pane_bindings.retain(|(document, _), _| *document != id);
             for (group, tabs) in rt.group_tabs.iter_mut().enumerate() {
-                let index = tabs.iter().position(|tab| *tab == id).unwrap_or(0);
-                tabs.retain(|tab| *tab != id);
-                if panes[group] == Some(id) {
+                let index = tabs
+                    .iter()
+                    .position(|tab| remove.contains(tab))
+                    .unwrap_or(0);
+                tabs.retain(|tab| !remove.contains(tab));
+                if panes[group].is_some_and(|tab| remove.contains(&tab)) {
                     panes[group] = tabs.get(index.min(tabs.len().saturating_sub(1))).copied();
                 }
             }
-            if panes.iter().all(Option::is_none) {
-                let group = self.focused_group.get();
-                let replacement = rt.workspace.documents[0].id;
-                rt.group_tabs[group].push(replacement);
-                panes[group] = Some(replacement);
-            }
         }
         self.panes.set(panes.clone());
-        let keep = |g: usize| panes[g].is_some();
-        if let Some(layout) = self.pane_layout.get().retain(&keep) {
-            self.pane_layout.set(layout);
-        }
+        let editors = self.pane_order();
+        let keep_empty = editors
+            .iter()
+            .all(|g| panes[*g].is_none())
+            .then(|| editors.first().copied())
+            .flatten();
+        let layout = self
+            .pane_layout
+            .get()
+            .retain(&|g| panes[g].is_some() || Some(g) == keep_empty)
+            .unwrap_or(groups::PaneLayout::Leaf(self.focused_group.get()));
+        self.pane_layout.set(layout);
         if !self.group_exists(self.focused_group.get()) {
             self.focus_group(self.pane_order()[0]);
         }
+        self.invalidate_clipboard();
+        self.dismiss_language_panel();
+        self.update_position();
         self.changed();
     }
-    fn request_close(&self, tab: Option<DocumentId>) {
+    fn request_close(&self, tab: Option<TabId>) {
         if let Some(id) = tab {
             if self.close_shared_tab(id) {
                 return;
@@ -467,7 +520,9 @@ impl App {
                 .documents
                 .iter()
                 .find(|doc| {
-                    close.tab.is_none_or(|id| id == doc.id)
+                    close
+                        .tab
+                        .is_none_or(|tab| rt.document_for_tab(tab) == Some(doc.id))
                         && doc.editor.dirty()
                         && !close.discarded.contains(&doc.id)
                 })
@@ -478,14 +533,19 @@ impl App {
             target
         };
         if let Some((id, name)) = decision {
-            self.activate_unchecked(id);
+            if self.preview_tab(self.focused_group.get()).is_none() {
+                self.activate_unchecked(id);
+            }
             self.confirmation.set(format!("Save changes to {name}?"));
             open_window("confirm");
         } else {
             let close = self.runtime.lock().unwrap().close.take().unwrap();
             dismiss_window("confirm");
-            if let Some(id) = close.tab {
-                self.remove_document(id);
+            if let Some(tab) = close.tab {
+                let id = self.runtime.lock().unwrap().document_for_tab(tab);
+                if let Some(id) = id {
+                    self.remove_document(id);
+                }
             } else {
                 dismiss_window("main");
             }
@@ -614,7 +674,10 @@ impl App {
             let rt = self.runtime.lock().unwrap();
             rt.close.as_ref().and_then(|close| close.target)
         }
-        .unwrap_or_else(|| self.active_id());
+        .or_else(|| self.active_id());
+        let Some(id) = id else {
+            return;
+        };
         let path = self
             .runtime
             .lock()
@@ -824,7 +887,7 @@ impl App {
         if self.blocked() {
             return;
         }
-        if let Some(bindings) = self.bindings(self.active_id()) {
+        if let Some(bindings) = self.active_id().and_then(|id| self.bindings(id)) {
             let document = bindings.document.get();
             if let Some(range) = bindings.selection.get().normalized_range() {
                 if let Some(text) = document.as_str().get(range) {
@@ -840,7 +903,7 @@ impl App {
         if self.blocked() {
             return;
         }
-        let Some(bindings) = self.bindings(self.active_id()) else {
+        let Some(bindings) = self.active_id().and_then(|id| self.bindings(id)) else {
             return;
         };
         let selection = bindings.selection.get();
@@ -881,7 +944,9 @@ impl App {
         }
     }
     fn replace_match(&self) {
-        let target = self.clipboard_target();
+        let Some(target) = self.clipboard_target() else {
+            return;
+        };
         let Some(bindings) = self.bindings(target.id) else {
             return;
         };
@@ -903,7 +968,9 @@ impl App {
         self.find(false);
     }
     fn replace_all(&self) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         if !self.editable(id) {
             return;
         }
@@ -951,9 +1018,11 @@ impl App {
         }
     }
     fn clipboard_service(&self) -> Option<TextClipboard> {
-        if !self.editable(self.active_id()) {
-            self.status.set("Finish the file operation first".into());
-            return None;
+        if !self.terminal_focused() {
+            let id = self.active_id()?;
+            if !self.editable(id) {
+                return None;
+            }
         }
         let service = {
             let rt = self.runtime.lock().unwrap();
@@ -975,18 +1044,20 @@ impl App {
             }
         }
     }
-    fn clipboard_target(&self) -> ClipboardTarget {
-        let id = self.active_id();
+    fn clipboard_target(&self) -> Option<ClipboardTarget> {
+        let id = self.active_id()?;
         let bindings = self.bindings(id).unwrap();
-        ClipboardTarget {
+        Some(ClipboardTarget {
             id,
             generation: bindings.generation(),
             navigation: self.navigation.load(Ordering::Relaxed),
             selection: bindings.selection.get(),
-        }
+        })
     }
     fn copy(&self, cut: bool) {
-        let target = self.clipboard_target();
+        let Some(target) = self.clipboard_target() else {
+            return;
+        };
         let Some(range) = target.selection.normalized_range() else {
             return;
         };
@@ -1015,7 +1086,9 @@ impl App {
         let Some(service) = self.clipboard_service() else {
             return;
         };
-        let target = self.clipboard_target();
+        let Some(target) = self.clipboard_target() else {
+            return;
+        };
         let handle = service.read_text();
         self.runtime.lock().unwrap().clipboard_job = Some(ClipboardJob::Paste { handle, target });
         self.status.set("Reading desktop clipboard…".into());
@@ -1032,7 +1105,7 @@ impl App {
             Some(ClipboardJob::TerminalPaste { handle, target });
     }
     fn apply_clipboard(&self, target: ClipboardTarget, text: &str) -> bool {
-        if self.active_id() != target.id
+        if self.active_id() != Some(target.id)
             || !self.editable(target.id)
             || self.navigation.load(Ordering::Relaxed) != target.navigation
         {
@@ -1274,7 +1347,7 @@ impl App {
             group
         };
         let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
-        if !group_closed && existing != Some(self.group_id(destination)) {
+        if !group_closed && existing != self.group_id(destination) {
             self.remember_location_in(destination);
         }
         let id = {
@@ -1301,7 +1374,15 @@ impl App {
         self.status.set("Ready".into());
     }
     fn update_position(&self) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            if !self.position.get().is_empty() {
+                self.position.set(String::new());
+            }
+            if !self.language_status.get().is_empty() {
+                self.language_status.set(String::new());
+            }
+            return;
+        };
         let selection = self.bindings(id).unwrap().selection.get();
         let rt = self.runtime.lock().unwrap();
         let doc = rt.workspace.get(id).unwrap();
@@ -1445,7 +1526,8 @@ impl Application for App {
         self.poll_language();
         self.poll_language_interactions();
         if kureha_code::syntax::poll() {
-            self.changed();
+            self.syntax_revision
+                .update(|revision| *revision = revision.wrapping_add(1));
         }
     }
 }

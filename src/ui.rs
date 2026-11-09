@@ -205,7 +205,7 @@ mod row_tests {
     fn explorer_selected_row_clicks_blank_space_cancels_outside_and_retains_keyboard_focus() {
         for theme in kureha_code::theme::Theme::ALL {
             for offset in [35.0, 280.0] {
-                let app = App::new();
+                let app = App::with_document();
                 app.set_theme(theme.clone());
                 assert!(app.runtime.lock().unwrap().explorer.set_root(
                     0,
@@ -376,7 +376,7 @@ impl App {
                 if !(modifiers.primary() && matches!(keycode, KeyCode::Char('w' | 'W' | 'n' | 'N' | 'o' | 'O' | '1'..='9' | '\\' | '|') | KeyCode::Tab) || modifiers.control && *keycode == KeyCode::Tab) { return false; }
             }
             if modifiers.primary() && modifiers.shift && !modifiers.alt && matches!(keycode, KeyCode::Char('v'|'V')) {
-                keys.toggle_markdown_preview(); return true;
+                keys.open_markdown_preview(); return true;
             }
             if keys.language_key(*keycode, *modifiers) {
                 return true;
@@ -416,12 +416,12 @@ impl App {
                 KeyCode::Char('o' | 'O') if modifiers.shift => keys.show_folder(),
                 KeyCode::Char('o' | 'O') => keys.picker(DialogPurpose::Open),
                 KeyCode::Char('s' | 'S') if modifiers.shift => {
-                    keys.picker(DialogPurpose::Save(keys.active_id()))
+                    keys.save_as()
                 }
                 KeyCode::Char('s' | 'S') if modifiers.alt => keys.save_all(),
                 KeyCode::Char('s' | 'S') => keys.save(),
                 KeyCode::Char('w' | 'W') if modifiers.shift => keys.request_close(None),
-                KeyCode::Char('w' | 'W') => keys.request_close(Some(keys.active_id())),
+                KeyCode::Char('w' | 'W') => keys.close_active(),
                 KeyCode::Char('f' | 'F') => keys.show_find(),
                 KeyCode::Char('h' | 'H') if !cfg!(target_os = "macos") => keys.show_find(),
                 KeyCode::Char('g' | 'G') => keys.find(modifiers.shift),
@@ -460,38 +460,35 @@ impl App {
         )
     }
     fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
-        self.tab_region(
-            Surface::section(
-                vstack! { self.tabs_view(group), self.document_view(self.group_id(group), group), }
-                    .spacing(0.0)
-                    .frame(f32::INFINITY, f32::INFINITY),
-            )
-            .surface_style(self.theme.get().chrome_style())
-            .corner_radius(16.0)
-            .clip_content(true)
-            .key(format!("editor-group-{group}")),
-            tab_drag::RegionId::Group(group),
-        )
+        self.tab_region(Surface::section(vstack! {
+            self.tabs_view(group),
+            match self.group_document(group) {
+                Some(id) => Either::A(self.document_view(id, group)),
+                None => Either::B(VStack::new(()).frame(f32::INFINITY,f32::INFINITY).background(self.theme.get().editor_colors().background)),
+            },
+        }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY))
+            .surface_style(self.theme.get().chrome_style()).corner_radius(16.0).clip_content(true)
+            .key(format!("editor-group-{group}")), tab_drag::RegionId::Group(group))
     }
     fn tabs_view(&self, group: usize) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let active = self.group_id(group);
         let summaries = {
             let rt = self.runtime.lock().unwrap();
-            rt.group_tabs[group].iter().filter_map(|id| rt.workspace.get(*id)).map(|doc| {
+            rt.group_tabs[group].iter().filter_map(|tab| rt.document_for_tab(*tab).and_then(|id| rt.workspace.get(id)).map(|doc| (*tab,doc))).map(|(tab,doc)| {
                 let saving = matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id, .. }) if *id == doc.id);
-                (doc.id, doc.path.clone(), format!("{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if saving { " …" } else { "" }))
+                (tab, doc.path.clone(), format!("{}{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if rt.markdown.tabs.contains_key(&tab) { " · Preview" } else { "" }, if saving { " …" } else { "" }))
             }).collect::<Vec<_>>()
         };
         let mut left = 0.0;
         let mut selected_range = (0.0, 0.0);
         let tabs = summaries.into_iter().map(|(id, path, label)| {
             let width = (label.chars().count() as f32 * 7.0 + 70.0).clamp(120.0, 240.0);
-            if id == active { selected_range = (left, left + width); }
+            if Some(id) == active { selected_range = (left, left + width); }
             left += width + 4.0;
             let select = self.clone();
             let close = self.clone();
-            let icon = file_icons::for_path(path.as_deref()).themed(&theme, id == active);
+            let icon = file_icons::for_path(path.as_deref()).themed(&theme, Some(id) == active);
             let content = hstack! {
                 Button::new(label).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).font_size(13.0).padding(7.0)
                     .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Pixels(18)).icon_style(icon.style())
@@ -500,7 +497,7 @@ impl App {
                     .on_click(move || {close.focus_group(group); close.request_close(Some(id));}).frame(28.0, 32.0),
             }.spacing(0.0).frame(width, 32.0);
             let surface = Surface::section(content).corner_radius(10.0).clip_content(true);
-            self.tab_region(if id == active { surface.surface_style(theme.tab_style()) }
+            self.tab_region(if Some(id) == active { surface.surface_style(theme.tab_style()) }
                 else { surface.fill(Color::TRANSPARENT) }, tab_drag::RegionId::Tab(group, id)).key(id)
         }).collect::<Vec<_>>();
         let back = self.clone();
@@ -519,6 +516,14 @@ impl App {
         }.spacing(2.0).padding_insets(EdgeInsets::new(8.0, 8.0, 8.0, 6.0))
     }
     pub(super) fn editor_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
+        LiveEditor {
+            app: self.clone(),
+            id,
+            group,
+            document: self.bindings_for(id, group).unwrap().document,
+        }
+    }
+    fn editor_content(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         let bindings = self.bindings_for(id, group).unwrap();
         let edited = self.clone();
         let keys = self.clone();
@@ -590,9 +595,8 @@ impl App {
             .on_text_change(move |delta| {
                 edited.edit(id, delta);
                 edited.schedule_completion(id, delta);
-                // Every revision needs fresh syntax/diagnostic decorations,
-                // including typing after the dirty flag is already set.
-                edited.changed();
+                // Document state rebuilds only this editor's decorations.
+                // Workbench chrome changes only when the dirty flag changes.
             });
         let editor = theme
             .style_text_view(editor)
@@ -817,13 +821,9 @@ impl App {
                 MenuEntry::Separator,
                 self.item("save", "Save", "Ctrl+S", App::save),
                 self.item("save-all", "Save All", "Ctrl+Alt+S", App::save_all),
-                self.item("save-as", "Save As…", "Ctrl+Shift+S", |a| {
-                    a.picker(DialogPurpose::Save(a.active_id()))
-                }),
+                self.item("save-as", "Save As…", "Ctrl+Shift+S", |a| a.save_as()),
                 MenuEntry::Separator,
-                self.item("close", "Close Tab", "Ctrl+W", |a| {
-                    a.request_close(Some(a.active_id()))
-                }),
+                self.item("close", "Close Tab", "Ctrl+W", |a| a.close_active()),
                 self.item("close-window", "Close Window", "Ctrl+Shift+W", |a| {
                     a.request_close(None)
                 }),
@@ -896,15 +896,33 @@ impl App {
                 MenuEntry::Separator,
                 self.item(
                     "markdown-preview",
-                    "Toggle Markdown Preview",
+                    "Open Markdown Preview",
                     "Ctrl+Shift+V",
-                    App::toggle_markdown_preview,
+                    App::open_markdown_preview,
                 ),
                 self.item(
                     "markdown-preview-side",
                     "Open Markdown Preview to Side",
                     "",
                     App::markdown_preview_to_side,
+                ),
+                self.item(
+                    "markdown-source",
+                    "Show Markdown Source",
+                    "",
+                    App::markdown_source,
+                ),
+                self.item(
+                    "markdown-file-sync",
+                    "Toggle Markdown File Sync",
+                    "",
+                    App::markdown_follow_toggle,
+                ),
+                self.item(
+                    "markdown-scroll-sync",
+                    "Toggle Markdown Scroll Sync",
+                    "",
+                    App::markdown_scroll_toggle,
                 ),
                 MenuEntry::Separator,
                 self.item("split-right", "Split Editor Right", "Ctrl+\\", |a| {
@@ -957,12 +975,9 @@ impl App {
                 self.item("select-color-theme", "Select Color Theme…", "", |a| {
                     a.show_theme_picker(false)
                 }),
-                self.item(
-                    "select-editor-theme",
-                    "Select Editor Color Theme…",
-                    "",
-                    |a| a.show_theme_picker(true),
-                ),
+                self.item("select-code-theme", "Select Code Color Theme…", "", |a| {
+                    a.show_theme_picker(true)
+                }),
                 MenuEntry::Separator,
                 self.item(
                     "minimap",
@@ -1021,6 +1036,28 @@ impl App {
                 ),
             ]),
         ])
+    }
+}
+
+/// Keep document/decorations updates out of the workbench's subscription list.
+#[derive(Clone)]
+struct LiveEditor {
+    app: App,
+    id: DocumentId,
+    group: usize,
+    document: State<TextDocument>,
+}
+impl View for LiveEditor {
+    fn create_element(&self) -> Box<dyn Element> {
+        Box::new(ComponentElement::new_with_builder(self.clone(), |view| {
+            Box::new(view.app.editor_content(view.id, view.group))
+        }))
+    }
+    fn listenables(&self) -> Vec<&dyn Listenable> {
+        vec![&self.document, &self.app.syntax_revision]
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

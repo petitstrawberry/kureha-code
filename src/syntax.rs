@@ -2,8 +2,9 @@
 //!
 //! Call `spans` with the engine revision (also after undo/redo and Save As), and
 //! call `poll` from the app idle hook to request a view update after completion.
-//! A cache miss returns plain text, never offsets from another revision. One
-//! worker owns the grammars; pending revisions coalesce by stable document ID.
+//! While parsing an edit, colors for unchanged text are remapped to its new
+//! byte offsets. One worker owns grammars; requests coalesce by document ID.
+mod incremental;
 use crate::theme::Theme as EditorTheme;
 use scarlet_ui::prelude::{Color, TextStyleSpan};
 use std::{
@@ -56,6 +57,7 @@ impl Highlight {
 }
 struct Entry {
     key: Key,
+    text: Arc<str>,
     cancel: Arc<AtomicBool>,
     used: u64,
     highlight: Arc<Highlight>,
@@ -112,6 +114,12 @@ impl Cache {
                 return entry.highlight.spans.clone();
             }
         }
+        let provisional = self
+            .entries
+            .get(&id)
+            .filter(|entry| entry.key.path.as_deref() == path && text.len() <= MAX_BYTES)
+            .map(|entry| remap_spans(&entry.text, text, &entry.highlight.spans))
+            .unwrap_or_default();
         self.remove(id);
         if self.entries.len() >= MAX_DOCUMENTS {
             if let Some((&oldest, _)) = self.entries.iter().min_by_key(|(_, entry)| entry.used) {
@@ -140,19 +148,28 @@ impl Cache {
                 text: text.to_owned(),
                 theme: self.theme.clone(),
             });
-            Highlight::default()
+            Highlight {
+                spans: provisional,
+                fallback: None,
+            }
         };
+        let spans = highlight.spans.clone();
         self.entries.insert(
             id,
             Entry {
                 key,
+                text: if text.len() <= MAX_BYTES {
+                    Arc::from(text)
+                } else {
+                    Arc::from("")
+                },
                 cancel,
                 used: self.clock,
                 highlight: Arc::new(highlight),
                 generation: self.clock,
             },
         );
-        Vec::new()
+        spans
     }
 
     fn publish(&mut self, request: &Request, highlight: Highlight) -> bool {
@@ -174,6 +191,50 @@ impl Cache {
         true
     }
 }
+/// Keep only unchanged pieces of the previous highlight, translated through a
+/// UTF-8-safe replacement range. Never expose old offsets against new text.
+fn remap_spans(before: &str, after: &str, spans: &[TextStyleSpan]) -> Vec<TextStyleSpan> {
+    let mut start = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !before.is_char_boundary(start) || !after.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut suffix = before.as_bytes()[start..]
+        .iter()
+        .rev()
+        .zip(after.as_bytes()[start..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !before.is_char_boundary(before.len() - suffix)
+        || !after.is_char_boundary(after.len() - suffix)
+    {
+        suffix -= 1;
+    }
+    let old_end = before.len() - suffix;
+    let new_end = after.len() - suffix;
+    let mut result = Vec::with_capacity(spans.len() + 1);
+    for span in spans {
+        let left = span.range.start..span.range.end.min(start);
+        if left.start < left.end {
+            result.push(TextStyleSpan {
+                range: left,
+                color: span.color,
+            });
+        }
+        let right = span.range.start.max(old_end)..span.range.end;
+        if right.start < right.end {
+            result.push(TextStyleSpan {
+                range: (right.start - old_end + new_end)..(right.end - old_end + new_end),
+                color: span.color,
+            });
+        }
+    }
+    result
+}
+
 struct Service {
     shared: Arc<(Mutex<Cache>, Condvar)>,
     running: bool,
@@ -195,6 +256,7 @@ impl Service {
             .name("kureha-syntax".into())
             .stack_size(4 * 1024 * 1024)
             .spawn(move || {
+                let mut incremental = incremental::WorkerCache::default();
                 loop {
                     let request = {
                         let (lock, wake) = &*worker;
@@ -210,7 +272,7 @@ impl Service {
                     // Grammar decompression and regex compilation happen here,
                     // including on first use, outside the UI/cache lock.
                     let catalog = CATALOG.get_or_init(Catalog::new);
-                    let highlight = catalog.highlight(&request);
+                    let highlight = incremental.highlight(catalog, &request);
                     worker.0.lock().unwrap().publish(&request, highlight);
                 }
             })
@@ -283,9 +345,10 @@ pub fn snippet_spans(path: Option<&Path>, text: &str, theme: EditorTheme) -> Vec
     spans
 }
 
-/// Foreground spans for exactly this document ID, engine revision, and path.
+/// Foreground spans with offsets valid for this document revision and path.
 /// Repeated paints do not copy text, hash text, enqueue jobs, or reparse it.
-/// Cache misses and explicit fallbacks return an empty vector (plain text).
+/// Edits retain translated colors on unchanged text until parsing completes.
+/// First loads and explicit fallbacks return an empty vector (plain text).
 pub fn spans(id: u64, revision: u64, path: Option<&Path>, text: &str) -> Vec<TextStyleSpan> {
     let service = SERVICE.get_or_init(Service::new);
     if !service.running {
@@ -301,7 +364,7 @@ pub fn spans(id: u64, revision: u64, path: Option<&Path>, text: &str) -> Vec<Tex
     result
 }
 
-/// True once for newly published, non-stale work; call `App::changed()` then.
+/// True once for newly published, non-stale work; refresh decoration consumers.
 /// Does not start a worker or load grammars until content requests spans.
 pub fn poll() -> bool {
     let mut changed = SERVICE
@@ -409,66 +472,9 @@ impl Catalog {
             .unwrap_or_else(|| self.syntaxes.find_syntax_plain_text())
     }
 
+    #[cfg(test)]
     fn highlight(&self, request: &Request) -> Highlight {
-        let text = &request.text;
-        if text.len() > MAX_BYTES {
-            return Highlight::plain("Syntax colors paused: document exceeds 1 MiB");
-        }
-        let syntax = self.syntax(request.key.path.as_deref(), text);
-        if syntax.name == "Plain Text" {
-            return Highlight::default();
-        }
-        let theme = request.theme.syntect_theme();
-        let mut parser = HighlightLines::new(syntax, &theme);
-        let neutral = theme.settings.foreground;
-        let started = Instant::now();
-        let mut result = Highlight::default();
-        let mut offset = 0;
-        for (index, line) in LinesWithEndings::from(text).enumerate() {
-            if request.cancel.load(Ordering::Relaxed) {
-                return Highlight::default();
-            }
-            if index >= MAX_LINES {
-                return Highlight::plain("Syntax colors paused: document exceeds 20,000 lines");
-            }
-            if line.len() > MAX_LINE_BYTES {
-                return Highlight::plain("Syntax colors paused: a line exceeds 16 KiB");
-            }
-            if started.elapsed() > PARSE_BUDGET {
-                return Highlight::plain("Syntax colors paused: highlighting budget exceeded");
-            }
-            let Ok(tokens) = parser.highlight_line(line, &self.syntaxes) else {
-                return Highlight::plain(
-                    "Syntax colors unavailable: grammar could not parse this document",
-                );
-            };
-            for (style, token) in tokens {
-                let end = offset + token.len();
-                if Some(style.foreground) != neutral && !token.is_empty() {
-                    let c = style.foreground;
-                    let color = Color::rgba(c.r, c.g, c.b, c.a);
-                    if let Some(last) = result
-                        .spans
-                        .last_mut()
-                        .filter(|last| last.range.end == offset && last.color == color)
-                    {
-                        last.range.end = end;
-                    } else {
-                        if result.spans.len() >= MAX_SPANS {
-                            return Highlight::plain(
-                                "Syntax colors paused: document has too many tokens",
-                            );
-                        }
-                        result.spans.push(TextStyleSpan {
-                            range: offset..end,
-                            color,
-                        });
-                    }
-                }
-                offset = end;
-            }
-        }
-        result
+        incremental::full(self, request)
     }
 }
 
@@ -625,11 +631,11 @@ contexts:
 mod tests {
     use super::*;
 
-    fn catalog() -> &'static Catalog {
+    pub(super) fn catalog() -> &'static Catalog {
         static CATALOG: OnceLock<Catalog> = OnceLock::new();
         CATALOG.get_or_init(Catalog::new)
     }
-    fn request(id: u64, revision: u64, name: &str, text: &str) -> Request {
+    pub(super) fn request(id: u64, revision: u64, name: &str, text: &str) -> Request {
         Request {
             id,
             key: Key {
@@ -806,7 +812,7 @@ mod tests {
         ));
         assert_eq!(
             cache.request(11, 1, Some(Path::new("a.rs")), "fn old() {}"),
-            vec![colored]
+            vec![colored.clone()]
         );
         assert!(cache.pending.is_empty());
         assert!(
@@ -814,10 +820,9 @@ mod tests {
                 .request(12, 1, Some(Path::new("a.rs")), "fn old() {}")
                 .is_empty()
         );
-        assert!(
-            cache
-                .request(11, 2, Some(Path::new("a.rs")), "fn new() {}")
-                .is_empty()
+        assert_eq!(
+            cache.request(11, 2, Some(Path::new("a.rs")), "fn new() {}"),
+            vec![colored]
         );
         assert!(first.cancel.load(Ordering::Relaxed));
         assert!(!cache.publish(&first, Highlight::default()));
@@ -828,6 +833,61 @@ mod tests {
             Some(Path::new("a.py"))
         );
     }
+    #[test]
+    fn provisional_colors_follow_unicode_insert_delete_and_undo_without_blank_frames() {
+        let mut cache = Cache::default();
+        let path = Some(Path::new("unicode.rs"));
+        let original = "// 日本語\nfn main() { let n = 1; }\n";
+        cache.request(7, 1, path, original);
+        let first = cache.pending.pop_front().unwrap();
+        assert!(cache.publish(&first, catalog().highlight(&first)));
+        let color = cache.entries[&7]
+            .highlight
+            .spans
+            .iter()
+            .find(|s| s.range.contains(&original.find("fn").unwrap()))
+            .unwrap()
+            .color;
+        for (revision, text) in [
+            "// 日本語\n// 追加\nfn main() { let n = 1; }\n",
+            "// 語\nfn main() { let n = 1; }\n",
+            original,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let spans = cache.request(7, revision as u64 + 2, path, text);
+            assert!(!spans.is_empty());
+            let keyword = text.find("fn").unwrap();
+            assert_eq!(
+                spans
+                    .iter()
+                    .find(|s| s.range.contains(&keyword))
+                    .unwrap()
+                    .color,
+                color
+            );
+            for span in &spans {
+                assert!(span.range.start < span.range.end && span.range.end <= text.len());
+                assert!(
+                    text.is_char_boundary(span.range.start)
+                        && text.is_char_boundary(span.range.end)
+                );
+            }
+        }
+        assert!(
+            !cache.publish(&first, Highlight::default()),
+            "stale parse overwrote remapped spans"
+        );
+        assert!(
+            cache
+                .request(7, 5, Some(Path::new("unicode.txt")), original)
+                .is_empty()
+        );
+        cache.set_theme(EditorTheme::Dark);
+        assert!(cache.request(7, 5, path, original).is_empty());
+    }
+
     #[test]
     fn stale_completion_cannot_overwrite_same_key_after_eviction_or_path_roundtrip() {
         let mut cache = Cache::default();
@@ -890,7 +950,7 @@ mod tests {
         cache.request(1, 0, Some(Path::new("main.rs")), "fn main() {}");
         let fresh = cache.pending.pop_front().unwrap();
         let colors = catalog().highlight(&fresh);
-        assert_eq!(color_at(&colors, 0), Some(Color::rgb(170,187,204)));
+        assert_eq!(color_at(&colors, 0), Some(Color::rgb(170, 187, 204)));
         assert!(cache.publish(&fresh, colors));
     }
 
@@ -937,7 +997,7 @@ mod tests {
     }
 
     #[test]
-    fn asynchronous_completion_wakes_poll_and_never_reuses_previous_revision() {
+    fn asynchronous_completion_wakes_poll_and_drops_replaced_token_colors() {
         let id = u64::MAX - 100;
         let path = Some(Path::new("async.rs"));
         assert!(spans(id, 1, path, "fn main() {}").is_empty());

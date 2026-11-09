@@ -85,6 +85,7 @@ impl App {
 
     pub(super) fn bindings_for(&self, id: DocumentId, group: usize) -> Option<Bindings> {
         let mut rt = self.runtime.lock().unwrap();
+        let id = rt.document_for_tab(id)?;
         let first = rt.workspace.get(id)?.bindings.clone();
         if group == 0 {
             return Some(first);
@@ -97,18 +98,12 @@ impl App {
         )
     }
     pub(super) fn group_exists(&self, group: usize) -> bool {
-        self.panes.get().get(group).is_some_and(Option::is_some)
+        self.pane_layout.get().leaves().contains(&group)
     }
-    pub(super) fn group_id(&self, group: usize) -> DocumentId {
-        let panes = self.panes.get();
-        panes
-            .get(group)
-            .copied()
-            .flatten()
-            .or_else(|| panes.into_iter().flatten().next())
-            .unwrap()
+    pub(super) fn group_id(&self, group: usize) -> Option<TabId> {
+        self.panes.get().get(group).copied().flatten()
     }
-    pub(super) fn set_group_id(&self, group: usize, id: DocumentId) {
+    pub(super) fn set_group_id(&self, group: usize, id: TabId) {
         self.panes.update(|panes| panes[group] = Some(id));
     }
     pub(super) fn focus_group(&self, group: usize) {
@@ -123,13 +118,13 @@ impl App {
         }
         self.blur_terminals();
     }
-    pub(super) fn allocate_group(&self, id: DocumentId) -> usize {
+    pub(super) fn allocate_group(&self, id: TabId) -> usize {
         let group = self.panes.get().len();
         self.runtime.lock().unwrap().group_tabs.push(vec![id]);
         self.panes.update(|panes| panes.push(Some(id)));
         group
     }
-    pub(super) fn add_group(&self, id: DocumentId, beside: usize, edge: tab_drag::Edge) -> usize {
+    pub(super) fn add_group(&self, id: TabId, beside: usize, edge: tab_drag::Edge) -> usize {
         self.remember_pane_sizes();
         let group = self.allocate_group(id);
         self.pane_layout
@@ -141,7 +136,9 @@ impl App {
             return;
         }
         let source = self.focused_group.get();
-        let id = self.active_id();
+        let Some(id) = self.group_id(source) else {
+            return;
+        };
         let group = self.add_group(
             id,
             source,
@@ -161,7 +158,7 @@ impl App {
             .lock()
             .unwrap()
             .markdown
-            .move_pane(id, source, group, true);
+            .move_view(id, source, group, true);
         self.focus_group(group);
         self.status.set(
             if down {
@@ -193,7 +190,9 @@ impl App {
         }
         self.retire_empty_group(source);
         self.focus_group(target);
-        self.set_group_id(target, active);
+        if let Some(active) = active {
+            self.set_group_id(target, active);
+        }
         self.status
             .set("Pane closed; tabs moved to neighbour".into());
     }
@@ -232,29 +231,36 @@ impl App {
             self.split_editor(false);
         }
     }
-    pub(super) fn close_shared_tab(&self, id: DocumentId) -> bool {
+    pub(super) fn close_shared_tab(&self, tab: TabId) -> bool {
+        if self.blocked() {
+            return false;
+        }
         let group = self.focused_group.get();
         let active = self.group_id(group);
         let next = {
             let mut rt = self.runtime.lock().unwrap();
-            if !rt
-                .group_tabs
-                .iter()
-                .enumerate()
-                .any(|(g, tabs)| g != group && tabs.contains(&id))
-            {
+            let Some(id) = rt.document_for_tab(tab) else {
+                return false;
+            };
+            if !rt.group_tabs.iter().enumerate().any(|(g, tabs)| {
+                tabs.iter()
+                    .any(|t| (g != group || *t != tab) && rt.document_for_tab(*t) == Some(id))
+            }) {
                 return false;
             }
             let tabs = &mut rt.group_tabs[group];
-            let position = tabs.iter().position(|tab| *tab == id).unwrap_or(0);
-            tabs.retain(|tab| *tab != id);
-            tabs.get(position.min(tabs.len().saturating_sub(1)))
-                .copied()
+            let index = tabs.iter().position(|t| *t == tab).unwrap_or(0);
+            tabs.retain(|t| *t != tab);
+            let next = tabs.get(index.min(tabs.len().saturating_sub(1))).copied();
+            rt.markdown.views_forget(tab, group);
+            if !rt.group_tabs.iter().any(|tabs| tabs.contains(&tab)) {
+                rt.markdown.remove_tab(tab);
+            }
+            next
         };
-        if active == id {
-            if let Some(next) = next {
-                self.activate_unchecked(next);
-            } else {
+        if active == Some(tab) {
+            self.panes.update(|panes| panes[group] = next);
+            if next.is_none() {
                 self.retire_empty_group(group);
             }
         }
@@ -268,8 +274,8 @@ mod tests {
     use super::*;
     #[test]
     fn three_views_share_edits_but_keep_viewports_and_transform_every_selection() {
-        let app = App::new();
-        let id = app.active_id();
+        let app = App::with_document();
+        let id = app.document_id();
         app.edit(
             id,
             &EditDelta {
@@ -307,17 +313,17 @@ mod tests {
     }
     #[test]
     fn async_open_cannot_target_a_new_pane_after_its_origin_closes() {
-        let app = App::new();
+        let app = App::with_document();
         app.split_editor(false);
         app.split_editor(false);
         app.focus_group(1);
         app.close_split();
         app.split_editor(false);
         assert_eq!(app.pane_order(), vec![0, 3, 2]);
-        let active = app.active_id();
+        let active = app.document_id();
         app.complete_open(1, PathBuf::from("delayed.txt"), "result".into(), None);
         assert_eq!(app.focused_group.get(), 3);
-        assert_eq!(app.active_id(), active);
+        assert_eq!(app.document_id(), active);
         let rt = app.runtime.lock().unwrap();
         let opened = rt.workspace.find_path(Path::new("delayed.txt")).unwrap();
         assert!(rt.group_tabs[0].contains(&opened));

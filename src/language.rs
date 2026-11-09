@@ -802,14 +802,13 @@ impl App {
         }
         let status = {
             let mut rt = self.runtime.lock().unwrap();
-            let image = rt
-                .workspace
-                .get(active)
+            let image = active
+                .and_then(|id| rt.workspace.get(id))
                 .is_some_and(|doc| doc.image.is_some());
             let service = &mut rt.language;
             let current = snapshots
                 .iter()
-                .find(|doc| doc.id == active)
+                .find(|doc| Some(doc.id) == active)
                 .and_then(|doc| language(&doc.path).map(|lang| (doc, lang)));
             let status = if let Some((doc, lang)) = current {
                 let key = session_key(
@@ -839,8 +838,10 @@ impl App {
                     .unwrap_or_default()
             } else if image {
                 "Image preview".into()
-            } else {
+            } else if active.is_some() {
                 "Plain text".into()
+            } else {
+                String::new()
             };
             if status != service.last_status {
                 service.last_status = status.clone();
@@ -1218,7 +1219,9 @@ impl App {
         }
         self.runtime.lock().unwrap().language.last_poll = None;
         self.poll_language();
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         let navigation = self.navigation.load(Ordering::Relaxed);
         let snapshots = self.language_snapshots();
         let Some(doc) = snapshots.iter().find(|doc| doc.id == id) else {
@@ -1367,7 +1370,9 @@ impl App {
             self.status.set("Use an identifier up to 256 bytes, with letters, digits, _ or $; the first character cannot be a digit".into());
             return;
         }
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         let caret = self
             .bindings(id)
             .map(|bindings| bindings.selection.get().caret.byte);
@@ -1391,7 +1396,9 @@ impl App {
         self.language_send("textDocument/rename", None, None, false, Some(&name));
     }
     fn apply_language_edits(&self, guard: &Guard, edits: &[Value], label: &str) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         if id != guard.id
             || !self.editable(id)
             || self.navigation.load(Ordering::Relaxed) != guard.navigation
@@ -1539,7 +1546,7 @@ impl App {
         self.runtime.lock().unwrap().language.hover_hide = None;
     }
     pub(super) fn definition_at(&self, id: DocumentId, byte: usize) {
-        if id != self.active_id() {
+        if Some(id) != self.active_id() {
             return;
         }
         let Some(bindings) = self.bindings(id) else {
@@ -1554,8 +1561,8 @@ impl App {
     }
     pub(super) fn poll_language_interactions(&self) {
         let active = self.active_id();
-        let active_caret = self
-            .bindings(active)
+        let active_caret = active
+            .and_then(|id| self.bindings(id))
             .map(|b| b.selection.get().caret.byte)
             .unwrap_or(0);
         let hide = {
@@ -1589,7 +1596,7 @@ impl App {
                 rt.language.completion_due = None;
             }
             let completion = completion.filter(|(id, rev, caret, _)| {
-                *id == active
+                Some(*id) == active
                     && rt
                         .workspace
                         .get(*id)
@@ -1597,7 +1604,7 @@ impl App {
             });
             let hover = rt.language.hover_target.filter(|(id, _, _, at)| {
                 !rt.language.hover_sent
-                    && *id == active
+                    && Some(*id) == active
                     && at.elapsed() >= Duration::from_millis(500)
             });
             if hover.is_some() {
@@ -1751,7 +1758,7 @@ impl App {
     pub(super) fn language_navigate(&self, path: PathBuf, target: Value) {
         let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
         if let Some(id) = existing {
-            let same_document = id == self.active_id();
+            let same_document = Some(id) == self.active_id();
             self.activate(id);
             self.language_select(id, &target, same_document);
         } else {
@@ -1823,7 +1830,9 @@ impl App {
         }
     }
     fn accept_completion(&self, index: usize) {
-        let id = self.active_id();
+        let Some(id) = self.active_id() else {
+            return;
+        };
         let caret = self
             .bindings(id)
             .map(|b| b.selection.get().caret.byte)
@@ -1951,7 +1960,9 @@ impl App {
             (
                 rt.language.panel.clone(),
                 rt.language.selected_completion,
-                rt.workspace.get(active).and_then(|doc| doc.path.clone()),
+                active
+                    .and_then(|id| rt.workspace.get(id))
+                    .and_then(|doc| doc.path.clone()),
             )
         };
         let colors = self.theme.get().colors();

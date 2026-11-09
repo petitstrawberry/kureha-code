@@ -184,8 +184,7 @@ impl App {
             .root
             .clone()
             .or_else(|| {
-                rt.workspace
-                    .get(id)
+                id.and_then(|id| rt.workspace.get(id))
                     .and_then(|doc| doc.path.as_ref()?.parent().map(Path::to_path_buf))
             })
             .or_else(|| std::env::current_dir().ok())
@@ -253,8 +252,10 @@ impl App {
         let new = self.clone();
         let hide = self.clone();
         let focus = self.clone();
-        let background = kureha_code::terminal::background_color();
+        let palette = theme.terminal_palette();
+        let background = palette.background;
         let body = if let Some(session) = active {
+            session.terminal.set_palette(palette);
             Either::A(
                 session
                     .terminal
@@ -316,8 +317,8 @@ mod tests {
     #[test]
     #[cfg(all(unix, not(target_os = "scarlet")))]
     fn independent_sessions_keep_shell_state_when_hidden_and_close_only_the_selected_pty() {
-        let app = App::new();
-        let document = app.active_id();
+        let app = App::with_document();
+        let document = app.document_id();
         app.split_editor(true);
         app.focus_group(0);
         app.split_editor(false);
@@ -357,7 +358,7 @@ mod tests {
         });
         assert_eq!(app.pane_layout.get(), layout);
         assert_eq!(app.runtime.lock().unwrap().group_tabs, tabs);
-        assert_eq!(app.active_id(), document);
+        assert_eq!(app.document_id(), document);
         assert_eq!(app.runtime.lock().unwrap().workspace.documents.len(), 1);
         app.toggle_panel();
         app.terminal.select(first.id);
@@ -384,16 +385,16 @@ mod tests {
     }
     #[test]
     fn panel_toggle_is_visibility_based_and_file_operations_never_enter_panel() {
-        let app = App::new();
+        let app = App::with_document();
         app.new_terminal();
-        let id = app.active_id();
+        let id = app.document_id();
         let layout = app.pane_layout.get();
         app.focus_group(0); // Panel is visible, but editor has focus.
         app.toggle_panel();
         assert!(!app.panel_visible.get());
         app.toggle_panel();
         app.new_document();
-        assert_ne!(app.active_id(), id);
+        assert_ne!(app.document_id(), id);
         assert!(!app.terminal_focused());
         assert_eq!(app.pane_layout.get(), layout);
         assert_eq!(app.runtime.lock().unwrap().workspace.documents.len(), 2);

@@ -1,358 +1,44 @@
 # Kureha Code
 
-A code editor using ScarletUI for its interface and `floem-editor-core` for
-editing history and revisions. The same application selects SWS on Scarlet and
-winit on other desktop platforms. WebView integration is deferred.
+A native, cross-platform code editor written in pure Rust with ScarletUI.
 
-The workbench has a resizable explorer on the left, file tabs above the editor,
-and a status bar below. Each document retains its own undo history, dirty state,
-caret, selection and scroll position. New/Open add tabs without replacing
-unsaved work; closing a dirty tab or the window offers Save, Discard and Cancel.
-Cut/Copy/Paste use ScarletUI's asynchronous platform clipboard. Paste, Cut and
-Replace All each have independent undo steps. View can split the editor right or
-down into nested, resizable groups with separate tab lists, including three columns
-or two columns above another group. A document opened in multiple groups shares text and history while keeping separate selections and viewports.
-Closing a group keeps its unsaved documents in the remaining group.
+![Markdown source and preview](docs/screenshots/markdown-preview.png)
 
-Open Folder loads a shallow tree asynchronously, expanding directories only on
-demand. Listings are capped at 512 entries per directory, 4,096 cached entries,
-32 levels and four concurrent reads; rows are virtualized. A limited listing
-is labelled, and Open File can open files beyond the listing. Directory symlinks
-are not traversed. Refresh reloads the current root.
+## Build and run
 
-Find/Replace is an overlay at the editor’s upper right: opening it preserves the
-document viewport and scroll position. Search offers case, whole-word and regular
-expression modes, wraps in either direction, and works on the active document.
-Regular-expression replacements support capture groups. LF is used internally; CRLF input is saved as CRLF. Opened
-files and Replace All results are limited to 16 MiB. The editor provides syntax colors, file-kind icons, language-server diagnostics, completion, definition navigation and hover information. Extensions are not implemented.
-
-## Themes and editor typography
-
-View → Color Theme selects the workbench palette. View → Editor Color Theme
-changes only the document area and its syntax colors. Bundled choices are Light,
-Dark, Dracula, Monokai, Nord, Solarized Dark/Light, Gruvbox Dark and Tokyo Night.
-Menu choices apply for the current session.
-
-For persistent settings, choose View → Customize Theme… and save the generated
-TOML file. Changes reload automatically; invalid edits keep the last working
-configuration and show an error in the status bar. The default location is
-`~/.config/kureha-code/theme.toml` (or `$XDG_CONFIG_HOME/kureha-code/theme.toml`).
-`KUREHA_THEME` selects a different file. View → Reload Custom Theme reloads it
-explicitly, including a changed font file.
-
-For example, this keeps the surrounding interface light while giving only the
-editor Tokyo Night colors and an installed monospace font:
-
-```toml
-name = "My workspace"
-base = "light"
-
-[editor]
-theme = "tokyo-night"
-font_family = "Menlo"
-font_size = 16.0
-```
-
-Use `font_file = "/path/to/font.ttf"` instead of `font_family` to load a TTF/OTF;
-relative paths resolve beside the theme file, and `~/` is supported. Font size
-accepts 8–48 logical pixels. Omitting both font settings uses bundled JetBrains
-Mono with the existing fallback fonts. Menus, sidebar and terminal retain their
-own typography. Editor colors also apply to the minimap and hover code examples.
-
-[The complete example](assets/theme.toml) documents workbench/editor color,
-glass opacity/blur, syntax category and TextMate scope overrides. Custom colors
-accept `#RRGGBB` or `#RRGGBBAA`. [Palette sources and licenses](assets/themes/README.md)
-are included with the presets; these are Kureha mappings of those palettes.
-
-## Desktop development
-
-Enter the Nix development shell before building:
+With Nix and flakes enabled:
 
 ```sh
 nix develop
+cargo run -- path/to/file-or-directory
 ```
 
-The flake pins the same Nixpkgs and Scarlet Rust toolchain as Resonara. It
-provides Rust, rustfmt, Git, Python, pkg-config and fonts, plus the Linux
-Wayland/X11 and graphics libraries needed by ScarletUI. Supported hosts are
-Linux (x86_64/AArch64) and macOS (Apple Silicon). `flake.lock` fixes the inputs
-for reproducible environments. The Scarlet toolchain cache is configured in the
-flake; accept its Nix configuration when prompted to use the published binaries.
+The development shell supports Linux x86_64/AArch64 and macOS Apple Silicon.
+With direnv, run `direnv allow` to load it automatically.
 
-With direnv and its shell hook installed, run `direnv allow` once in this
-directory to load the shell automatically through `.envrc`.
+## Configuration
 
-Inside the shell:
+**View → Customize Theme…** opens `~/.config/kureha-code/theme.toml`.
+See the [configuration example](assets/theme.toml) for available settings.
 
-```sh
-cargo run -- path/to/source.rs
-cargo run -- path/to/project-folder
-cargo test --lib --bin kureha-code
-```
-
-ScarletUI owns rendering, windows, menus, input methods, file dialogs and
-clipboard access. This repository does not use a separate UI toolkit or a
-platform-specific replacement editor. Platform portability beyond builds
-actually recorded in `docs/validation.md` remains unverified.
-
-Open Folder uses ScarletUI’s common file-dialog API: the existing Files folder
-chooser on Scarlet and the system folder panel on macOS. Find/Replace uses shared bounded search helpers;
-TextView does not currently expose find helpers.
-
-The File/Edit/View/Code menus expose the commands on Scarlet and in the native
-macOS menu bar. Primary shortcuts use Command
-on macOS and Control on other platforms: N/O/S for New/Open/Save; Shift+O for Open Folder; Shift+S for
-Save As; W for Close Tab; Shift+W for Close Window; Control+Tab/Shift+Tab to switch tabs;
-F for Find/Replace (also Control+H off macOS). F3/Shift+F3 and primary G/Shift+G
-select the next/previous match. Standard
-Z/Shift+Z, X/C/V and A handle Undo/Redo, clipboard and Select All in the editor.
-
-| Action | Shortcut (primary is Command on macOS, Control elsewhere) |
-| --- | --- |
-| Quick Open / Command Palette | Primary P / Primary Shift P (or F1) |
-| Go to line and optional column | Control G |
-| Back / forward to a location | macOS: Control - / Control Shift -; elsewhere: Alt Left / Right |
-| Search project | Primary Shift F |
-| Save all dirty documents | Primary Alt S |
-| Split right / down | Primary \\ / Primary Shift \\ |
-| Focus first / second group | Primary 1 / Primary 2 |
-| Toggle line comments | Primary / |
-| Indent / outdent | Primary ] / Primary [, or Tab / Shift Tab on selected lines |
-| Move / copy line up or down | Alt Up/Down / Alt Shift Up/Down |
-| Format / references / rename | Alt Shift F / Shift F12 / F2 |
-
-Quick Open fuzzy-matches names and paths in a background index; `:line:column`
-switches to line navigation and `>command` switches to the command palette.
-Navigation overlays leave the editor's height unchanged. The bounded index skips
-build/vendor directories and symlinks, supports an exclusion-only subset of root
-ignore files, and reports incomplete scans; it is not a full Git ignore engine.
-
-Back/forward arrows beside the tabs restore the file, editor group, selection and
-scroll position before a tab change, definition/search jump or Go to Line. The
-session keeps up to 128 locations; closing a document removes its entries.
-The minimap keeps the point where you grab its viewport indicator, and continues
-dragging outside its bounds until release. File icons use distinct language marks
-and adjust their contrast for the current theme and selected row.
-
-Project search includes unsaved buffers and shows file/line previews in the
-sidebar. It is cancellable and bounded to 1 MiB per file, 64 MiB total and 2,000
-matches. Replace All first checks that every source still matches its snapshot,
-then opens changed files as unsaved buffers with one undo transaction per file.
-It does not write files automatically. Incomplete results and replacement sets
-over 128 files cannot be applied. Save All processes documents sequentially and
-stops on cancellation or conflict. A file changed externally since opening or
-saving is not silently overwritten; the changed buffer remains available.
-
-Editor text uses a 14 px `TextView.font_stack(...)`: JetBrains Mono Nerd Font
-Mono Regular, then Mplus 1 and Noto Sans CJK JP. UI chrome keeps ScarletUI's
-default font. Host executables embed the fonts from `assets/fonts` with their
-licenses, so moving the executable does not break font loading. Scarlet loads
-the matching files from `/share/fonts` once per process.
-
-## Scarlet application
-
-`app.toml` is the single source for the app name, stable ID and build recipe.
-`build.rs` supplies that identity to both desktop and Scarlet windows. Following
-Cadence's app packaging model, `platforms/scarlet/bundle.toml` installs a finished
-`/applications/kureha-code.app` through the SDK's `kind = "app"` layer.
-
-The Cargo recipe is at the repository root because the SDK requires its build
-sources to remain within the recipe directory. No copy of the build recipe is
-shipped inside the finished app.
-
-Scarlet includes this app through the remote bundle at a fixed, published commit:
-
-```toml
-[[layers]]
-kind = "bundle"
-source = { git = "https://github.com/petitstrawberry/kureha-code.git", rev = "<published-commit>" }
-bundle = "platforms/scarlet/bundle.toml"
-```
-
-The distribution's `bundles/desktop/bundle.toml` contains the real pinned revision. No sibling checkout or local bundle override is required. To package a development checkout independently, run the SDK from a configured Scarlet project:
-
-```sh
-cargo scarlet app build --source /absolute/path/to/kureha-code \
-  --target aarch64-unknown-scarlet --release \
-  --output /absolute/path/to/new/kureha-code.app
-```
-
-The output must be a new directory. The SDK validates native ELF architecture,
-loader and descriptor paths before publishing the `.app`. SGFX comes from the
-Scarlet project, not a copied private dependency cache.
-
-## Editing model
-
-`src/editor.rs` adapts ScarletUI edit deltas to the independent Floem/Lapce editor
-core. The engine owns undo groups and saved revisions; updates to the ScarletUI
-document replace only the range reported by its rope delta. The full Floem UI,
-Lapce application and Linux compatibility layers are not dependencies.
-
-`src/files.rs` stages and synchronizes file contents before rename. Native
-exclusive creation uses `scarlet-fs`; other platforms use the standard library.
-Opening and saving run off the UI thread. Current ScarletUI TextView still
-builds layout from its own document, so this integration does not yet establish
-large-file rendering performance.
-
-Save completion carries a stable document ID and revision, and cannot mark a
-different tab or a newer revision clean. A saving tab is temporarily read-only;
-other tabs remain editable. Clipboard mutations are discarded after tab,
-document, selection or file-operation changes, including switching away and
-back. Menu callbacks queue commands for the UI thread.
-
-## Code features
-
-Explorer and tabs use 16 px file-kind icons, including language accents and separate folder, package/configuration, document, image and archive shapes. The packaged app has its own leaf/code icon in `assets/kureha.svg` and `assets/kureha.png`.
-
-Syntax parsing uses Syntect's pure Rust regex backend on one background worker. Rust, Python, JavaScript/TypeScript, JSON, TOML, Markdown and the included language grammars receive colors, including multiline strings and comments. Results are keyed by stable tab ID, engine revision and path; pending revisions coalesce and stale results are discarded. Documents above 1 MiB, 20,000 lines or a 16 KiB line fall back to plain text with a visible reason; parsing also has span/time bounds. Editing remains available.
-
-The Code menu exposes Completion (Control+Space or primary I), Go to Definition
-(F12 or primary-click), Hover (primary K then primary I), Problems, and Restart
-Language Server. Formatting applies server edits as one undo transaction;
-references can navigate to unopened files. F2 opens an inline rename input.
-Rename currently accepts only edits to the current file: cross-file renames and
-resource operations are rejected as a whole, with an explanation. Unsupported
-server capabilities disable the corresponding request. Typing an identifier or member accessor schedules completion;
-hovering a symbol schedules a server hover request. Completion and hover appear
-in bounded editor overlays. Up/Down select a candidate and Enter/Tab accepts it
-as one undo step, including compatible additional text edits. Snippet-form completions are not advertised or inserted as raw template text. Problems select their document range; error/warning underlines track the current revision. Escape closes the language panel.
-
-Language servers are separate executables, not bundled or downloaded by Kureha. Defaults are `rust-analyzer`, `pylsp`, `typescript-language-server --stdio`, `vscode-json-language-server --stdio`, and `clangd`. They must be runnable on the platform hosting the editor. A host language server executable is not a Scarlet executable. Missing servers and initialization failures are reported in the status bar; the editor continues to work.
-
-Configure commands and arguments in `$XDG_CONFIG_HOME/kureha-code/lsp.toml` (normally `~/.config/kureha-code/lsp.toml`):
+Language servers must be installed separately. Override their commands in
+`~/.config/kureha-code/lsp.toml`:
 
 ```toml
 [servers.rust]
-command = "/absolute/path/to/rust-analyzer"
-args = []
-
-[servers.python]
-command = "pylsp"
+command = "/path/to/rust-analyzer"
 args = []
 ```
 
-`KUREHA_LSP_CONFIG` selects another user configuration file. `KUREHA_LSP_RUST` and corresponding uppercase language IDs override just the executable. Project folders do not supply executable commands. Files must be saved to a path before language services can identify them. Communication uses bounded JSON-RPC over stdio with UTF-16 positions; edits and tab switches invalidate stale completion/navigation responses.
+Both configuration paths respect `$XDG_CONFIG_HOME`.
 
+## Development
 
-## Themes, minimap and terminal
-
-The default Kureha theme pairs pale pink Bubble Glass with rose accents and a
-near-white editor. The previous blue-tinted Light theme remains available.
-View offers Select Color Theme, minimap visibility and the integrated terminal. The editor
-surface is flat and borderless inside an inset, rounded glass pane. The sidebar
-and editor groups share Bubble Glass rims and elevation above a tinted workspace;
-active tabs keep their glass material. The status line sits directly on the
-workspace. Search, completion, rename and hover use denser floating glass to keep
-text readable over source. Themes include syntax colors and subdued selection
-and separators. Primary K then primary T opens the theme picker; primary K then primary M
-toggles the minimap (empty documents reserve no minimap space). The overview has
-fixed two-pixel row spacing, clips and scrolls
-with the document, and uses a translucent neutral viewport. Source and paint work
-are bounded; very large documents use at most 768 sampled rows.
-
-Primary J or Control+backtick toggles the utility panel (Toggle Panel in the View
-menu), independently of the editor's split layout and keyboard focus. It opens
-below the editors by default. The panel contains shell sessions with a compact
-session strip: + starts another session, each session's × terminates that shell,
-and the far-right × hides the panel while keeping all sessions running. There is
-no extra heading, path footer, running-status label, or editor navigation toolbar.
-
-Control+Shift+backtick creates a session. Drag a session toward the workbench's
-right edge to dock the panel beside the editors, or toward the bottom edge to
-return it below; a tinted destination previews the drop. This relocates the
-utility panel, not an editor document. File tabs cannot enter the panel. Ordinary
-editor splits retain their own tabs, selection, scroll and undo history.
-
-Sessions run real PTY shells in the explorer root (otherwise the file's directory),
-with ANSI colors, resizing, scrollback and asynchronous output. Hidden/background
-sessions continue to drain output. Clipboard paste is bound to session identity,
-generation and focus epoch. Exited output remains until the session is closed or
-restarted with Terminal: Restart Session. macOS/Unix uses openpty; Scarlet uses /dev/ptmx
-and /bin/sh. Windows ConPTY is not implemented;
-opening the terminal there reports unsupported. Terminal text selection/copy and
-shell integration beyond the PTY are not implemented.
-
-This is not yet VS Code feature parity. Multi-cursor editing, code folding, workspace-wide symbol rename, Git/diff tools,
-debugging, extension hosting, and persistent workspace restoration remain open.
-
-Visual review fixtures use the real ScarletUI renderer. To regenerate light/dark
-empty, populated, Find, command palette and project search views:
+Run tests inside the development shell:
 
 ```sh
-KUREHA_WORKBENCH_PREVIEW=artifacts/bubble-glass cargo test --bin kureha-code workbench_preview -- --ignored --test-threads=1
+cargo test --lib --bin kureha-code
 ```
 
-The manual test writes PPM images to that directory; it does not launch a window.
-
-In the command palette, **Preferences: Select Color Theme** opens a separate,
-searchable theme list. Arrow keys and hovering preview each candidate across the
-workbench; Enter or clicking keeps it, while Escape or returning to Commands
-restores the previous theme. **Select Editor Color Theme** changes only the
-editor palette, preserving workbench colors and editor fonts. Existing custom
-settings still override the startup default; previewing does not write the file.
-
-Quick Open keeps its previous results visible while the next search runs, so
-its panel does not collapse between keystrokes. Pending results cannot be opened
-until they belong to the current query.
-
-## Image previews and tab dragging
-
-PNG, JPEG, GIF, WebP, BMP and ICO files open as read-only image tabs. The preview
-has a transparency checkerboard, Fit, 100% and zoom controls; enlarged images
-scroll in both directions. GIF previews show the first frame. Decoding runs on
-the file worker, with a 32 MiB input and 16 megapixel output limit. SVG remains a
-text document. Save and text-edit commands cannot overwrite an image preview.
-
-Drag a tab to another position in its tab strip to reorder it, or to the
-left/right/top/bottom edge of any editor pane to split that pane. A highlighted
-area shows the destination. The outermost 16 logical pixels of the editor area
-target the entire editor tree; farther inside, an edge targets the individual
-pane. This lets an existing vertical stack remain on the left while a new pane
-uses the entire right side (and likewise for the other three edges). The palette
-also offers Move Tab to Far Left/Far Right/Top/Bottom. Drop into another pane’s
-centre or tab strip to move the tab. Splits can mix vertical and horizontal directions. Selection, scroll position, unsaved edits and Undo history
-are preserved. Empty panes collapse; splitting the only tab keeps a view in
-both panes when splitting that same pane. Moving the sole tab to another pane
-collapses the empty source. Escape or dropping outside the editor cancels the gesture.
-
-## Built-in Markdown preview
-
-View → Toggle Markdown Preview (Primary+Shift+V) switches the current pane
-between source and preview. Open Markdown Preview to Side keeps the source
-alongside a live preview of the same unsaved document. The Source button returns
-to editing. Preview mode follows tabs when they move between editor groups;
-saving and Undo history still belong to the shared document.
-
-CommonMark is parsed with pulldown-cmark and drawn directly by ScarletUI, without
-a browser process. Headings, quotes, nested lists, tasks, tables, inline code,
-links, and fenced code with syntax colors follow the selected theme. Strong text
-uses native emphasis; italic markup uses the theme accent. Heading links scroll
-within the preview; file links open in the editor and web links open in the system
-browser. Preview text selection and full HTML/CSS layout are not implemented.
-
-Markdown images are embedded in the document, with aspect ratio and alpha
-preserved. Relative/absolute local paths (including URI-escaped names) and, on
-macOS/Windows/Linux, HTTP/HTTPS URLs support PNG, JPEG, GIF (first frame), WebP,
-BMP and ICO. SVG is not supported yet. Failed images show their alt text and the
-load error. `Markdown: Refresh Preview` reloads images changed independently of
-the Markdown file. Local resources reuse decoded pixels while their size and
-modification time match; remote resources are cached for 60 seconds across text
-edits. Remote requests have a four-second deadline and no shared browser session.
-
-Parsing and image loading use separate bounded workers, so an image response
-cannot block text updates. Rendering reuses layout until content, theme, font or
-width changes. Hidden panes stop requesting work, and stale text revisions and
-image results from an old document path are discarded. Limits are 256 KiB of
-Markdown, 4,000 blocks, 32 distinct images, 16 MiB per encoded image and 16 million
-decoded pixels per preview. Exceeding a limit displays the reason and leaves the
-source available. Scarlet currently supports local embedded images only.
-
-HTML preview remains at the WebView design stage.
-[The WebView design](docs/webview.md) reuses Myrica's engine/worker boundary and
-allows platform-native WebViews through separate presentation adapters. It
-covers in-memory documents, relative resources, native-view composition and the
-handoff between Myrica, ScarletUI and Kureha.
-
-On macOS, the theme extends through the native titlebar while keeping the system
-traffic lights and resizing. Drag the empty title strip to move the window.
-Other platforms retain their existing system decoration.
+- [Scarlet bundle](platforms/scarlet/bundle.toml)
+- [Build and runtime validation](docs/validation.md)

@@ -1,0 +1,112 @@
+[ScarletUI] platform-winit renderer=sgfx backend=wgpu
+[ScrollTiming] lower_us=244470 encode_us=670195 retained_draws=12 frame_vertex_bytes=860160
+[ScrollTiming] prepare_us=117 backend_us=671397
+[ScrollTiming] layout_us=3030 frame_us=674565
+[ScrollCycle] events_us=0 idle_us=241 cycle_us=681878 presented=true
+[WindowSize] configure 1100x760
+[ScrollTiming] lower_us=5507 encode_us=9635 retained_draws=19 frame_vertex_bytes=1084800
+[ScrollTiming] prepare_us=155 backend_us=10576
+[ScrollTiming] layout_us=5018 frame_us=15796
+[ScrollCycle] events_us=1807 idle_us=104 cycle_us=17885 presented=true
+[WindowSize] configure 1100x760
+[ScrollTiming] lower_us=5378 encode_us=7903 retained_draws=19 frame_vertex_bytes=1084800
+[ScrollTiming] prepare_us=261 backend_us=8433
+[ScrollTiming] layout_us=926 frame_us=9656
+[ScrollCycle] events_us=1395 idle_us=39 cycle_us=11259 presented=true
+[ScrollCycle] events_us=89 idle_us=21 cycle_us=123 presented=false
+[WindowSize] configure 736x900
+[ScrollTiming] lower_us=10657 encode_us=19757 retained_draws=15 frame_vertex_bytes=1179840
+[ScrollTiming] prepare_us=142 backend_us=20577
+[ScrollTiming] layout_us=56452 frame_us=77202
+[ScrollCycle] events_us=1619 idle_us=29 cycle_us=78976 presented=true
+[ScrollTiming] prepare_us=560 backend_us=35993
+[ScrollTiming] layout_us=64549 frame_us=101140
+[ScrollCycle] events_us=0 idle_us=24 cycle_us=101276 presented=true
+[ScrollCycle] events_us=174 idle_us=32 cycle_us=225 presented=false
+[ScrollTiming] prepare_us=644 backend_us=2288
+[ScrollTiming] layout_us=42968 frame_us=45934
+[ScrollCycle] events_us=0 idle_us=27 cycle_us=46112 presented=true
+[ScrollTiming] prepare_us=607 backend_us=3059
+[ScrollTiming] layout_us=40358 frame_us=46593
+[ScrollCycle] events_us=0 idle_us=23 cycle_us=46753 presented=true
+[ScrollTiming] prepare_us=607 backend_us=2154
+[ScrollTiming] layout_us=40578 frame_us=43373
+[ScrollCycle] events_us=0 idle_us=17 cycle_us=43486 presented=true
+[ScrollTiming] prepare_us=667 backend_us=2397
+[ScrollTiming] layout_us=42182 frame_us=45279
+[ScrollCycle] events_us=0 idle_us=19 cycle_us=45380 presented=true
+[ScrollTiming] prepare_us=643 backend_us=2176
+[ScrollTiming] layout_us=42086 frame_us=44941
+[ScrollCycle] events_us=0 idle_us=27 cycle_us=45088 presented=true
+[ScrollTiming] prepare_us=681 backend_us=2287
+[ScrollTiming] layout_us=40379 frame_us=43378
+[ScrollCycle] events_us=0 idle_us=25 cycle_us=43510 presented=true
+[ScrollTiming] prepare_us=666 backend_us=2230
+[ScrollTiming] layout_us=41032 frame_us=43956
+[ScrollCycle] events_us=0 idle_us=21 cycle_us=44083 presented=true
+[ScrollTiming] prepare_us=667 backend_us=2278
+[ScrollTiming] layout_us=40211 frame_us=43185
+[ScrollCycle] events_us=0 idle_us=6 cycle_us=43264 presented=true
+[ScrollTiming] prepare_us=614 backend_us=2125
+[ScrollTiming] layout_us=42637 frame_us=45407
+[ScrollCycle] events_us=0 idle_us=18 cycle_us=45521 presented=true
+[ScrollTiming] prepare_us=634 backend_us=2314
+[ScrollTiming] layout_us=41439 frame_us=44422
+[ScrollCycle] events_us=0 idle_us=26 cycle_us=44546 presented=true
+[ScrollTiming] prepare_us=627 backend_us=2196
+[ScrollTiming] layout_us=40379 frame_us=43231
+[ScrollCycle] events_us=0 idle_us=8 cycle_us=43320 presented=true
+[ScrollTiming] prepare_us=611 backend_us=2222
+[ScrollTiming] layout_us=39159 frame_us=42021
+[ScrollCycle] events_us=0 idle_us=13 cycle_us=42105 presented=true
+[ScrollTiming] prepare_us=626 backend_us=2220
+[ScrollTiming] layout_us=39427 frame_us=42305
+[ScrollCycle] events_us=0 idle_us=21 cycle_us=42425 presented=true
+[ScrollTiming] prepare_us=629 backend_us=2190
+[ScrollTiming] layout_us=39109 frame_us=41959
+[ScrollCycle] events_us=0 idle_us=14 cycle_us=42058 presented=true
+[ScrollTiming] prepare_us=611 backend_us=2100
+[ScrollTiming] layout_us=40435 frame_us=43170
+[ScrollCycle] events_us=0 idle_us=21 cycle_us=43286 presented=true
+[ScrollTiming] prepare_us=615 backend_us=2153
+[ScrollTiming] layout_us=40863 frame_us=43659
+[ScrollCycle] events_us=0 idle_us=26 cycle_us=43791 presented=true
+[ScrollTiming] prepare_us=616 backend_us=2215
+[ScrollTiming] layout_us=39705 frame_us=42568
+[ScrollCycle] events_us=0 idle_us=22 cycle_us=42682 presented=true
+[ScrollTiming] prepare_us=611 backend_us=2088
+[ScrollTiming] layout_us=39101 frame_us=41826
+[ScrollCycle] events_us=0 idle_us=13 cycle_us=41903 presented=true
+[ScrollTiming] prepare_us=631 backend_us=2154
+[ScrollTiming] layout_us=40248 frame_us=43062
+[ScrollCycle] events_us=0 idle_us=16 cycle_us=43179 presented=true
+[ScrollTiming] prepare_us=653 backend_us=2244
+[ScrollTiming] layout_us=39192 frame_us=42114
+[ScrollCycle] events_us=0 idle_us=24 cycle_us=42253 presented=true
+[ScrollTiming] prepare_us=624 backend_us=2134
+[ScrollTiming] layout_us=39273 frame_us=42059
+[ScrollCycle] events_us=0 idle_us=21 cycle_us=42171 presented=true
+[ScrollTiming] prepare_us=620 backend_us=2231
+[ScrollTiming] layout_us=39497 frame_us=42374
+[ScrollCycle] events_us=0 idle_us=20 cycle_us=42487 presented=true
+[ScrollTiming] prepare_us=632 backend_us=2361
+[ScrollTiming] layout_us=41936 frame_us=44958
+[ScrollCycle] events_us=1 idle_us=26 cycle_us=45110 presented=true
+[ScrollTiming] prepare_us=661 backend_us=2215
+[ScrollTiming] layout_us=42330 frame_us=45235
+[ScrollCycle] events_us=1 idle_us=23 cycle_us=45390 presented=true
+[ScrollTiming] prepare_us=650 backend_us=2212
+[ScrollTiming] layout_us=48483 frame_us=51374
+[ScrollCycle] events_us=1 idle_us=43 cycle_us=51538 presented=true
+[ScrollTiming] prepare_us=655 backend_us=2331
+[ScrollTiming] layout_us=39994 frame_us=43002
+[ScrollCycle] events_us=0 idle_us=21 cycle_us=43114 presented=true
+[ScrollTiming] prepare_us=655 backend_us=2270
+[ScrollTiming] layout_us=42362 frame_us=45311
+[ScrollCycle] events_us=0 idle_us=26 cycle_us=45470 presented=true
+[ScrollTiming] prepare_us=648 backend_us=2332
+[ScrollTiming] layout_us=42386 frame_us=45385
+[ScrollCycle] events_us=1 idle_us=24 cycle_us=45538 presented=true
+[ScrollTiming] prepare_us=663 backend_us=2185
+[ScrollTiming] layout_us=41554 frame_us=44421
+[ScrollCycle] events_us=0 idle_us=23 cycle_us=44543 presented=true

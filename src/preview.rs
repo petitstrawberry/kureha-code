@@ -24,14 +24,12 @@ impl App {
             .workspace
             .get(id)
             .and_then(|doc| doc.image.clone());
-        if let Some(image) = image {
-            Either::A(self.image_view(id, group, image))
+        if let Some(tab) = self.preview_tab(group) {
+            Either::A(self.markdown_view(tab, group))
+        } else if let Some(image) = image {
+            Either::B(Either::A(self.image_view(id, group, image)))
         } else {
-            Either::B(if self.markdown_previewing(id, group) {
-                Either::A(self.markdown_view(id, group))
-            } else {
-                Either::B(self.editor_view(id, group))
-            })
+            Either::B(Either::B(self.editor_view(id, group)))
         }
     }
     fn set_image_zoom(&self, id: DocumentId, group: usize, zoom: f32) {
@@ -214,7 +212,7 @@ mod tests {
 
     #[test]
     fn worker_opens_images_read_only_and_zoom_survives_pane_moves() {
-        let app = App::new();
+        let app = App::with_document();
         let directory =
             std::env::temp_dir().join(format!("kureha-image-test-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
@@ -231,7 +229,7 @@ mod tests {
             app.poll();
             thread::sleep(std::time::Duration::from_millis(5));
         }
-        let id = app.active_id();
+        let id = app.document_id();
         assert!(app.is_image(id));
         assert!(!app.editable(id));
         app.edit(
@@ -304,8 +302,8 @@ mod tests {
                 controls(child.as_ref(), origin, output);
             }
         }
-        let app = App::new();
-        let id = app.active_id();
+        let app = App::with_document();
+        let id = app.document_id();
         let image = Arc::new(kureha_code::media::decode(&png()).unwrap());
         let background = Color::rgb(17, 29, 43);
         for width in [180.0, 260.0] {
@@ -362,7 +360,7 @@ mod tests {
     #[ignore = "manual preview; writes KUREHA_IMAGE_PREVIEW PPM"]
     fn image_preview_screenshot() {
         use std::io::Write;
-        let app = App::new();
+        let app = App::with_document();
         app.complete_open(
             0,
             PathBuf::from("/preview/alpha.png"),

@@ -532,3 +532,145 @@ Validation on macOS through the locked Nix development environment:
   visually reviewed for headings, nested content, code colors, tables and the
   embedded image. This was a ScarletUI CPU renderer review, not a native window
   interaction pass.
+
+
+## Independent previews and bounded painting — 2026-11-09
+
+Historical checkpoint; the dedicated-pane UI and native measurement limitation
+below are superseded by the ordinary-tab checkpoint that follows.
+
+The workspace now starts with no document. Closing the last document leaves an
+empty editor; creating an untitled document is explicit. Markdown previews are
+independent panes opened beside their associated editor, rather than a tab mode.
+They follow unsaved text and optionally follow the active Markdown file and
+scroll position. Closing a preview preserves its source. File opens, tab moves,
+and editor-group closure cannot turn a preview into an ordinary editor tab.
+
+Scroll synchronization uses source-line/block geometry in both directions, even
+without clicking to transfer focus. A queued reveal is clamped when a document
+shrinks, and programmatic movement is not echoed back. Within a block, source
+positions are interpolated rather than mapped character by character.
+
+ScarletUI is pinned to published revision 88d8873b217460d381995e625d2003fb87c5fc1e
+([PR #92](https://github.com/petitstrawberry/scarlet-ui/pull/92)). Custom render
+objects receive viewport changes and can invalidate their own paint without
+requesting layout on every scroll. The upstream core suite passed 703 tests,
+with five optional tests ignored; a mounted regression verifies new scrolled
+pixels without another content layout.
+
+Kureha emits paint commands only for visible Markdown runs, panels and images.
+Unchanged paragraphs keep their measured runs after edits and image completion.
+Two retained width layouts avoid remeasuring text when split containers probe a
+provisional width. Glyph advances are shared across paragraphs during layout;
+decoded image buffers remain shared with the backend.
+
+Validation in the locked Nix environment on macOS ARM64:
+
+- Full suite: 113 library + 102 application tests passed; eight ignored.
+  PTY validation used `SHELL=/bin/sh` for a predictable interactive shell.
+- After the final geometry/measurement changes, all ten focused Markdown tests
+  passed again (one screenshot fixture ignored).
+- Mounted regressions cover bidirectional wheel synchronization, no feedback
+  loop, disabled synchronization, shrinking documents with a queued reveal,
+  following/pinning files, source activation from a preview, closing either
+  document or preview, and an entirely empty workspace.
+- A 1,000-paragraph regression generates fewer than 200 paint commands for a
+  400px viewport at three scroll positions, over 50 times fewer than painting
+  the full fixture. Scrolling preserves geometry, unchanged paragraphs preserve
+  their measured buffers, and provisional width changes reuse the prior layout.
+  These are command-count/cache checks, not frame-rate measurements.
+- The release build passed. A separate native process was launched with
+  `SCARLET_UI_WINIT_RENDERER=sgfx`, which disables CPU fallback. It reported
+  `[ScarletUI] platform-winit renderer=sgfx backend=wgpu`.
+- Native input/scrolling could not be verified: computer-use window lookup
+  returned `cgWindowNotFound`. GPU initialization is verified; GPU frame rates
+  and native preview interactions are not claimed measured.
+- The updated [two-pane screenshot](screenshots/markdown-preview.png) was rendered
+  by ScarletUI's CPU validation pipeline and visually reviewed, including the
+  independent preview controls and embedded image. It is not a GPU screenshot.
+
+No new Scarlet, Windows or Linux runtime verification was performed.
+
+
+## Ordinary preview tabs, source scrolling and code themes — 2026-11-09
+
+Markdown previews now use the ordinary editor tab strip and split tree. A preview
+has its own tab ID and refers to the source document, including its unsaved text
+and Undo history. It can be reordered, split, moved between groups and closed like
+other tabs. Closing either source or preview keeps the other alive; closing the
+last view of a dirty document offers the usual save confirmation. The dedicated
+preview header/panel has been removed. File following and optional bidirectional
+scroll sync are controlled from View or the command palette.
+
+The remaining source-scroll slowdown was traced to workbench invalidation on
+both requesting and acknowledging the preview's scroll position. Requests now
+update a State-bound range on ScrollView, and acknowledgement updates only local
+bookkeeping. No workbench rebuild is needed for either step. ScarletUI revision
+`34c2c08057f7be7579b9975c927e3aa13f9cfa3d` adds that binding and subscription support
+for containers that own view state ([PR #92](https://github.com/petitstrawberry/scarlet-ui/pull/92)).
+
+A native macOS release process forced to sgfx/wgpu measured the final 29 source
+scroll updates in a 600-line Markdown fixture. Median frame work fell from
+43.378 ms to 3.357 ms; median CPU dirty-tree/layout work fell from 40.435 ms to
+0.049 ms. macOS configured slightly different window widths (736px before,
+720px after, both 900px high), so these are diagnostic measurements, not a
+controlled same-viewport benchmark or an FPS claim. See the
+[method and raw logs](performance/markdown-scroll-20261109/measurement.md).
+The driver changed source scroll bindings through the real scene loop; mounted
+renderer tests separately exercise actual wheel events.
+
+Terminal defaults, cursor and 16 ANSI slots now follow the selected palette,
+including already-rendered output and hidden sessions. **Select Code Color Theme**
+changes the editor and terminal together while retaining the workbench palette.
+The custom settings section is `[code]`; there is no `[editor]` compatibility
+alias. `[terminal]` permits explicit overrides. RGB and extended indexed colors
+requested by terminal applications keep their original values. The terminal
+retains semantic color indices so changing a theme cannot accidentally recolor
+an explicit RGB value that happened to equal an old palette entry.
+
+Validation in the locked Nix environment on macOS ARM64:
+
+- Full suite: 115 library + 103 application tests passed, 10 optional/manual
+  tests ignored. PTY tests used `SHELL=/bin/sh`.
+- After removing the temporary configuration alias and renaming the picker,
+  the focused theme tests passed again.
+- Upstream ScarletUI core: 704 passed, five ignored. Bound reveal changes move
+  retained content without re-laying out children; manual wheel scrolling still
+  works after a reveal, and unchanged state schedules no extra frame.
+- Mounted preview tests cover independent tab identity, dirty document lifetime,
+  moving/splitting, following/pinning files, bidirectional sync, disabled sync,
+  shrinking documents, no workbench invalidation and no Markdown relayout on
+  source scrolling. Thirty idle cycles produce no layout or presentation.
+- Terminal tests cover immediate recoloring without fresh PTY output, pending
+  output across a theme change, cursor/focus repaint, unchanged session generation,
+  inverse/bold/underline preservation, explicit RGB, extended indexed colors,
+  and returning to the original palette without stale pixels.
+- [Markdown tabs](screenshots/markdown-preview.png) and
+  [terminal palettes](screenshots/terminal-themes.png) were rendered with the CPU
+  validation pipeline and visually reviewed. They are not native GPU captures.
+
+No new Scarlet, Windows or Linux runtime verification was performed.
+
+
+## Incremental syntax and local typing updates — 2026-11-10
+
+Every text revision previously cleared syntax colors while a whole-document
+parse ran. The edit callback and parser completions also rebuilt the workbench.
+Syntax now retains remapped colors on unchanged UTF-8 text while a worker reparses
+from saved line checkpoints until its state converges. Editor and Markdown
+components subscribe to their own document/decoration updates, so ordinary input
+and async completions do not rebuild workbench chrome. A clean-to-dirty transition
+still updates the tab's dirty indicator.
+
+Validation: 118 library + 104 application tests passed, 10 optional/manual tests
+ignored. Tests compare incremental and full colors through local edits, inserted
+Unicode lines, Undo, and removed multiline delimiters across four languages.
+A mounted `TextInputCommit` regression preserves preview layout until its model
+actually changes, reuses unchanged paragraph measurements, and checks that input,
+syntax publication and preview publication leave the chrome revision unchanged.
+
+The ordinary release build passed after removing the temporary native probe.
+Native sgfx/wgpu typing checks covered source-only and preview-visible windows.
+The [method, timings and logs](performance/typing-20261110/measurement.md) record
+both the warm medians and the remaining maximum-frame spike; no claim of measured
+keyboard-to-display latency or universal worst-case performance is made.
