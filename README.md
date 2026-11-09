@@ -2,7 +2,7 @@
 
 A native, cross-platform code editor written in pure Rust with ScarletUI.
 
-<!-- ![Markdown source and preview](docs/screenshots/markdown-preview.png) -->
+![Markdown source and preview](docs/screenshots/markdown-preview.png)
 
 ## Build and run
 
