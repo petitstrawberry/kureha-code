@@ -24,11 +24,14 @@ use std::{
 };
 mod editing_ui;
 mod groups;
+mod hover;
 mod language;
+mod location_history;
 mod navigation_ui;
 mod popup;
 mod project_ui;
 mod ui;
+mod theme_settings;
 
 #[derive(Clone, Copy)]
 enum DialogPurpose {
@@ -86,6 +89,7 @@ enum ClipboardJob {
 }
 #[derive(Default)]
 struct Runtime {
+    history: location_history::History,
     workspace: Workspace,
     explorer: Explorer,
     owner: Option<WindowId>,
@@ -110,6 +114,7 @@ struct App {
     project: project_ui::ProjectSearch,
     editor_font: Option<FontStack>,
     theme: State<kureha_code::theme::Theme>,
+    theme_settings: Arc<Mutex<Option<theme_settings::Watcher>>>,
     minimap_visible: State<bool>,
     terminal_visible: State<bool>,
     terminal: kureha_code::terminal::Terminal,
@@ -154,6 +159,7 @@ impl App {
             project: project_ui::ProjectSearch::new(),
             editor_font: kureha_code::fonts::editor_stack(),
             theme: State::new(generate_state_id(), kureha_code::theme::Theme::Light),
+            theme_settings: Arc::new(Mutex::new(None)),
             minimap_visible: State::new(generate_state_id(), true),
             terminal_visible: State::new(generate_state_id(), false),
             terminal: kureha_code::terminal::Terminal::new(),
@@ -181,10 +187,21 @@ impl App {
         }
     }
     fn set_theme(&self, theme: kureha_code::theme::Theme) {
-        self.theme.set(theme);
+        self.theme.set(theme.clone());
         kureha_code::syntax::set_theme(theme);
         self.runtime.lock().unwrap().minimap.clear();
         self.changed();
+    }
+    fn document_font(&self) -> Option<FontStack> {
+        self.theme.get().editor_font().or_else(|| self.editor_font.clone())
+    }
+    fn select_editor_preset(&self, name: &str) {
+        let preset = match name {
+            "light" => Some(kureha_code::theme::Theme::Light),
+            "dark" => Some(kureha_code::theme::Theme::Dark),
+            name => kureha_code::theme::preset(name),
+        };
+        if let Some(preset) = preset { self.set_theme(self.theme.get().with_editor_theme(&preset)); }
     }
     fn toggle_minimap(&self) {
         self.minimap_visible.update(|shown| *shown = !*shown);
@@ -349,6 +366,9 @@ impl App {
         if self.blocked() {
             return;
         }
+        if self.active_id() != id && self.runtime.lock().unwrap().workspace.get(id).is_some() {
+            self.remember_location();
+        }
         self.activate_unchecked(id);
     }
     fn activate_unchecked(&self, id: DocumentId) {
@@ -385,12 +405,13 @@ impl App {
                 + if backwards { count - 1 } else { 1 })
                 % count]
         };
-        self.activate_unchecked(next);
+        self.activate(next);
     }
     fn new_document(&self) {
         if self.blocked() {
             return;
         }
+        self.remember_location();
         let id = self.runtime.lock().unwrap().workspace.new_document();
         self.activate_unchecked(id);
         self.changed();
@@ -405,6 +426,7 @@ impl App {
                 .each_ref()
                 .map(|tabs| tabs.iter().position(|tab| *tab == id).unwrap_or(0));
             rt.workspace.remove(id);
+            rt.history.remove(id);
             for tabs in &mut rt.group_tabs {
                 tabs.retain(|tab| *tab != id);
             }
@@ -1215,6 +1237,10 @@ impl App {
             (FileOperation::Open { group }, Ok(Completion::Open(path, text))) => {
                 let group_closed = group == 1 && self.second.get().is_none();
                 let destination = if group_closed { 0 } else { group };
+                let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
+                if !group_closed && existing != Some(self.group_id(destination)) {
+                    self.remember_location_in(destination);
+                }
                 let (id, index) = {
                     let mut rt = self.runtime.lock().unwrap();
                     let id = rt.workspace.open(path.clone(), &text);
@@ -1341,7 +1367,7 @@ impl Application for App {
     fn scenes(&self) -> impl Scene {
         scenes! {
             Window::new(self.window_title(), self.content()).scene_key("main")
-                .app_id(env!("APP_ID")).background_color(self.theme.get().colors().background).menu_bar(self.menu()).size(Size::new(1100.0, 760.0)).min_size(Size::new(720.0, 400.0)),
+                .app_id(env!("APP_ID")).background_color(self.theme.get().workspace_background()).menu_bar(self.menu()).size(Size::new(1100.0, 760.0)).min_size(Size::new(720.0, 400.0)),
             Window::new("Unsaved Changes", self.confirmation_view()).scene_key("confirm")
                 .app_id(env!("APP_ID")).open_at_launch(false).size(Size::new(560.0, 240.0)),
         }
@@ -1386,6 +1412,7 @@ impl Application for App {
     }
     fn on_idle(&mut self) {
         self.terminal.poll();
+        self.poll_theme_settings();
         self.poll_menu();
         self.poll();
         self.poll_navigation();
@@ -1400,6 +1427,7 @@ impl Application for App {
 }
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
+    app.start_theme_settings();
     if let Some(path) = std::env::args_os().nth(1) {
         let path = PathBuf::from(path);
         // Startup runs before the event loop. All enumeration and file reads
@@ -1417,3 +1445,6 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod workbench_preview;

@@ -255,3 +255,117 @@ captures are `9-lines.png` and `10-lines.png` in
 `../Scarlet/artifacts/kureha-gutter-20261024/`. The fixture was opened via the
 startup file argument after native file-dialog automation did not complete.
 This observation is host UI verification, not a Scarlet-native UI run.
+
+## Custom themes and hover responsiveness — 2026-11-09
+
+The theme settings worker loads TOML palettes and editor fonts outside the UI
+thread. Six bundled palette variants supplement Light/Dark; editor colors and
+font settings can differ from the surrounding workbench. Invalid and atomic
+saves, independent editor overrides and stale syntax-job rejection are covered.
+Settings examples and palette attribution are in `assets/theme.toml` and
+`assets/themes/README.md`.
+
+The initial hung-process sample was dominated by layout text measurement and
+parsed font-table cloning. Hover wrapping now searches UTF-8 boundaries, viewport
+and body share measured layouts, and code blocks use one asynchronous highlight
+request per hover (avoiding eviction churn after eight code blocks). ScarletUI
+PR #89 shares font faces and adds owned/installed-family font stacks.
+
+Validation on macOS AArch64:
+
+- `cargo test --lib --bin kureha-code`: 176 passed, 4 optional/manual cases ignored.
+- Pinned dependency `cargo check` and `cargo build --release --locked --offline` passed.
+  Both full-workbench hover tests also passed in release mode: initial layout
+  plus Escape took about 269 ms; six CPU-painted scroll frames took about 390 ms.
+- ScarletUI graphics tests: 20 passed, including owned font lifetime, fallback
+  and cache-identity coverage.
+- A 28-code-block hover test finishes highlighting and reuses measured layouts.
+  Full-workbench tests exercise Escape and scroll down/up inside the hover,
+  checking hover content movement and subsequent dismissal with painting enabled.
+- The manual preview generator produced 17 CPU-rendered fixtures: ten existing
+  Light/Dark scenes, six bundled palettes and a light workbench with a dark
+  editor and 18 px font. Representative fixtures are `screenshots/theme-dracula.png`
+  and `screenshots/theme-editor-only.png`.
+- Native winit/WGPU verification loaded Menlo at 18 px only in the editor,
+  opened rust-analyzer documentation for `std::fmt::Debug`, scrolled down through
+  multiple pages and back up, dismissed with Escape and moved the editor caret.
+
+The user also reported a hang specifically while scrolling inside hover text.
+A later sample of the user's process was idle; it did not capture that hang.
+The native reproduction above remained responsive. The CPU debug integration
+fixture spends roughly 1.1 seconds per painted scroll frame, mostly in backdrop
+painting; this is not a native GPU frame-time measurement. These checks do not
+establish that every reported hang has been eliminated. Scarlet-native runtime
+verification is still outstanding.
+
+## Hover-visible document scrolling — 2026-11-09
+
+The clarified trigger is scrolling the editor document while a hover is visible.
+This differs from scrolling inside the hover. A full-workbench regression
+reproduced lost wheel input: the hit target below the popup was its full-viewport
+`OnEventRenderObject`, not the document TextView. The popup's surrounding ZStack
+also claimed the transparent area after that event wrapper was moved.
+
+The keep-open event handler now wraps the actual panel inside Anchored, and
+mutually exclusive information/rename panels use Either rather than a full-size
+ZStack. Pointer input outside the panel reaches TextView. A document wheel event
+also dismisses the old hover, clears its delayed target and cancels outstanding
+hover requests, including explicit Show Hover requests without a pointer
+generation. Diagnostics and other panels are left intact. Scrolling inside the
+hover still scrolls its contents and keeps it open.
+
+Validation: all 178 Kureha tests passed (four optional/manual cases ignored),
+including hit-target selection, document scroll and selection preservation,
+continued scrolling after a rebuild, late manual-hover response rejection and
+hover-internal scroll retention. The new document-scroll regression failed
+before the fix because TextView never received the event. Locked/offline release
+build passed. Native winit/WGPU launched, but CUA could not acquire its window
+(`cgWindowNotFound`); this follow-up's native interaction is not claimed verified.
+No new ScarletUI change was needed for this fix.
+
+## Navigation, file icons and minimap dragging — 2026-11-09
+
+The tab strip now exposes Back/Forward. Explicit tab, definition, project-search
+and line navigation remember the originating document/group, selection and
+scroll position. History is session-only, bounded to 128 entries, prunes closed
+documents and discards the forward branch on a new jump. Restoring an edited
+buffer clamps saved byte positions to UTF-8 boundaries. Project Replace All's
+internal tab activations do not add navigation entries.
+
+File/folder icons are 18 px, folders have stronger filled/bold silhouettes, and
+Rust/Python/JavaScript/TypeScript/Go/HTML/CSS use distinct language marks.
+Colors adjust against the theme's normal and selected backgrounds. All bundled
+palettes pass the icon contrast checks. ScarletUI #90 exposes seven already
+bundled Tabler glyphs; Cargo pins its published commit
+`4a24445bb01e1e6c6e2ee1439e6c05f3ad6a7ed5` without a local path patch.
+
+Minimap drag state now belongs to its retained renderer. Grabbing the viewport
+keeps the grab offset, leaving the bounds does not cancel dragging, and moving
+uses the full scrollable range even for sampled long files. Release/cancellation
+ends the drag, including outside the minimap. Rebuilding the workbench retains
+the gesture; switching to another document clears it.
+
+Validation on macOS AArch64:
+
+- All 183 Kureha tests passed; four optional/manual tests ignored. History tests
+  cover painted viewport restoration, back/forward branching, split groups,
+  closed documents and changed UTF-8 text. Project-search navigation also checks
+  back/forward restoration.
+- The mounted minimap regression covers 100-line and 4,000-line documents,
+  off-center grabs, rebuilds during dragging, horizontal escape, both scroll
+  limits and release outside. The long-file case passed separately after the
+  full suite.
+- All seven ScarletUI icon tests passed, including every selected glyph's
+  rasterization and filled-outline fallback. Locked/offline release build passed.
+- Eighteen CPU-painted fixtures rendered successfully; Light and Monokai images
+  were inspected and preserved in `screenshots/navigation-light.png` and
+  `screenshots/navigation-monokai.png`.
+- Native winit/WGPU launched and rendered the new tab controls and Rust mark.
+  CUA's drag command timed out; a subsequent process sample was idle in the
+  AppKit event loop. Native drag/back-button interaction is not claimed verified.
+  Scarlet-native runtime testing remains outstanding.
+
+The minimap source marks subsequently changed from 80% to 40% opacity (also
+respecting any alpha in the syntax color). The viewport indicator remains at
+15% neutral fill. All 12 minimap tests and all 18 rendered fixtures passed again;
+Light/Monokai screenshots were refreshed after visual review.

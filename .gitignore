@@ -3,3 +3,4 @@
 /artifacts/
 /.scarlet/
 .DS_Store
+/.direnv/

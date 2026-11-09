@@ -12,6 +12,7 @@
 use crate::{syntax, theme::Theme};
 use scarlet_ui::{
     element::{RenderElement, UpdateResult},
+    event::Phase,
     prelude::*,
     renderer::PaintContext,
 };
@@ -103,12 +104,14 @@ impl MinimapCache {
         document: &TextDocument,
     ) -> Arc<Snapshot> {
         let colors = syntax::cached(id, revision, path);
-        let theme = colors.as_ref().map_or_else(syntax::theme, |c| c.theme);
+        let theme = colors
+            .as_ref()
+            .map_or_else(syntax::theme, |c| c.theme.clone());
         let key = Key {
             id,
             revision,
             path: path.map(Path::to_path_buf),
-            theme,
+            theme: theme.clone(),
             syntax_generation: colors.as_ref().map(|c| c.generation),
         };
         if let Some(index) = self.entries.iter().position(|(cached, _)| cached == &key) {
@@ -359,48 +362,7 @@ impl Minimap {
             minimap: self,
             size: Rc::new(Cell::new(Size::ZERO)),
         };
-        let input = surface.clone();
-        let dragging = Rc::new(Cell::new(None));
-        surface
-            .on_event(move |event| {
-                if !input.minimap.enabled {
-                    return false;
-                }
-                match event {
-                    Event::Mouse(MouseEvent::ButtonPressed {
-                        button: MouseButton::Left,
-                        y,
-                        ..
-                    }) => {
-                        // Freeze the overview's origin for this gesture so a
-                        // stationary pointer cannot drift as editor scroll moves.
-                        dragging.set(Some(input.minimap.map_offset(input.size.get().height)));
-                        input.minimap.navigate(*y as f32, input.size.get().height);
-                        true
-                    }
-                    Event::Mouse(MouseEvent::Moved { y, .. }) if dragging.get().is_some() => {
-                        input.minimap.navigate_at(
-                            *y as f32,
-                            input.size.get().height,
-                            dragging.get().unwrap(),
-                        );
-                        true
-                    }
-                    Event::Mouse(
-                        MouseEvent::ButtonReleased {
-                            button: MouseButton::Left,
-                            ..
-                        }
-                        | MouseEvent::ButtonCancelled {
-                            button: MouseButton::Left,
-                            ..
-                        }
-                        | MouseEvent::Exited { .. },
-                    ) => dragging.replace(None).is_some(),
-                    _ => false,
-                }
-            })
-            .frame(width, f32::INFINITY)
+        surface.frame(width, f32::INFINITY)
     }
 }
 
@@ -423,6 +385,7 @@ impl View for Surface {
             self.clone(),
             SurfaceRenderer {
                 surface: self.clone(),
+                drag: None,
             },
         ))
     }
@@ -433,8 +396,16 @@ impl View for Surface {
         self
     }
 }
+#[derive(Clone, Copy)]
+struct Drag {
+    pointer_y: f32,
+    scroll_y: f32,
+    scroll_per_pixel: f32,
+}
+
 struct SurfaceRenderer {
     surface: Surface,
+    drag: Option<Drag>,
 }
 impl ElementRenderObject for SurfaceRenderer {
     fn layout(&mut self, constraints: LayoutConstraints) -> Size {
@@ -464,6 +435,68 @@ impl ElementRenderObject for SurfaceRenderer {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+    fn handle_event(&mut self, event: &Event, phase: Phase) -> bool {
+        if phase != Phase::Target || !self.surface.minimap.enabled {
+            return false;
+        }
+        let m = &self.surface.minimap;
+        let height = self.size().height;
+        match event {
+            Event::Mouse(MouseEvent::ButtonPressed {
+                button: MouseButton::Left,
+                y,
+                ..
+            }) => {
+                let y = *y as f32;
+                let (top, extent) = m.overlay(height);
+                // Grabbing the viewport keeps the exact grab point. A click on
+                // source outside it centers that source line before dragging.
+                if y < top || y > top + extent {
+                    m.navigate(y, height);
+                }
+                let travel = (m.map_height().min(height) - extent).max(0.0);
+                let max_scroll = (m.content_height() - m.viewport(height)).max(0.0);
+                self.drag = Some(Drag {
+                    pointer_y: y,
+                    scroll_y: m.scroll.get().y,
+                    scroll_per_pixel: if travel > 0.0 {
+                        max_scroll / travel
+                    } else {
+                        0.0
+                    },
+                });
+                true
+            }
+            Event::Mouse(MouseEvent::Moved { y, .. }) if self.drag.is_some() => {
+                let drag = self.drag.unwrap();
+                let mut scroll = m.scroll.get();
+                scroll.y = (drag.scroll_y + (*y as f32 - drag.pointer_y) * drag.scroll_per_pixel)
+                    .clamp(0.0, (m.content_height() - m.viewport(height)).max(0.0));
+                m.scroll.set(scroll);
+                if let Some(callback) = &m.on_navigate {
+                    let line = ((scroll.y + m.viewport(height) / 2.0) / m.line_height) as usize;
+                    let (line, byte) = m.snapshot.navigation_at(
+                        line as f32 / m.snapshot.line_count.saturating_sub(1).max(1) as f32,
+                    );
+                    callback(Navigation { line, byte, scroll });
+                }
+                true
+            }
+            Event::Mouse(
+                MouseEvent::ButtonReleased {
+                    button: MouseButton::Left,
+                    ..
+                }
+                | MouseEvent::ButtonCancelled {
+                    button: MouseButton::Left,
+                    ..
+                },
+            ) => self.drag.take().is_some(),
+            // Pointer capture continues sending motion/release outside the map.
+            // Exited only changes hover state; it must not end this gesture.
+            _ => false,
+        }
+    }
     fn update(&mut self, view: &dyn View) -> UpdateResult {
         let Some(surface) = view.as_any().downcast_ref::<Surface>() else {
             return UpdateResult::Replaced;
@@ -471,6 +504,11 @@ impl ElementRenderObject for SurfaceRenderer {
         // Reconciliation can replace the input closure. Copy geometry into its
         // new shared cell even when the update requires only a repaint.
         surface.size.set(self.size());
+        if !surface.minimap.enabled
+            || surface.minimap.scroll.id() != self.surface.minimap.scroll.id()
+        {
+            self.drag = None;
+        }
         self.surface = surface.clone();
         UpdateResult::Updated
     }
@@ -480,7 +518,7 @@ impl ElementRenderObject for SurfaceRenderer {
         if !m.enabled || size.width <= 0.0 || size.height <= 0.0 {
             return true;
         }
-        let colors = m.theme.colors();
+        let colors = m.theme.editor_colors();
         ctx.fill_rect(Rect::new(origin, size), colors.background);
         ctx.fill_rect(
             Rect::from_xywh(origin.x, origin.y, 1.0, size.height),
@@ -515,7 +553,7 @@ impl ElementRenderObject for SurfaceRenderer {
                         (mark.columns.len() as f32 * column_width).max(0.5),
                         bottom - top,
                     ),
-                    Color { a: 0.80, ..color },
+                    Color { a: color.a * 0.40, ..color },
                 );
             }
         }
@@ -690,6 +728,7 @@ mod tests {
                 minimap,
                 size: Rc::new(Cell::new(Size::new(100.0, height))),
             },
+            drag: None,
         };
         let mut context = PaintContext::new();
         renderer.paint(&mut context, Point::new(0.0, 0.0));
@@ -710,7 +749,7 @@ mod tests {
                 let m = Minimap::new(
                     Arc::new(snapshot("one\ntwo\nthree", &[])),
                     scroll(0.0),
-                    theme,
+                    theme.clone(),
                 );
                 assert_eq!(m.map_height(), 6.0);
                 let rects = paint_rects(m, height);
@@ -839,6 +878,78 @@ mod tests {
     }
 
     #[test]
+    fn viewport_drag_keeps_grab_offset_survives_rebuild_and_tracks_outside_bounds() {
+        use scarlet_ui::pipeline::RenderingPipeline;
+        for (lines, initial, grab_y, moved_y, expected) in [
+            (100, 900.0, 92, 180, 1780.0),
+            (4000, 39900.0, 108, 161, 59850.0),
+        ] {
+            let state = scroll(initial);
+            let map = Arc::new(snapshot(
+                &format!("{}last", "line\n".repeat(lines - 1)),
+                &[],
+            ));
+            let window = || {
+                Window::new(
+                    "Captured minimap",
+                    Minimap::new(map.clone(), state.clone(), Theme::Dark)
+                        .line_height(20.0)
+                        .view(),
+                )
+                .decorated(false)
+                .size(Size::new(100.0, 220.0))
+            };
+            let mut pipeline = RenderingPipeline::new();
+            pipeline.set_paint_enabled(false);
+            pipeline.set_root(window().create_element());
+            pipeline.layout_initial();
+            pipeline.render();
+            let press = |y| {
+                Event::Mouse(MouseEvent::ButtonPressed {
+                    button: MouseButton::Left,
+                    x: 50,
+                    y,
+                    click_count: 1,
+                })
+            };
+            assert!(pipeline.handle_event(&press(grab_y)));
+            assert_eq!(
+                state.get().y,
+                initial,
+                "grabbing the top of the thumb must not center/jump"
+            );
+            pipeline
+                .element_tree_mut()
+                .root_mut()
+                .unwrap()
+                .update(&window());
+            pipeline.render();
+            pipeline.handle_event(&Event::Mouse(MouseEvent::Exited { x: -50, y: grab_y }));
+            assert!(pipeline.handle_event(&Event::Mouse(MouseEvent::Moved { x: -50, y: moved_y })));
+            assert!((state.get().y - expected).abs() < 1.0);
+            assert!(pipeline.handle_event(&Event::Mouse(MouseEvent::Moved { x: -50, y: 500 })));
+            assert_eq!(
+                state.get(),
+                TextViewScroll {
+                    x: 17.0,
+                    y: lines as f32 * 20.0 - 200.0
+                }
+            );
+            assert!(pipeline.handle_event(&Event::Mouse(MouseEvent::Moved { x: 150, y: -200 })));
+            assert_eq!(state.get().y, 0.0);
+            pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+                button: MouseButton::Left,
+                x: 150,
+                y: -200,
+                click_count: 1,
+            }));
+            pipeline.handle_event(&Event::Mouse(MouseEvent::Moved { x: 50, y: 200 }));
+            assert_eq!(state.get().y, 0.0, "release outside must end capture");
+            pipeline.teardown();
+        }
+    }
+
+    #[test]
     fn repaint_reconciliation_keeps_input_geometry_and_scroll_dependency() {
         let surface = Surface {
             minimap: Minimap::new(Arc::new(snapshot("hi", &[])), scroll(0.0), Theme::Dark),
@@ -847,6 +958,7 @@ mod tests {
         assert_eq!(surface.listenables().len(), 1);
         let mut renderer = SurfaceRenderer {
             surface: surface.clone(),
+            drag: None,
         };
         let new = Surface {
             size: Rc::new(Cell::new(Size::ZERO)),

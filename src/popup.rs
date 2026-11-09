@@ -9,6 +9,7 @@ pub struct Anchored<V: View + Clone> {
     content: V,
     anchor: Option<State<Point>>,
     centered: bool,
+    max_size: Size,
 }
 impl<V: View + Clone> Anchored<V> {
     pub fn new(content: V, anchor: State<Point>) -> Self {
@@ -16,6 +17,7 @@ impl<V: View + Clone> Anchored<V> {
             content,
             anchor: Some(anchor),
             centered: false,
+            max_size: Size::new(440.0, 260.0),
         }
     }
     pub fn top_right(content: V) -> Self {
@@ -23,6 +25,7 @@ impl<V: View + Clone> Anchored<V> {
             content,
             anchor: None,
             centered: false,
+            max_size: Size::new(440.0, 260.0),
         }
     }
     pub fn top_center(content: V) -> Self {
@@ -30,7 +33,12 @@ impl<V: View + Clone> Anchored<V> {
             content,
             anchor: None,
             centered: true,
+            max_size: Size::new(620.0, 380.0),
         }
+    }
+    pub fn max_size(mut self, size: Size) -> Self {
+        self.max_size = size;
+        self
     }
 }
 impl<V: View + Clone + 'static> View for Anchored<V> {
@@ -40,12 +48,14 @@ impl<V: View + Clone + 'static> View for Anchored<V> {
             |v| Popover {
                 anchor: v.anchor.as_ref().map(State::get),
                 centered: v.centered,
+                max_size: v.max_size,
                 size: Size::ZERO,
                 panel: Rect::zero(),
             },
             |r, v| {
                 r.anchor = v.anchor.as_ref().map(State::get);
                 r.centered = v.centered;
+                r.max_size = v.max_size;
                 UpdateResult::Updated
             },
             |v| vec![v.content.clone_view()],
@@ -64,6 +74,7 @@ impl<V: View + Clone + 'static> View for Anchored<V> {
 struct Popover {
     anchor: Option<Point>,
     centered: bool,
+    max_size: Size,
     size: Size,
     panel: Rect,
 }
@@ -84,9 +95,9 @@ impl ElementRenderObject for Popover {
         if let Some(child) = children.first_mut() {
             let size = child.layout(LayoutConstraints::new(
                 0.0,
-                c.max_width.min(if self.centered { 620.0 } else { 440.0 }),
+                c.max_width.min(self.max_size.width),
                 0.0,
-                c.max_height.min(if self.centered { 380.0 } else { 260.0 }),
+                c.max_height.min(self.max_size.height),
             ));
             self.panel = match self.anchor {
                 Some(anchor) => place(anchor, self.size, size),

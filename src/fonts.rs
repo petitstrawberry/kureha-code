@@ -58,3 +58,42 @@ mod tests {
         assert_eq!(latin.0, wide.0, "editor primary must be monospaced");
     }
 }
+
+/// Load a user's editor face on the settings worker, retaining bundled fallbacks.
+pub fn configured_stack(
+    family: Option<&str>,
+    file: Option<&str>,
+    directory: &std::path::Path,
+) -> Result<Option<FontStack>, String> {
+    use std::io::Read;
+    let stack = if let Some(file) = file {
+        let path = if let Some(rest) = file.strip_prefix("~/") {
+            std::env::var_os("HOME")
+                .map(|home| std::path::PathBuf::from(home).join(rest))
+                .ok_or("HOME is unavailable")?
+        } else {
+            directory.join(file)
+        };
+        let mut bytes = Vec::new();
+        std::fs::File::open(&path)
+            .map_err(|e| format!("Font {}: {e}", path.display()))?
+            .take(32 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() > 32 * 1024 * 1024 {
+            return Err("Font exceeds 32 MiB".into());
+        }
+        FontStack::from_owned(bytes).map_err(|_| format!("Invalid font: {}", path.display()))?
+    } else if let Some(family) = family {
+        FontStack::from_system_family(family)
+            .map_err(|_| format!("Invalid font family: {family}"))?
+            .ok_or_else(|| format!("Font family not installed: {family}"))?
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(if let Some(fallback) = editor_stack() {
+        stack.with_fallback_stack(&fallback)
+    } else {
+        stack
+    }))
+}

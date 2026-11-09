@@ -1,0 +1,26 @@
+name = "Tokyo Night"
+base = "dark"
+
+[colors]
+background = "#1a1b26"
+foreground = "#c0caf5"
+surface = "#292e42"
+elevated = "#292e42"
+workspace = "#1a1b26"
+muted = "#565f89"
+border = "#292e42"
+accent = "#7aa2f7"
+selection = "#292e42"
+current_line = "#292e42"
+minimap_viewport = "#7aa2f725"
+minimap_border = "#7aa2f780"
+
+[syntax]
+comment = "#565f89"
+string = "#9ece6a"
+constant = "#ff9e64"
+number = "#ff9e64"
+keyword = "#bb9af7"
+function = "#7aa2f7"
+type = "#2ac3de"
+tag = "#f7768e"

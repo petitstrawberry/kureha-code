@@ -981,10 +981,26 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
     let state = |p: &RenderingPipeline| {
         sidebar(p.element_tree().root().unwrap(), Point::ZERO).expect("explorer scroll view")
     };
+    // Locate the divider from the laid-out SplitView, including workspace insets.
+    fn divider(e: &dyn Element, origin: Point) -> Option<Point> {
+        let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
+        if e.type_name_debug().contains("SplitViewRenderObject") && e.bounds().size.width > 1000.0 {
+            let left = e.children().first()?;
+            let right = e.children().get(1)?;
+            return Some(Point::new(
+                p.x + (left.bounds().size.width + right.position().x) / 2.0,
+                p.y + 340.0,
+            ));
+        }
+        e.children()
+            .iter()
+            .find_map(|child| divider(child.as_ref(), p))
+    }
+    let grip = divider(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
     for event in [
         MouseEvent::ButtonPressed {
             button: MouseButton::Left,
-            x: 245,
+            x: grip.x.round() as i32,
             y: 350,
             click_count: 1,
         },

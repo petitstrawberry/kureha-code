@@ -291,6 +291,24 @@ const COMMANDS: &[CommandDescriptor] = &[
         "appearance colors",
         ""
     ),
+    command!("theme-dracula", "Preferences: Color Theme — Dracula", "appearance colors", ""),
+    command!("theme-monokai", "Preferences: Color Theme — Monokai", "appearance colors", ""),
+    command!("theme-nord", "Preferences: Color Theme — Nord", "appearance colors", ""),
+    command!("theme-solarized-dark", "Preferences: Color Theme — Solarized Dark", "appearance colors", ""),
+    command!("theme-solarized-light", "Preferences: Color Theme — Solarized Light", "appearance colors", ""),
+    command!("theme-gruvbox-dark", "Preferences: Color Theme — Gruvbox Dark", "appearance colors", ""),
+    command!("theme-tokyo-night", "Preferences: Color Theme — Tokyo Night", "appearance colors", ""),
+    command!("editor-theme-light", "Preferences: Editor Color Theme — Light", "syntax colors", ""),
+    command!("editor-theme-dark", "Preferences: Editor Color Theme — Dark", "syntax colors", ""),
+    command!("editor-theme-dracula", "Preferences: Editor Color Theme — Dracula", "syntax colors", ""),
+    command!("editor-theme-monokai", "Preferences: Editor Color Theme — Monokai", "syntax colors", ""),
+    command!("editor-theme-nord", "Preferences: Editor Color Theme — Nord", "syntax colors", ""),
+    command!("editor-theme-solarized-dark", "Preferences: Editor Color Theme — Solarized Dark", "syntax colors", ""),
+    command!("editor-theme-solarized-light", "Preferences: Editor Color Theme — Solarized Light", "syntax colors", ""),
+    command!("editor-theme-gruvbox-dark", "Preferences: Editor Color Theme — Gruvbox Dark", "syntax colors", ""),
+    command!("editor-theme-tokyo-night", "Preferences: Editor Color Theme — Tokyo Night", "syntax colors", ""),
+    command!("theme-edit", "Preferences: Customize Theme…", "appearance colors settings toml", ""),
+    command!("theme-reload", "Preferences: Reload Custom Theme", "appearance colors settings", ""),
     command!("minimap", "View: Toggle Minimap", "overview", ""),
     command!(
         "terminal",
@@ -346,6 +364,8 @@ const COMMANDS: &[CommandDescriptor] = &[
         "completion autocomplete lsp",
         "Ctrl+Space"
     ),
+    command!("go-back", "Go: Back", "navigation history previous location", "GoBack"),
+    command!("go-forward", "Go: Forward", "navigation history next location", "GoForward"),
     command!("next-tab", "View: Next Editor", "tab", "Ctrl+Tab"),
     command!(
         "previous-tab",
@@ -389,6 +409,17 @@ impl App {
     /// Call before workbench shortcuts. While open, other shortcut handlers
     /// should stop dispatching and return false to the focused TextField.
     pub(crate) fn navigation_key(&self, key: KeyCode, modifiers: KeyModifiers) -> bool {
+        if !self.nav.is_open() && cfg!(target_os = "macos") && modifiers.control && !modifiers.super_key && !modifiers.alt && matches!(key, KeyCode::Char('-' | '_')) {
+            if modifiers.shift { self.go_forward(); } else { self.go_back(); }
+            return true;
+        }
+        if !self.nav.is_open() && !cfg!(target_os = "macos") && modifiers.alt && !modifiers.primary() && !modifiers.shift {
+            match key {
+                KeyCode::Left => { self.go_back(); return true; }
+                KeyCode::Right => { self.go_forward(); return true; }
+                _ => {}
+            }
+        }
         if modifiers.primary() && !modifiers.alt && matches!(key, KeyCode::Char('p' | 'P')) {
             if modifiers.shift {
                 self.show_commands();
@@ -705,6 +736,7 @@ impl App {
             if let Some(doc) = self.runtime.lock().unwrap().workspace.get_mut(id) {
                 doc.editor.moved(selection);
             }
+            if bindings.selection.get() != selection { self.remember_location(); }
             self.nav.close();
             bindings.selection.set(selection);
             self.invalidate_clipboard();
@@ -729,6 +761,8 @@ impl App {
     }
     fn execute_navigation_command(&self, id: &str) {
         match id {
+            "go-back" => self.go_back(),
+            "go-forward" => self.go_forward(),
             "quick-open" => self.show_quick_open(),
             "go-line" => self.show_go_to_line(),
             "open" => self.picker(DialogPurpose::Open),
@@ -753,6 +787,24 @@ impl App {
             "split-down" => self.split_editor(true),
             "focus-other" => self.focus_other_group(),
             "close-split" => self.close_split(),
+            "theme-dracula" => self.set_theme(kureha_code::theme::preset("dracula").unwrap()),
+            "theme-monokai" => self.set_theme(kureha_code::theme::preset("monokai").unwrap()),
+            "theme-nord" => self.set_theme(kureha_code::theme::preset("nord").unwrap()),
+            "theme-solarized-dark" => self.set_theme(kureha_code::theme::preset("solarized-dark").unwrap()),
+            "theme-solarized-light" => self.set_theme(kureha_code::theme::preset("solarized-light").unwrap()),
+            "theme-gruvbox-dark" => self.set_theme(kureha_code::theme::preset("gruvbox-dark").unwrap()),
+            "theme-tokyo-night" => self.set_theme(kureha_code::theme::preset("tokyo-night").unwrap()),
+            "editor-theme-light" => self.select_editor_preset("light"),
+            "editor-theme-dark" => self.select_editor_preset("dark"),
+            "editor-theme-dracula" => self.select_editor_preset("dracula"),
+            "editor-theme-monokai" => self.select_editor_preset("monokai"),
+            "editor-theme-nord" => self.select_editor_preset("nord"),
+            "editor-theme-solarized-dark" => self.select_editor_preset("solarized-dark"),
+            "editor-theme-solarized-light" => self.select_editor_preset("solarized-light"),
+            "editor-theme-gruvbox-dark" => self.select_editor_preset("gruvbox-dark"),
+            "editor-theme-tokyo-night" => self.select_editor_preset("tokyo-night"),
+            "theme-edit" => self.open_theme_settings(),
+            "theme-reload" => self.reload_theme_settings(),
             "theme-light" => self.set_theme(kureha_code::theme::Theme::Light),
             "theme-dark" => self.set_theme(kureha_code::theme::Theme::Dark),
             "minimap" => self.toggle_minimap(),
@@ -798,7 +850,7 @@ impl App {
             super::popup::Anchored::top_center(vstack! {
                 TextField::new(self.nav.query.clone()).placeholder(placeholder).placeholder_color(colors.muted).font_size(13.0)
                     .text_color(colors.foreground).background_color(colors.elevated)
-                    .border_color(colors.border).focused_border_color(colors.accent)
+                    .border_color(colors.border).focused_border_color(colors.accent).material(self.theme.get().input_material())
                     .autofocus(true).on_submit(move || submit.accept_navigation())
                     .on_cancel(move || close.nav.close()).frame(f32::INFINITY, 32.0),
                 ListView::new(self.nav.rows.clone(), self.nav.selected.clone(), 34.0, move |index, row: Row, selected| {
@@ -819,12 +871,17 @@ impl App {
                 }).item_key(|row| row.key.clone().into()).frame(f32::INFINITY, height),
                 Text::from_state(self.nav.hint.clone()).font_size(11.0).color(colors.muted)
                     .frame_width(f32::INFINITY),
-            }.spacing(6.0).padding(8.0).background(colors.elevated).frame_width(f32::INFINITY).border(colors.border, 1.0).clip()),
+            }.spacing(8.0).padding(12.0).frame_width(f32::INFINITY).surface_style(self.theme.get().popup_style()).corner_radius(12.0).clip_content(true)),
             VStack::new(())
         )
     }
 }
 fn shortcut(shortcut: &str) -> String {
+    let shortcut = match shortcut {
+        "GoBack" => if cfg!(target_os = "macos") { "Ctrl+-" } else { "Alt+Left" },
+        "GoForward" => if cfg!(target_os = "macos") { "Ctrl+Shift+-" } else { "Alt+Right" },
+        value => value,
+    };
     shortcut.replace(
         "Primary",
         if cfg!(target_os = "macos") {
@@ -1067,7 +1124,7 @@ mod tests {
     }
 
     #[test]
-    fn palette_rows_are_flat_and_activate_across_their_full_width() {
+    fn palette_rows_keep_quiet_selection_and_activate_across_their_full_width() {
         use scarlet_ui::{
             event::{MouseButton, MouseEvent},
             pipeline::RenderingPipeline,
@@ -1094,10 +1151,9 @@ mod tests {
                         command,
                         PaintCommand::StrokeRect { .. }
                             | PaintCommand::StrokeRoundedRect { .. }
-                            | PaintCommand::FillRoundedRect { .. }
                             | PaintCommand::FillVerticalGradientRoundedRect { .. }
                     )),
-                    "row painted button or focus chrome"
+                    "row painted a button border or gradient"
                 );
             }
             for child in e.children() {
@@ -1109,7 +1165,7 @@ mod tests {
             // Label, detail column, and trailing blank space are one target.
             for offset in [20.0, 400.0, 590.0] {
                 let app = app_with_text("source");
-                app.set_theme(theme);
+                app.set_theme(theme.clone());
                 app.show_commands();
                 app.nav.query.set("minimap".into());
                 app.poll_navigation();

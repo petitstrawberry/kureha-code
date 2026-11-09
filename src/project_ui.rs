@@ -565,11 +565,11 @@ impl App {
         for id in &ids {
             // Activating also registers documents opened from snapshots in the
             // focused editor group's tabs; restore the user's active tab below.
-            self.activate(*id);
+            self.activate_unchecked(*id);
             self.sync_editor(*id);
         }
         if !ids.is_empty() {
-            self.activate(active);
+            self.activate_unchecked(active);
             self.changed();
         }
         Ok((ids.len(), matches))
@@ -604,7 +604,7 @@ impl App {
             .workspace
             .find_path(&source.path);
         if let Some(id) = existing {
-            self.select_project_result(id, &source, range);
+            self.select_project_result(id, &source, range, true);
         } else {
             if source.document.is_some() {
                 self.project
@@ -629,7 +629,7 @@ impl App {
         }
     }
 
-    fn select_project_result(&self, id: DocumentId, source: &Source, range: Range<usize>) {
+    fn select_project_result(&self, id: DocumentId, source: &Source, range: Range<usize>, remember: bool) {
         let current = {
             let rt = self.runtime.lock().unwrap();
             rt.workspace
@@ -647,6 +647,7 @@ impl App {
                 .set("Result changed; search again to locate it".into());
             return;
         }
+        let same_document = self.active_id() == id;
         self.activate(id);
         let Some(bindings) = self.bindings(id) else {
             return;
@@ -657,6 +658,9 @@ impl App {
         };
         if let Some(doc) = self.runtime.lock().unwrap().workspace.get_mut(id) {
             doc.editor.moved(selection);
+        }
+        if remember && same_document && bindings.selection.get() != selection {
+            self.remember_location();
         }
         bindings.selection.set(selection);
         self.project.owns_focus.set(false);
@@ -688,7 +692,7 @@ impl App {
             if navigation == pending.navigation
                 || (navigation == pending.navigation.wrapping_add(1) && self.active_id() == id)
             {
-                self.select_project_result(id, &pending.source, pending.range);
+                self.select_project_result(id, &pending.source, pending.range, false);
             }
         } else if opening && navigation == pending.navigation {
             self.project.runtime.lock().unwrap().navigation = Some(pending);
@@ -732,19 +736,19 @@ impl App {
                 .background_color(if selected {
                     colors.selection
                 } else {
-                    colors.surface
+                    Color::TRANSPARENT
                 })
                 .on_click(move || state.update(|value| *value = !*value))
         };
         vstack! {
             hstack! {
-                Text::new("SEARCH").font_size(11.0).color(colors.muted),
+                Text::new("Search").font_size(13.0).color(colors.foreground),
                 Spacer::new(),
                 Button::new("×").header_style().font_size(13.0).padding(4.0)
-                    .text_color(colors.foreground).background_color(colors.surface).on_click(move || close.close()),
+                    .text_color(colors.foreground).background_color(Color::TRANSPARENT).on_click(move || close.close()),
             }.spacing(4.0),
             TextField::new(self.project.query.clone()).font_size(13.0).padding(5.0)
-                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border)
+                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border).material(self.theme.get().input_material())
                 .placeholder("Search in files").autofocus(self.project.focus_query.get()).on_submit(move || submit.search_project()).frame(f32::INFINITY, 28.0),
             hstack! {
                 option("Aa", self.project.match_case.clone()),
@@ -752,11 +756,11 @@ impl App {
                 option(".*", self.project.regex.clone()),
                 Spacer::new(),
                 Button::new(if busy { "Cancel" } else { "Search" }).header_style().font_size(12.0).padding(5.0)
-                    .text_color(colors.foreground).background_color(colors.surface)
+                    .text_color(colors.foreground).background_color(Color::TRANSPARENT)
                     .on_click(move || if busy { cancel.cancel() } else { run.search_project() }),
             }.spacing(3.0),
             TextField::new(self.project.replacement.clone()).font_size(13.0).padding(5.0)
-                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border)
+                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border).material(self.theme.get().input_material())
                 .placeholder("Replace with").frame(f32::INFINITY, 28.0).on_event_capture(move |event| {
                     if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) {
                         replacement_focus.focus_query.set(false);
@@ -764,16 +768,16 @@ impl App {
                     false
                 }),
             Button::new("Replace All in Files").header_style().font_size(12.0).padding(5.0)
-                .text_color(colors.foreground).background_color(colors.surface).enabled(can_replace)
+                .text_color(colors.foreground).background_color(Color::TRANSPARENT).enabled(can_replace)
                 .on_click(move || replace.replace_project()).frame(f32::INFINITY, 28.0),
             Text::from_state(self.project.message.clone()).font_size(11.0).color(colors.muted),
             if_view!(self.runtime.lock().unwrap().explorer.root.is_none(),
                 Button::new("Open Folder…").header_style().font_size(13.0).text_color(colors.foreground)
-                    .background_color(colors.surface).on_click(move || open_folder.show_folder()),
+                    .background_color(Color::TRANSPARENT).on_click(move || open_folder.show_folder()),
                 VStack::new(())),
             ListView::new(self.project.rows.clone(), self.project.selected.clone(), 48.0, move |index, row: ResultRow, selected| {
                 let click = rows.clone();
-                let background = if selected == Some(index) { colors.selection } else { colors.surface };
+                let background = if selected == Some(index) { colors.selection } else { Color::TRANSPARENT };
                 vstack! {
                     Text::new(row.location.clone()).font_size(11.0).color(colors.muted),
                     Text::new(row.preview.clone()).font_size(13.0).color(colors.foreground),
@@ -787,8 +791,8 @@ impl App {
                         false
                     })
             }).item_key(|row| row.key.clone().into()).frame(f32::INFINITY, f32::INFINITY),
-        }.alignment(Alignment::Leading).spacing(6.0).padding(8.0)
-            .background(colors.surface).frame(f32::INFINITY, f32::INFINITY)
+        }.alignment(Alignment::Leading).spacing(8.0).padding(12.0)
+            .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {
                 if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) {
                     focus.owns_focus.set(true);
@@ -1096,7 +1100,7 @@ mod tests {
             },
         );
         let before = app.bindings(id).unwrap().selection.get();
-        app.select_project_result(id, &found.sources[0], 0..3);
+        app.select_project_result(id, &found.sources[0], 0..3, true);
         assert_eq!(app.bindings(id).unwrap().selection.get(), before);
     }
 
@@ -1109,8 +1113,13 @@ mod tests {
         app.split_editor(false);
         let right = app.bindings(id).unwrap();
         let found = results(&app, &[id]);
-        app.select_project_result(id, &found.sources[0], 8..11);
+        let before = right.selection.get();
+        app.select_project_result(id, &found.sources[0], 8..11, true);
         assert_eq!(left.selection.get(), TextSelection::collapsed(5));
+        assert_eq!(right.selection.get().normalized_range(), Some(8..11));
+        app.go_back();
+        assert_eq!(right.selection.get(), before);
+        app.go_forward();
         assert_eq!(right.selection.get().normalized_range(), Some(8..11));
         let changes =
             project_search::prepare_replace(&found, "dog", &AtomicBool::new(false)).unwrap();

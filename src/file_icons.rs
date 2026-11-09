@@ -1,5 +1,6 @@
-//! File-kind icons share the workbench's Tabler outlines and 16 px sizing.
+//! Recognizable language marks with contrast-aware 18 px workbench icons.
 //! Language colors are accents; the shape still distinguishes non-code files.
+use scarlet_ui::icon::{IconFill, IconStyle, IconWeight};
 use scarlet_ui::prelude::*;
 use std::path::Path;
 
@@ -11,9 +12,69 @@ pub struct FileIcon {
 impl FileIcon {
     pub fn view(self) -> IconView {
         IconView::new(self.icon)
-            .size(IconSize::Small)
+            .size(IconSize::Pixels(18))
+            .style(self.style())
             .color(self.color)
     }
+    pub fn style(self) -> IconStyle {
+        let folder = matches!(self.icon, Icon::Folder | Icon::FolderOpen);
+        IconStyle::default()
+            .weight(if folder {
+                IconWeight::Bold
+            } else {
+                IconWeight::Normal
+            })
+            .fill(if folder {
+                IconFill::Filled
+            } else {
+                IconFill::Outline
+            })
+    }
+    pub fn themed(mut self, theme: &crate::theme::Theme, selected: bool) -> Self {
+        let colors = theme.colors();
+        let background = if selected {
+            mix(colors.elevated, colors.selection, colors.selection.a)
+        } else {
+            colors.elevated
+        };
+        let endpoint = if contrast(Color::WHITE, background) > contrast(Color::BLACK, background) {
+            Color::WHITE
+        } else {
+            Color::BLACK
+        };
+        let original = self.color;
+        for step in 0..=20 {
+            self.color = mix(original, endpoint, step as f32 / 20.0);
+            if contrast(self.color, background) >= 4.5 {
+                break;
+            }
+        }
+        self
+    }
+}
+
+fn mix(from: Color, to: Color, fraction: f32) -> Color {
+    let channel = |a: f32, b: f32| a + (b - a) * fraction;
+    Color {
+        r: channel(from.r, to.r),
+        g: channel(from.g, to.g),
+        b: channel(from.b, to.b),
+        a: 1.0,
+    }
+}
+fn luminance(color: Color) -> f32 {
+    let linear = |c: f32| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+}
+fn contrast(a: Color, b: Color) -> f32 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
 pub fn for_path(path: Option<&Path>) -> FileIcon {
@@ -36,23 +97,23 @@ pub fn for_path(path: Option<&Path>) -> FileIcon {
         (".gitignore" | ".gitattributes" | ".gitmodules" | ".editorconfig", _) => {
             (Icon::Settings, Color::rgb(107, 111, 122))
         }
-        (_, "rs") => (Icon::FileCode, Color::rgb(157, 74, 40)),
-        (_, "py" | "pyi" | "pyw") => (Icon::FileCode, Color::rgb(43, 104, 155)),
-        (_, "js" | "jsx" | "mjs" | "cjs") => (Icon::FileCode, Color::rgb(159, 118, 13)),
-        (_, "ts" | "tsx" | "mts" | "cts") => (Icon::FileCode, Color::rgb(36, 105, 174)),
+        (_, "rs") => (Icon::BrandRust, Color::rgb(157, 74, 40)),
+        (_, "py" | "pyi" | "pyw") => (Icon::BrandPython, Color::rgb(43, 104, 155)),
+        (_, "js" | "jsx" | "mjs" | "cjs") => (Icon::BrandJavascript, Color::rgb(159, 118, 13)),
+        (_, "ts" | "tsx" | "mts" | "cts") => (Icon::BrandTypescript, Color::rgb(36, 105, 174)),
         (_, "json" | "jsonc" | "json5" | "toml" | "yaml" | "yml" | "ini" | "conf") => {
             (Icon::Settings, Color::rgb(123, 94, 151))
         }
         (_, "md" | "mdx" | "markdown" | "rst") => (Icon::FileDescription, Color::rgb(53, 113, 153)),
-        (_, "html" | "htm" | "xml" | "svg" | "vue" | "svelte") => {
-            (Icon::Code, Color::rgb(171, 77, 47))
-        }
-        (_, "css" | "scss" | "sass" | "less") => (Icon::Palette, Color::rgb(117, 76, 162)),
+        (_, "go") => (Icon::BrandGolang, Color::rgb(20, 142, 169)),
+        (_, "html" | "htm") => (Icon::BrandHtml5, Color::rgb(171, 77, 47)),
+        (_, "xml" | "svg" | "vue" | "svelte") => (Icon::Code, Color::rgb(171, 77, 47)),
+        (_, "css" | "scss" | "sass" | "less") => (Icon::BrandCss3, Color::rgb(117, 76, 162)),
         (_, "sh" | "bash" | "zsh" | "fish" | "ps1") => (Icon::Terminal, Color::rgb(56, 119, 74)),
         (
             _,
-            "c" | "h" | "cpp" | "cc" | "cxx" | "hpp" | "m" | "mm" | "go" | "java" | "kt" | "swift"
-            | "rb" | "lua" | "php" | "nix" | "zig" | "ex" | "exs",
+            "c" | "h" | "cpp" | "cc" | "cxx" | "hpp" | "m" | "mm" | "java" | "kt" | "swift" | "rb"
+            | "lua" | "php" | "nix" | "zig" | "ex" | "exs",
         ) => (Icon::FileCode, Color::rgb(67, 104, 136)),
         (_, "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "bmp" | "tiff") => {
             (Icon::Photo, Color::rgb(134, 79, 143))
@@ -91,9 +152,42 @@ pub const APP_ICON_SVG: &str = include_str!("../assets/kureha.svg");
 mod tests {
     use super::*;
     #[test]
+    fn language_and_folder_marks_stay_readable_in_all_presets_and_selections() {
+        let themes = crate::theme::Theme::ALL.into_iter().chain(
+            crate::theme::PRESETS
+                .iter()
+                .map(|(name, _)| crate::theme::preset(name).unwrap()),
+        );
+        for theme in themes {
+            for selected in [false, true] {
+                let colors = theme.colors();
+                let bg = if selected {
+                    mix(colors.elevated, colors.selection, colors.selection.a)
+                } else {
+                    colors.elevated
+                };
+                for icon in [
+                    for_path(None),
+                    for_path(Some(Path::new("lib.rs"))),
+                    for_path(Some(Path::new("app.py"))),
+                    for_path(Some(Path::new("app.ts"))),
+                    for_path(Some(Path::new("app.js"))),
+                    folder(false),
+                    folder(true),
+                ] {
+                    assert!(
+                        contrast(icon.themed(&theme, selected).color, bg) >= 4.5,
+                        "{} {selected}",
+                        theme.name()
+                    );
+                }
+            }
+        }
+    }
+    #[test]
     fn file_kinds_use_consistent_shapes_and_language_accents() {
         assert_eq!(for_path(None).icon, Icon::File);
-        assert_eq!(for_path(Some(Path::new("lib.RS"))).icon, Icon::FileCode);
+        assert_eq!(for_path(Some(Path::new("lib.RS"))).icon, Icon::BrandRust);
         assert_ne!(
             for_path(Some(Path::new("lib.rs"))).color,
             for_path(Some(Path::new("lib.py"))).color

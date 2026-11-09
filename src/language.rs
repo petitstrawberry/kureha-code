@@ -224,7 +224,7 @@ fn markup(value: &Value) -> String {
     } else if let Some(s) = value.get("value").and_then(Value::as_str) {
         s.into()
     } else if let Some(array) = value.as_array() {
-        array.iter().map(markup).collect::<Vec<_>>().join("\n")
+        array.iter().map(markup).collect::<Vec<_>>().join("\n\n")
     } else {
         String::new()
     }
@@ -1498,6 +1498,37 @@ impl App {
             self.changed();
         }
     }
+    pub(super) fn dismiss_hover_for_scroll(&self) {
+        let mut rt = self.runtime.lock().unwrap();
+        let service = &mut rt.language;
+        service.hover_generation = service.hover_generation.wrapping_add(1);
+        service.hover_target = None;
+        service.hover_hide = None;
+        service.hover_sent = false;
+        // Include explicit Show Hover requests, which have no pointer generation.
+        for session in service.sessions.values_mut() {
+            let cancelled: Vec<_> = session
+                .pending
+                .iter()
+                .filter(|(_, request)| request.method == "textDocument/hover")
+                .map(|(id, _)| *id)
+                .collect();
+            for id in cancelled {
+                session.pending.remove(&id);
+                if let Some(client) = &session.client {
+                    let _ = client.notify("$/cancelRequest", json!({"id": id}));
+                }
+            }
+        }
+        let shown = matches!(service.panel, Panel::Hover(_));
+        if shown {
+            service.panel = Panel::Closed;
+        }
+        drop(rt);
+        if shown {
+            self.changed();
+        }
+    }
     pub(super) fn keep_hover_open(&self) {
         self.runtime.lock().unwrap().language.hover_hide = None;
     }
@@ -1714,8 +1745,9 @@ impl App {
     pub(super) fn language_navigate(&self, path: PathBuf, target: Value) {
         let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
         if let Some(id) = existing {
+            let same_document = id == self.active_id();
             self.activate(id);
-            self.language_select(id, &target);
+            self.language_select(id, &target, same_document);
         } else {
             if self.runtime.lock().unwrap().job.is_some() {
                 self.status
@@ -1735,7 +1767,7 @@ impl App {
             }
         }
     }
-    fn language_select(&self, id: DocumentId, target: &Value) {
+    fn language_select(&self, id: DocumentId, target: &Value, remember: bool) {
         let Some(active_bindings) = self.bindings(id) else {
             return;
         };
@@ -1754,6 +1786,9 @@ impl App {
             doc.editor.moved(selection);
             (active_bindings, selection)
         };
+        if remember && bindings.0.selection.get() != bindings.1 {
+            self.remember_location();
+        }
         bindings.0.selection.set(bindings.1);
         if !matches!(
             self.runtime.lock().unwrap().language.panel,
@@ -1778,7 +1813,7 @@ impl App {
                 }
             };
         if let Some(target) = target {
-            self.language_select(id, &target);
+            self.language_select(id, &target, false);
         }
     }
     fn accept_completion(&self, index: usize) {
@@ -1904,11 +1939,20 @@ impl App {
             .collect()
     }
     pub(super) fn language_popup(&self) -> impl View + Clone + use<> {
-        let (panel, selected) = {
+        let active = self.active_id();
+        let (panel, selected, path) = {
             let rt = self.runtime.lock().unwrap();
-            (rt.language.panel.clone(), rt.language.selected_completion)
+            (
+                rt.language.panel.clone(),
+                rt.language.selected_completion,
+                rt.workspace.get(active).and_then(|doc| doc.path.clone()),
+            )
         };
         let colors = self.theme.get().colors();
+        let hover_text = match &panel {
+            Panel::Hover(text) => Some(text.clone()),
+            _ => None,
+        };
         let rename = match &panel {
             Panel::Rename(_, name) => Some(name.clone()),
             _ => None,
@@ -1922,11 +1966,11 @@ impl App {
             Surface::floating(vstack! {
                 TextField::new(rename_input).font_size(13.0).autofocus(true)
                     .text_color(colors.foreground).background_color(colors.elevated)
-                    .border_color(colors.border).focused_border_color(colors.accent)
+                    .border_color(colors.border).focused_border_color(colors.accent).material(self.theme.get().input_material())
                     .on_submit(move || submit.submit_rename())
                     .on_cancel(move || { cancel.dismiss_language_panel(); }).frame(320.0, 30.0),
                 Text::new("Current file only · Enter apply · Esc cancel").font_size(11.0).color(colors.muted),
-            }.spacing(5.0).padding(8.0)).fill(colors.elevated).border_color(colors.border).corner_radius(4.0), self.language_anchor.clone()), VStack::new(()));
+            }.spacing(6.0).padding(10.0)).surface_style(self.theme.get().popup_style()).corner_radius(10.0), self.language_anchor.clone()), VStack::new(()));
         let (rows, height) = match panel {
             Panel::Completion(_, items) => {
                 let len = items.len();
@@ -1936,55 +1980,26 @@ impl App {
                         .enumerate()
                         .map(|(index, choice)| {
                             let app = self.clone();
-                            Either::A(
-                                Button::new(format!("{}   {}", choice.label, choice.detail))
-                                    .header_style()
-                                    .font_size(13.0)
-                                    .text_color(colors.foreground)
-                                    .background_color(if selected == index {
-                                        colors.selection
-                                    } else {
-                                        colors.elevated
-                                    })
-                                    .on_click(move || app.accept_completion(index))
-                                    .padding(5.0)
-                                    .frame(420.0, 26.0),
-                            )
+                            Button::new(format!("{}   {}", choice.label, choice.detail))
+                                .header_style()
+                                .font_size(13.0)
+                                .text_color(colors.foreground)
+                                .background_color(if selected == index {
+                                    colors.selection
+                                } else {
+                                    Color::TRANSPARENT
+                                })
+                                .on_click(move || app.accept_completion(index))
+                                .padding(5.0)
+                                .frame(420.0, 26.0)
                         })
                         .collect::<Vec<_>>(),
                     (len.min(8) as f32 * 26.0).max(26.0),
                 )
             }
-            Panel::Hover(text) => {
-                let mut lines = Vec::new();
-                for line in text.lines().take(80) {
-                    let chars = line.chars().collect::<Vec<_>>();
-                    if chars.is_empty() {
-                        lines.push(String::new());
-                    }
-                    for chunk in chars.chunks(52) {
-                        lines.push(chunk.iter().collect::<String>());
-                    }
-                }
-                let height = (lines.len() as f32 * 19.0).clamp(19.0, 220.0);
-                (
-                    lines
-                        .into_iter()
-                        .map(|line| {
-                            Either::B(
-                                Text::new(line)
-                                    .font_size(13.0)
-                                    .color(colors.foreground)
-                                    .frame(420.0, 19.0),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                    height,
-                )
-            }
             _ => (Vec::new(), 0.0),
         };
-        let shown = !rows.is_empty();
+        let shown = hover_text.is_some() || !rows.is_empty();
         let hovered = self.clone();
         let scroll = ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0))
             .scroll_to_vertical_range(selected as f32 * 26.0, (selected + 1) as f32 * 26.0)
@@ -1992,27 +2007,44 @@ impl App {
         let information = if_view!(
             shown,
             super::popup::Anchored::new(
-                Surface::floating(scroll)
-                    .fill(colors.elevated)
-                    .border_color(colors.border)
-                    .corner_radius(4.0),
+                if_view!(
+                    hover_text.is_some(),
+                    super::hover::HoverCard::new(
+                        hover_text.as_deref().unwrap_or_default(),
+                        self.theme.get(),
+                        self.document_font(),
+                        path.as_deref()
+                    ),
+                    Surface::floating(scroll)
+                        .surface_style(self.theme.get().popup_style())
+                        .corner_radius(10.0)
+                )
+                // Keep this handler inside the anchored panel. An event wrapper
+                // around Anchored would hit-test the entire editor viewport.
+                .on_event_capture(move |event| {
+                    if matches!(
+                        event,
+                        Event::Mouse(
+                            scarlet_ui::event::MouseEvent::Moved { .. }
+                                | scarlet_ui::event::MouseEvent::Entered { .. }
+                        )
+                    ) {
+                        hovered.keep_hover_open();
+                    }
+                    false
+                }),
                 self.language_anchor.clone()
             )
-            .on_event_capture(move |event| {
-                if matches!(
-                    event,
-                    Event::Mouse(
-                        scarlet_ui::event::MouseEvent::Moved { .. }
-                            | scarlet_ui::event::MouseEvent::Entered { .. }
-                    )
-                ) {
-                    hovered.keep_hover_open();
-                }
-                false
+            .max_size(if hover_text.is_some() {
+                Size::new(520.0, 340.0)
+            } else {
+                Size::new(440.0, 260.0)
             }),
             VStack::new(())
         );
-        ZStack::new((information, rename_view)).alignment(Alignment::TopLeading)
+        // These panels are mutually exclusive. A full-size ZStack here would
+        // itself intercept input outside either panel.
+        if_view!(rename.is_some(), rename_view, information)
     }
     pub(super) fn language_panel(&self) -> impl View + Clone + use<> {
         let (panel, problems, root) = {
@@ -2063,7 +2095,7 @@ impl App {
                     .header_style()
                     .font_size(12.0)
                     .text_color(colors.foreground)
-                    .background_color(colors.surface)
+                    .background_color(Color::TRANSPARENT)
                     .padding(5.0)
                     .on_click(move || {
                         if let Some(location) = &target {
@@ -2076,7 +2108,7 @@ impl App {
         if_view!(is_open, vstack! {
             hstack! { Text::new(title).font_size(12.0).color(colors.foreground), Spacer::new(), Button::new("×").header_style().text_color(colors.foreground).on_click(move || { close.dismiss_language_panel(); }), }.spacing(8.0),
             ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0)).frame(f32::INFINITY, 140.0),
-        }.spacing(4.0).padding(8.0).background(colors.surface), VStack::new(()))
+        }.spacing(6.0).padding(10.0).surface_style(self.theme.get().chrome_style()), VStack::new(()))
     }
 }
 

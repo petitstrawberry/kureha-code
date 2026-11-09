@@ -26,7 +26,63 @@ expression modes, wraps in either direction, and works on the active document.
 Regular-expression replacements support capture groups. LF is used internally; CRLF input is saved as CRLF. Opened
 files and Replace All results are limited to 16 MiB. The editor provides syntax colors, file-kind icons, language-server diagnostics, completion, definition navigation and hover information. Extensions are not implemented.
 
+## Themes and editor typography
+
+View → Color Theme selects the workbench palette. View → Editor Color Theme
+changes only the document area and its syntax colors. Bundled choices are Light,
+Dark, Dracula, Monokai, Nord, Solarized Dark/Light, Gruvbox Dark and Tokyo Night.
+Menu choices apply for the current session.
+
+For persistent settings, choose View → Customize Theme… and save the generated
+TOML file. Changes reload automatically; invalid edits keep the last working
+configuration and show an error in the status bar. The default location is
+`~/.config/kureha-code/theme.toml` (or `$XDG_CONFIG_HOME/kureha-code/theme.toml`).
+`KUREHA_THEME` selects a different file. View → Reload Custom Theme reloads it
+explicitly, including a changed font file.
+
+For example, this keeps the surrounding interface light while giving only the
+editor Tokyo Night colors and an installed monospace font:
+
+```toml
+name = "My workspace"
+base = "light"
+
+[editor]
+theme = "tokyo-night"
+font_family = "Menlo"
+font_size = 16.0
+```
+
+Use `font_file = "/path/to/font.ttf"` instead of `font_family` to load a TTF/OTF;
+relative paths resolve beside the theme file, and `~/` is supported. Font size
+accepts 8–48 logical pixels. Omitting both font settings uses bundled JetBrains
+Mono with the existing fallback fonts. Menus, sidebar and terminal retain their
+own typography. Editor colors also apply to the minimap and hover code examples.
+
+[The complete example](assets/theme.toml) documents workbench/editor color,
+glass opacity/blur, syntax category and TextMate scope overrides. Custom colors
+accept `#RRGGBB` or `#RRGGBBAA`. [Palette sources and licenses](assets/themes/README.md)
+are included with the presets; these are Kureha mappings of those palettes.
+
 ## Desktop development
+
+Enter the Nix development shell before building:
+
+```sh
+nix develop
+```
+
+The flake pins the same Nixpkgs and Scarlet Rust toolchain as Resonara. It
+provides Rust, rustfmt, Git, Python, pkg-config and fonts, plus the Linux
+Wayland/X11 and graphics libraries needed by ScarletUI. Supported hosts are
+Linux (x86_64/AArch64) and macOS (Apple Silicon). `flake.lock` fixes the inputs
+for reproducible environments. The Scarlet toolchain cache is configured in the
+flake; accept its Nix configuration when prompted to use the published binaries.
+
+With direnv and its shell hook installed, run `direnv allow` once in this
+directory to load the shell automatically through `.envrc`.
+
+Inside the shell:
 
 ```sh
 cargo run -- path/to/source.rs
@@ -55,6 +111,7 @@ Z/Shift+Z, X/C/V and A handle Undo/Redo, clipboard and Select All in the editor.
 | --- | --- |
 | Quick Open / Command Palette | Primary P / Primary Shift P (or F1) |
 | Go to line and optional column | Control G |
+| Back / forward to a location | macOS: Control - / Control Shift -; elsewhere: Alt Left / Right |
 | Search project | Primary Shift F |
 | Save all dirty documents | Primary Alt S |
 | Split right / down | Primary \\ / Primary Shift \\ |
@@ -69,6 +126,13 @@ switches to line navigation and `>command` switches to the command palette.
 Navigation overlays leave the editor's height unchanged. The bounded index skips
 build/vendor directories and symlinks, supports an exclusion-only subset of root
 ignore files, and reports incomplete scans; it is not a full Git ignore engine.
+
+Back/forward arrows beside the tabs restore the file, editor group, selection and
+scroll position before a tab change, definition/search jump or Go to Line. The
+session keeps up to 128 locations; closing a document removes its entries.
+The minimap keeps the point where you grab its viewport indicator, and continues
+dragging outside its bounds until release. File icons use distinct language marks
+and adjust their contrast for the current theme and selected row.
 
 Project search includes unsaved buffers and shows file/line previews in the
 sidebar. It is cancellable and bounded to 1 MiB per file, 64 MiB total and 2,000
@@ -173,9 +237,14 @@ args = []
 ## Themes, minimap and terminal
 
 View offers Light/Dark, minimap visibility and the integrated terminal. The editor
-surface is flat and borderless; themes include syntax colors and subdued selection
+surface is flat and borderless inside an inset, rounded glass pane. The sidebar
+and editor groups share Bubble Glass rims and elevation above a tinted workspace;
+active tabs keep their glass material. The status line sits directly on the
+workspace. Search, completion, rename and hover use denser floating glass to keep
+text readable over source. Themes include syntax colors and subdued selection
 and separators. Primary K then primary T switches theme; primary K then primary M
-toggles the minimap. The overview has fixed two-pixel row spacing, clips and scrolls
+toggles the minimap (empty documents reserve no minimap space). The overview has
+fixed two-pixel row spacing, clips and scrolls
 with the document, and uses a translucent neutral viewport. Source and paint work
 are bounded; very large documents use at most 768 sampled rows.
 
@@ -189,3 +258,12 @@ shell integration beyond the PTY are not implemented.
 This is not yet VS Code feature parity. Arbitrarily nested editor groups,
 multi-cursor editing, code folding, workspace-wide symbol rename, Git/diff tools,
 debugging, extension hosting, and persistent workspace restoration remain open.
+
+Visual review fixtures use the real ScarletUI renderer. To regenerate light/dark
+empty, populated, Find, command palette and project search views:
+
+```sh
+KUREHA_WORKBENCH_PREVIEW=artifacts/bubble-glass cargo test --bin kureha-code workbench_preview -- --ignored --test-threads=1
+```
+
+The manual test writes PPM images to that directory; it does not launch a window.
