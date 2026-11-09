@@ -103,12 +103,12 @@ impl MinimapCache {
         document: &TextDocument,
     ) -> Arc<Snapshot> {
         let colors = syntax::cached(id, revision, path);
-        let theme = colors.as_ref().map_or_else(syntax::theme, |c| c.theme);
+        let theme = colors.as_ref().map_or_else(syntax::theme, |c| c.theme.clone());
         let key = Key {
             id,
             revision,
             path: path.map(Path::to_path_buf),
-            theme,
+            theme: theme.clone(),
             syntax_generation: colors.as_ref().map(|c| c.generation),
         };
         if let Some(index) = self.entries.iter().position(|(cached, _)| cached == &key) {
@@ -480,7 +480,7 @@ impl ElementRenderObject for SurfaceRenderer {
         if !m.enabled || size.width <= 0.0 || size.height <= 0.0 {
             return true;
         }
-        let colors = m.theme.colors();
+        let colors = m.theme.editor_colors();
         ctx.fill_rect(Rect::new(origin, size), colors.background);
         ctx.fill_rect(
             Rect::from_xywh(origin.x, origin.y, 1.0, size.height),
@@ -710,7 +710,7 @@ mod tests {
                 let m = Minimap::new(
                     Arc::new(snapshot("one\ntwo\nthree", &[])),
                     scroll(0.0),
-                    theme,
+                    theme.clone(),
                 );
                 assert_eq!(m.map_height(), 6.0);
                 let rects = paint_rects(m, height);

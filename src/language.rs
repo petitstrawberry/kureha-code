@@ -1977,7 +1977,7 @@ impl App {
                     super::hover::HoverCard::new(
                         hover_text.as_deref().unwrap_or_default(),
                         self.theme.get(),
-                        self.editor_font.clone(),
+                        self.document_font(),
                         path.as_deref()
                     ),
                     Surface::floating(scroll)

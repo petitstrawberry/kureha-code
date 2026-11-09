@@ -30,6 +30,7 @@ mod navigation_ui;
 mod popup;
 mod project_ui;
 mod ui;
+mod theme_settings;
 
 #[derive(Clone, Copy)]
 enum DialogPurpose {
@@ -111,6 +112,7 @@ struct App {
     project: project_ui::ProjectSearch,
     editor_font: Option<FontStack>,
     theme: State<kureha_code::theme::Theme>,
+    theme_settings: Arc<Mutex<Option<theme_settings::Watcher>>>,
     minimap_visible: State<bool>,
     terminal_visible: State<bool>,
     terminal: kureha_code::terminal::Terminal,
@@ -155,6 +157,7 @@ impl App {
             project: project_ui::ProjectSearch::new(),
             editor_font: kureha_code::fonts::editor_stack(),
             theme: State::new(generate_state_id(), kureha_code::theme::Theme::Light),
+            theme_settings: Arc::new(Mutex::new(None)),
             minimap_visible: State::new(generate_state_id(), true),
             terminal_visible: State::new(generate_state_id(), false),
             terminal: kureha_code::terminal::Terminal::new(),
@@ -182,10 +185,21 @@ impl App {
         }
     }
     fn set_theme(&self, theme: kureha_code::theme::Theme) {
-        self.theme.set(theme);
+        self.theme.set(theme.clone());
         kureha_code::syntax::set_theme(theme);
         self.runtime.lock().unwrap().minimap.clear();
         self.changed();
+    }
+    fn document_font(&self) -> Option<FontStack> {
+        self.theme.get().editor_font().or_else(|| self.editor_font.clone())
+    }
+    fn select_editor_preset(&self, name: &str) {
+        let preset = match name {
+            "light" => Some(kureha_code::theme::Theme::Light),
+            "dark" => Some(kureha_code::theme::Theme::Dark),
+            name => kureha_code::theme::preset(name),
+        };
+        if let Some(preset) = preset { self.set_theme(self.theme.get().with_editor_theme(&preset)); }
     }
     fn toggle_minimap(&self) {
         self.minimap_visible.update(|shown| *shown = !*shown);
@@ -1387,6 +1401,7 @@ impl Application for App {
     }
     fn on_idle(&mut self) {
         self.terminal.poll();
+        self.poll_theme_settings();
         self.poll_menu();
         self.poll();
         self.poll_navigation();
@@ -1401,6 +1416,7 @@ impl Application for App {
 }
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
+    app.start_theme_settings();
     if let Some(path) = std::env::args_os().nth(1) {
         let path = PathBuf::from(path);
         // Startup runs before the event loop. All enumeration and file reads

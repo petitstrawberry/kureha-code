@@ -291,6 +291,22 @@ const COMMANDS: &[CommandDescriptor] = &[
         "appearance colors",
         ""
     ),
+    command!("theme-dracula", "Preferences: Color Theme — Dracula", "appearance colors", ""),
+    command!("theme-nord", "Preferences: Color Theme — Nord", "appearance colors", ""),
+    command!("theme-solarized-dark", "Preferences: Color Theme — Solarized Dark", "appearance colors", ""),
+    command!("theme-solarized-light", "Preferences: Color Theme — Solarized Light", "appearance colors", ""),
+    command!("theme-gruvbox-dark", "Preferences: Color Theme — Gruvbox Dark", "appearance colors", ""),
+    command!("theme-tokyo-night", "Preferences: Color Theme — Tokyo Night", "appearance colors", ""),
+    command!("editor-theme-light", "Preferences: Editor Color Theme — Light", "syntax colors", ""),
+    command!("editor-theme-dark", "Preferences: Editor Color Theme — Dark", "syntax colors", ""),
+    command!("editor-theme-dracula", "Preferences: Editor Color Theme — Dracula", "syntax colors", ""),
+    command!("editor-theme-nord", "Preferences: Editor Color Theme — Nord", "syntax colors", ""),
+    command!("editor-theme-solarized-dark", "Preferences: Editor Color Theme — Solarized Dark", "syntax colors", ""),
+    command!("editor-theme-solarized-light", "Preferences: Editor Color Theme — Solarized Light", "syntax colors", ""),
+    command!("editor-theme-gruvbox-dark", "Preferences: Editor Color Theme — Gruvbox Dark", "syntax colors", ""),
+    command!("editor-theme-tokyo-night", "Preferences: Editor Color Theme — Tokyo Night", "syntax colors", ""),
+    command!("theme-edit", "Preferences: Customize Theme…", "appearance colors settings toml", ""),
+    command!("theme-reload", "Preferences: Reload Custom Theme", "appearance colors settings", ""),
     command!("minimap", "View: Toggle Minimap", "overview", ""),
     command!(
         "terminal",
@@ -753,6 +769,22 @@ impl App {
             "split-down" => self.split_editor(true),
             "focus-other" => self.focus_other_group(),
             "close-split" => self.close_split(),
+            "theme-dracula" => self.set_theme(kureha_code::theme::preset("dracula").unwrap()),
+            "theme-nord" => self.set_theme(kureha_code::theme::preset("nord").unwrap()),
+            "theme-solarized-dark" => self.set_theme(kureha_code::theme::preset("solarized-dark").unwrap()),
+            "theme-solarized-light" => self.set_theme(kureha_code::theme::preset("solarized-light").unwrap()),
+            "theme-gruvbox-dark" => self.set_theme(kureha_code::theme::preset("gruvbox-dark").unwrap()),
+            "theme-tokyo-night" => self.set_theme(kureha_code::theme::preset("tokyo-night").unwrap()),
+            "editor-theme-light" => self.select_editor_preset("light"),
+            "editor-theme-dark" => self.select_editor_preset("dark"),
+            "editor-theme-dracula" => self.select_editor_preset("dracula"),
+            "editor-theme-nord" => self.select_editor_preset("nord"),
+            "editor-theme-solarized-dark" => self.select_editor_preset("solarized-dark"),
+            "editor-theme-solarized-light" => self.select_editor_preset("solarized-light"),
+            "editor-theme-gruvbox-dark" => self.select_editor_preset("gruvbox-dark"),
+            "editor-theme-tokyo-night" => self.select_editor_preset("tokyo-night"),
+            "theme-edit" => self.open_theme_settings(),
+            "theme-reload" => self.reload_theme_settings(),
             "theme-light" => self.set_theme(kureha_code::theme::Theme::Light),
             "theme-dark" => self.set_theme(kureha_code::theme::Theme::Dark),
             "minimap" => self.toggle_minimap(),
@@ -1108,7 +1140,7 @@ mod tests {
             // Label, detail column, and trailing blank space are one target.
             for offset in [20.0, 400.0, 590.0] {
                 let app = app_with_text("source");
-                app.set_theme(theme);
+                app.set_theme(theme.clone());
                 app.show_commands();
                 app.nav.query.set("minimap".into());
                 app.poll_navigation();

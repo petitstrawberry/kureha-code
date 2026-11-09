@@ -1,0 +1,26 @@
+name = "Solarized Dark"
+base = "dark"
+
+[colors]
+background = "#002b36"
+foreground = "#839496"
+surface = "#073642"
+elevated = "#073642"
+workspace = "#002b36"
+muted = "#586e75"
+border = "#073642"
+accent = "#268bd2"
+selection = "#073642"
+current_line = "#073642"
+minimap_viewport = "#268bd225"
+minimap_border = "#268bd280"
+
+[syntax]
+comment = "#586e75"
+string = "#2aa198"
+constant = "#b58900"
+number = "#d33682"
+keyword = "#859900"
+function = "#268bd2"
+type = "#b58900"
+tag = "#268bd2"

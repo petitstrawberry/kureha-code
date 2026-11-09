@@ -1,0 +1,42 @@
+# Save to apply. Invalid edits keep the last working theme.
+name = "My Theme"
+base = "dark" # light, dark, dracula, nord, solarized-dark/light, gruvbox-dark, tokyo-night
+
+[colors]
+workspace = "#131924"
+background = "#191c22"
+foreground = "#c8ccd3"
+elevated = "#282e38"
+accent = "#bc87e8"
+selection = "#554878b3"
+# Also: surface, muted, border, current_line, error, warning,
+# minimap_viewport, minimap_border. Colors accept #RRGGBB or #RRGGBBAA.
+
+[glass]
+pane_opacity = 0.58
+tab_opacity = 0.78
+popup_opacity = 0.92
+input_opacity = 0.78
+blur_radius = 18.0
+
+[syntax]
+comment = "#87a17d"
+keyword = "#cf97dc"
+string = "#e1a485"
+# Also: constant, number, function, type, tag.
+
+# Optional TextMate scope overrides:
+# [[syntax_rules]]
+# scope = "entity.name.function"
+# color = "#e1d396"
+
+[editor]
+# Independent from the sidebar, tabs and other application controls.
+theme = "tokyo-night"
+font_size = 14.0
+# font_family = "Menlo" # an installed family; default is bundled JetBrains Mono
+# font_file = "/path/to/YourFont.ttf" # alternative to font_family, TTF or OTF
+# background = "#1a1b26"
+# foreground = "#c0caf5"
+# selection = "#334466"
+# current_line = "#24283b"

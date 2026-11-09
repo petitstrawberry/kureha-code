@@ -1,0 +1,26 @@
+name = "Nord"
+base = "dark"
+
+[colors]
+background = "#2e3440"
+foreground = "#d8dee9"
+surface = "#3b4252"
+elevated = "#3b4252"
+workspace = "#2e3440"
+muted = "#4c566a"
+border = "#3b4252"
+accent = "#88c0d0"
+selection = "#3b4252"
+current_line = "#3b4252"
+minimap_viewport = "#88c0d025"
+minimap_border = "#88c0d080"
+
+[syntax]
+comment = "#616e88"
+string = "#a3be8c"
+constant = "#b48ead"
+number = "#b48ead"
+keyword = "#81a1c1"
+function = "#88c0d0"
+type = "#8fbcbb"
+tag = "#81a1c1"

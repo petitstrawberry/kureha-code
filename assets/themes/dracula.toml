@@ -1,0 +1,26 @@
+name = "Dracula"
+base = "dark"
+
+[colors]
+background = "#282a36"
+foreground = "#f8f8f2"
+surface = "#44475a"
+elevated = "#44475a"
+workspace = "#282a36"
+muted = "#6272a4"
+border = "#44475a"
+accent = "#bd93f9"
+selection = "#44475a"
+current_line = "#44475a"
+minimap_viewport = "#bd93f925"
+minimap_border = "#bd93f980"
+
+[syntax]
+comment = "#6272a4"
+string = "#f1fa8c"
+constant = "#bd93f9"
+number = "#bd93f9"
+keyword = "#ff79c6"
+function = "#50fa7b"
+type = "#8be9fd"
+tag = "#ff79c6"

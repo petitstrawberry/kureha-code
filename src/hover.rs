@@ -7,7 +7,12 @@ use scarlet_ui::{
     prelude::*,
     renderer::PaintContext,
 };
-use std::{any::Any, ops::Range, path::Path, sync::Arc};
+use std::{
+    any::Any,
+    ops::Range,
+    path::Path,
+    sync::{Arc, Mutex, OnceLock},
+};
 
 const PADDING: f32 = 14.0;
 const GAP: f32 = 10.0;
@@ -156,20 +161,29 @@ fn wrap(text: &str, width: f32, size: f32, font: Option<&FontStack>) -> Vec<Wrap
             .trim_end_matches('\r');
         let mut rest = line;
         while !rest.is_empty() {
-            let mut end = 0;
-            let mut word_end = 0;
-            for (index, ch) in rest.char_indices() {
-                let next = index + ch.len_utf8();
-                if measure(&rest[..next], size, font) > width && end > 0 {
-                    break;
-                }
-                end = next;
-                if ch.is_whitespace() || ",;".contains(ch) {
-                    word_end = next;
+            // Search UTF-8 boundaries instead of shaping every growing prefix.
+            let mut boundaries: Vec<_> =
+                rest.char_indices().map(|(i, c)| i + c.len_utf8()).collect();
+            let mut low = 0;
+            let mut high = boundaries.len();
+            while low < high {
+                let mid = (low + high) / 2;
+                if measure(&rest[..boundaries[mid]], size, font) <= width {
+                    low = mid + 1;
+                } else {
+                    high = mid;
                 }
             }
-            if end < rest.len() && word_end > 0 {
-                end = word_end;
+            let mut end = boundaries[low.saturating_sub(1)];
+            boundaries.clear();
+            if end < rest.len() {
+                if let Some((i, c)) = rest[..end]
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| c.is_whitespace() || ",;".contains(*c))
+                {
+                    end = i + c.len_utf8();
+                }
             }
             let value = rest[..end].trim_end();
             let start = line_start + line.len() - rest.len();
@@ -206,24 +220,63 @@ pub(super) struct HoverCard {
     blocks: Arc<Vec<Block>>,
     theme: Theme,
     font: Option<Arc<FontStack>>,
+    layouts: Arc<Mutex<Vec<(u32, Arc<(Vec<Section>, Size)>)>>>,
+    preferred: Arc<OnceLock<f32>>,
 }
 
 impl HoverCard {
     pub fn new(text: &str, theme: Theme, font: Option<FontStack>, path: Option<&Path>) -> Self {
         let mut blocks = blocks(text);
-        for block in &mut blocks {
+        // One cache entry per hover, independent of how many code examples it has.
+        let mut source = String::new();
+        let mut offsets = Vec::new();
+        for block in &blocks {
             if block.kind == Kind::Code {
-                block.spans = kureha_code::syntax::snippet_spans(path, &block.text, theme);
+                offsets.push(Some(source.len()));
+                source.push_str(&block.text);
+                source.push_str("\n\n");
+            } else {
+                offsets.push(None);
+            }
+        }
+        let spans = kureha_code::syntax::snippet_spans(path, &source, theme.clone());
+        for (block, offset) in blocks.iter_mut().zip(offsets) {
+            if let Some(offset) = offset {
+                for span in &spans {
+                    let start = span.range.start.max(offset);
+                    let end = span.range.end.min(offset + block.text.len());
+                    if start < end {
+                        let mut span = span.clone();
+                        span.range = start - offset..end - offset;
+                        block.spans.push(span);
+                    }
+                }
             }
         }
         Self {
             blocks: Arc::new(blocks),
             theme,
             font: font.map(Arc::new),
+            layouts: Arc::new(Mutex::new(Vec::new())),
+            preferred: Arc::new(OnceLock::new()),
         }
     }
 
-    fn layout(&self, width: f32) -> (Vec<Section>, Size) {
+    fn layout(&self, width: f32) -> Arc<(Vec<Section>, Size)> {
+        let key = width.to_bits();
+        if let Some((_, layout)) = self.layouts.lock().unwrap().iter().find(|(w, _)| *w == key) {
+            return layout.clone();
+        }
+        let result = Arc::new(self.measure_layout(width));
+        let mut layouts = self.layouts.lock().unwrap();
+        if layouts.len() == 8 {
+            layouts.remove(0);
+        }
+        layouts.push((key, result.clone()));
+        result
+    }
+
+    fn measure_layout(&self, width: f32) -> (Vec<Section>, Size) {
         let mut top = PADDING;
         let mut sections = Vec::new();
         for block in self.blocks.iter() {
@@ -248,6 +301,8 @@ impl HoverCard {
             );
             let color = if block.kind == Kind::Context {
                 self.theme.colors().muted
+            } else if block.kind == Kind::Code {
+                self.theme.editor_colors().foreground
             } else {
                 self.theme.colors().foreground
             };
@@ -272,19 +327,21 @@ impl HoverCard {
     }
 
     fn preferred_width(&self) -> f32 {
-        self.blocks
-            .iter()
-            .flat_map(|block| {
-                let font = (block.kind == Kind::Code)
-                    .then_some(self.font.as_deref())
-                    .flatten();
-                block
-                    .text
-                    .lines()
-                    .map(move |line| measure(line, 13.0, font) + PADDING * 2.0)
-            })
-            .fold(280.0, f32::max)
-            .min(520.0)
+        *self.preferred.get_or_init(|| {
+            self.blocks
+                .iter()
+                .flat_map(|block| {
+                    let font = (block.kind == Kind::Code)
+                        .then_some(self.font.as_deref())
+                        .flatten();
+                    block
+                        .text
+                        .lines()
+                        .map(move |line| measure(line, 13.0, font) + PADDING * 2.0)
+                })
+                .fold(280.0, f32::max)
+                .min(520.0)
+        })
     }
 }
 
@@ -323,7 +380,7 @@ struct Viewport {
 impl ElementRenderObject for Viewport {
     fn layout(&mut self, c: LayoutConstraints) -> Size {
         let width = self.card.preferred_width().min(c.max_width);
-        let (_, content) = self.card.layout(width);
+        let content = self.card.layout(width).1;
         self.size = Size::new(width, content.height.min(c.max_height));
         self.size
     }
@@ -365,7 +422,7 @@ impl View for Body {
             self.clone(),
             |view| BodyRenderer {
                 card: view.0.clone(),
-                sections: Vec::new(),
+                layout: Arc::new((Vec::new(), Size::ZERO)),
                 size: Size::ZERO,
             },
             |render, view| {
@@ -382,12 +439,13 @@ impl View for Body {
 
 struct BodyRenderer {
     card: HoverCard,
-    sections: Vec<Section>,
+    layout: Arc<(Vec<Section>, Size)>,
     size: Size,
 }
 impl ElementRenderObject for BodyRenderer {
     fn layout(&mut self, c: LayoutConstraints) -> Size {
-        (self.sections, self.size) = self.card.layout(c.max_width);
+        self.layout = self.card.layout(c.max_width);
+        self.size = self.layout.1;
         self.size
     }
     fn update_needs_layout(&self) -> bool {
@@ -407,9 +465,8 @@ impl ElementRenderObject for BodyRenderer {
         self
     }
     fn paint<'a>(&'a self, ctx: &mut PaintContext<'a>, origin: Point) -> bool {
-        let colors = self.card.theme.colors();
         ctx.push_clip(Rect::new(origin, self.size));
-        for section in &self.sections {
+        for section in &self.layout.0 {
             if section.kind == Kind::Code {
                 ctx.fill_rect(
                     Rect::from_xywh(
@@ -418,7 +475,11 @@ impl ElementRenderObject for BodyRenderer {
                         (self.size.width - 2.0).max(0.0),
                         section.height + GAP,
                     ),
-                    colors.current_line.with_opacity(0.45),
+                    self.card
+                        .theme
+                        .editor_colors()
+                        .background
+                        .with_opacity(0.92),
                 );
             }
             for (index, line) in section.lines.iter().enumerate() {
@@ -468,7 +529,7 @@ mod tests {
         loop {
             let card = HoverCard::new(
                 text,
-                theme,
+                theme.clone(),
                 kureha_code::fonts::editor_stack(),
                 Some(Path::new(path)),
             );
@@ -493,12 +554,47 @@ mod tests {
     }
 
     #[test]
+    fn many_code_examples_finish_highlighting_and_reuse_measured_layout() {
+        let text = (0..24).map(|i| format!("pub enum Example{i} {{ First, Second(u32) }}\n\nExample documentation with 日本語.\n\n")).collect::<String>();
+        let card = highlighted(&text, Theme::Dark);
+        assert_eq!(
+            card.blocks.iter().filter(|b| b.kind == Kind::Code).count(),
+            24
+        );
+        for _ in 0..16 {
+            let rebuilt = HoverCard::new(
+                &text,
+                Theme::Dark,
+                kureha_code::fonts::editor_stack(),
+                Some(Path::new("hover.rs")),
+            );
+            assert!(
+                rebuilt
+                    .blocks
+                    .iter()
+                    .filter(|b| b.kind == Kind::Code)
+                    .all(|b| !b.spans.is_empty()),
+                "rebuilding must not evict this hover's own examples"
+            );
+        }
+        let first = card.layout(520.0);
+        for _ in 0..100 {
+            assert!(
+                Arc::ptr_eq(&first, &card.clone().layout(520.0)),
+                "viewport and body must share text shaping"
+            );
+        }
+        assert!(first.1.height > 340.0);
+    }
+
+    #[test]
     fn hover_highlights_code_in_both_themes_and_preserves_wrapped_unicode_ranges() {
         let text = "pub fn greet() {\n    let message = \"こんにちは🍁日本語の長い文字列を折り返しても色を保つ\";\n}\n\nOrdinary documentation remains uncolored.";
         let mut colors = Vec::new();
         for theme in Theme::ALL {
-            let card = highlighted(text, theme);
-            let (sections, _) = card.layout(180.0);
+            let card = highlighted(text, theme.clone());
+            let layout = card.layout(180.0);
+            let sections = &layout.0;
             let code = &card.blocks[0];
             let color_at = |byte| {
                 code.spans
@@ -512,7 +608,7 @@ mod tests {
             assert_ne!(keyword, string);
             colors.push(keyword);
             let mut string_lines = 0;
-            for section in &sections {
+            for section in sections {
                 let source = if section.kind == Kind::Code {
                     &card.blocks[0].text
                 } else {
@@ -598,7 +694,7 @@ mod tests {
     }
 
     fn mounted(text: &str, theme: Theme) -> RenderingPipeline {
-        let card = highlighted(text, theme);
+        let card = highlighted(text, theme.clone());
         let overlay = crate::popup::Anchored::new(
             card,
             State::new(generate_state_id(), Point::new(50.0, 30.0)),
@@ -644,7 +740,7 @@ mod tests {
             card.blocks.iter().map(|b| b.kind).collect::<Vec<_>>(),
             [Kind::Context, Kind::Code, Kind::Prose, Kind::Prose]
         );
-        let (_, size) = card.layout(520.0);
+        let size = card.layout(520.0).1;
         assert!(size.height < 260.0, "excessive blank space: {size:?}");
         let short = mounted("A short description.", Theme::Light);
         assert!(body(short.element_tree().root().unwrap()).0.height < 80.0);
@@ -679,7 +775,7 @@ mod tests {
     #[test]
     fn hover_renders_both_themes() {
         for theme in Theme::ALL {
-            let mut pipeline = mounted(EXAMPLE, theme);
+            let mut pipeline = mounted(EXAMPLE, theme.clone());
             let buffer = pipeline.render().expect("hover must paint");
             assert!(
                 buffer

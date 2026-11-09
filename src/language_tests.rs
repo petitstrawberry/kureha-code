@@ -1,13 +1,112 @@
 use super::*;
 
 #[test]
+fn long_hover_remains_responsive_to_escape_after_layout() {
+    use scarlet_ui::pipeline::RenderingPipeline;
+    let app = App::new();
+    let text = (0..28).map(|i| format!("pub enum Example{i} {{ First, Second(u32) }}\n\nLong documentation with several code examples and unicode 猫.\n\n")).collect();
+    app.runtime.lock().unwrap().language.panel = Panel::Hover(text);
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_paint_enabled(false);
+    pipeline.set_root(
+        Window::new("Long hover", app.content())
+            .decorated(false)
+            .size(Size::new(1240.0, 960.0))
+            .create_element(),
+    );
+    let start = Instant::now();
+    pipeline.layout_initial();
+    pipeline.render();
+    assert!(pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+        keycode: KeyCode::Escape,
+        modifiers: Default::default()
+    })));
+    assert!(matches!(
+        app.runtime.lock().unwrap().language.panel,
+        Panel::Closed
+    ));
+    eprintln!(
+        "long-hover full workbench layout + Escape: {:?}",
+        start.elapsed()
+    );
+    pipeline.teardown();
+}
+
+#[test]
+fn long_hover_scrolls_repeatedly_inside_the_workbench() {
+    use scarlet_ui::{
+        event::{MouseEvent, ScrollSource, WheelPhase},
+        pipeline::RenderingPipeline,
+    };
+    let app = App::new();
+    app.runtime.lock().unwrap().language.panel = Panel::Hover((0..28).map(|i| format!("pub enum Example{i} {{ First, Second(u32) }}\n\nLong documentation with several code examples and unicode 猫.\n\n")).collect());
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_root(
+        Window::new("Hover scroll", app.content())
+            .decorated(false)
+            .size(Size::new(1240.0, 960.0))
+            .create_element(),
+    );
+    pipeline.layout_initial();
+    pipeline.render();
+    fn body(e: &dyn Element, origin: Point) -> Option<Point> {
+        let absolute = Point::new(origin.x + e.position().x, origin.y + e.position().y);
+        if e.type_name_debug()
+            .ends_with(", kureha_code::hover::BodyRenderer>")
+        {
+            return Some(absolute);
+        }
+        e.children()
+            .iter()
+            .find_map(|child| body(child.as_ref(), absolute))
+    }
+    let origin = body(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
+    let start = Instant::now();
+    for direction in [-1, 1] {
+        for _ in 0..3 {
+            assert!(pipeline.handle_event(&Event::Mouse(MouseEvent::Wheel {
+                delta_x: 0,
+                delta_y: direction * 30,
+                x: (origin.x + 50.0) as i32,
+                y: (origin.y + 50.0) as i32,
+                phase: WheelPhase::Moved,
+                source: ScrollSource::Trackpad
+            })));
+            pipeline.render();
+        }
+        let offset = body(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
+        if direction < 0 {
+            assert!(offset.y < origin.y, "{offset:?} / {origin:?}");
+        } else {
+            assert!((offset.y - origin.y).abs() < 1.0);
+        }
+    }
+    assert!(pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+        keycode: KeyCode::Escape,
+        modifiers: Default::default()
+    })));
+    assert!(matches!(
+        app.runtime.lock().unwrap().language.panel,
+        Panel::Closed
+    ));
+    eprintln!(
+        "6 hover scroll frames including paint: {:?}",
+        start.elapsed()
+    );
+    pipeline.teardown();
+}
+
+#[test]
 fn hover_overlay_preserves_the_editor_bounds_document_and_selection() {
     use scarlet_ui::pipeline::RenderingPipeline;
     let app = App::new();
     let id = app.active_id();
     let bindings = app.bindings(id).unwrap();
-    let window = || Window::new("Hover integration", app.content())
-        .decorated(false).size(Size::new(1100.0, 760.0));
+    let window = || {
+        Window::new("Hover integration", app.content())
+            .decorated(false)
+            .size(Size::new(1100.0, 760.0))
+    };
     let mut pipeline = RenderingPipeline::new();
     pipeline.set_paint_enabled(false);
     pipeline.set_root(window().create_element());
@@ -18,18 +117,30 @@ fn hover_overlay_preserves_the_editor_bounds_document_and_selection() {
         if e.type_name_debug().contains("TextViewRenderObject") {
             return Some((e.id(), Rect::new(origin, e.bounds().size)));
         }
-        e.children().iter().find_map(|child| editor(child.as_ref(), origin))
+        e.children()
+            .iter()
+            .find_map(|child| editor(child.as_ref(), origin))
     }
     let original = editor(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
     let selection = bindings.selection.get();
     let text = bindings.document.get();
-    for panel in [Panel::Hover("sample\n\npub fn example()\n\nDocumentation.".into()), Panel::Closed] {
+    for panel in [
+        Panel::Hover("sample\n\npub fn example()\n\nDocumentation.".into()),
+        Panel::Closed,
+    ] {
         app.runtime.lock().unwrap().language.panel = panel;
         app.language_anchor.set(Point::new(100.0, 100.0));
-        pipeline.element_tree_mut().root_mut().unwrap().update(&window());
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
         pipeline.layout_initial();
         pipeline.render();
-        assert_eq!(editor(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap(), original);
+        assert_eq!(
+            editor(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap(),
+            original
+        );
         assert_eq!(bindings.selection.get(), selection);
         assert_eq!(bindings.document.get().as_str(), text.as_str());
     }

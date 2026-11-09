@@ -206,7 +206,7 @@ mod row_tests {
         for theme in kureha_code::theme::Theme::ALL {
             for offset in [35.0, 280.0] {
                 let app = App::new();
-                app.set_theme(theme);
+                app.set_theme(theme.clone());
                 assert!(app.runtime.lock().unwrap().explorer.set_root(
                     0,
                     PathBuf::from("/project/artifacts"),
@@ -545,6 +545,7 @@ impl App {
         let hovering = self.clone();
         let definition = self.clone();
         let theme = self.theme.get();
+        let font = self.document_font();
         let (styles, fallback, minimap) = {
             let rt = self.runtime.lock().unwrap();
             let doc = rt.workspace.get(id).unwrap();
@@ -600,7 +601,7 @@ impl App {
             .line_numbers(true)
             .current_line_highlight(true)
             .tab_mode(TabMode::Spaces(4))
-            .font_size(14.0)
+            .font_size(theme.editor_font_size())
             .padding(10.0)
             .reveal_selection_on_change(true)
             .border_color(Color::TRANSPARENT)
@@ -617,7 +618,7 @@ impl App {
             .borderless()
             .border_color(Color::TRANSPARENT)
             .focused_border_color(Color::TRANSPARENT);
-        let editor = if let Some(stack) = &self.editor_font {
+        let editor = if let Some(stack) = &font {
             editor.font_stack(stack.clone())
         } else {
             editor
@@ -676,12 +677,12 @@ impl App {
             hstack! {
                 ZStack::new((editor,if_view!(self.focused_group.get()==group,self.language_popup(),VStack::new(())),if_view!(self.find_open.get() && self.focused_group.get()==group,super::popup::Anchored::top_right(self.find_view()),VStack::new(())))).alignment(Alignment::TopLeading)
                     .frame(f32::INFINITY,f32::INFINITY),
-                kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme).width(if self.second.get().is_some() {54.0} else {100.0}).enabled(show_minimap).line_height(self.editor_font.as_ref().map_or_else(||scarlet_ui::graphics::line_height_sized(14.0),|font|scarlet_ui::graphics::line_height_sized_with_font_stack(14.0,font)) as f32).view(),
+                kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme.clone()).width(if self.second.get().is_some() {54.0} else {100.0}).enabled(show_minimap).line_height(font.as_ref().map_or_else(||scarlet_ui::graphics::line_height_sized(theme.editor_font_size()),|font|scarlet_ui::graphics::line_height_sized_with_font_stack(theme.editor_font_size(),font)) as f32).view(),
             }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY),
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY))
-        .fill(theme.colors().background).corner_radius(12.0).clip_content(true)
+        .fill(theme.editor_colors().background).corner_radius(12.0).clip_content(true)
         .padding_insets(EdgeInsets::new(4.0, 0.0, 4.0, 4.0))
     }
     fn explorer_view(&self) -> impl View + Clone + use<> {
@@ -922,12 +923,28 @@ impl App {
                     App::close_split,
                 ),
                 MenuEntry::Separator,
-                self.item("theme-light", "Color Theme: Light", "", |a| {
-                    a.set_theme(kureha_code::theme::Theme::Light)
-                }),
-                self.item("theme-dark", "Color Theme: Dark", "", |a| {
-                    a.set_theme(kureha_code::theme::Theme::Dark)
-                }),
+                self.item("theme-edit", "Customize Theme…", "", App::open_theme_settings),
+                self.item("theme-reload", "Reload Custom Theme", "", App::reload_theme_settings),
+                MenuEntry::Item(MenuItemModel::new("color-themes", "Color Theme").children(vec![
+                    self.item("theme-light", "Light", "", |a| a.set_theme(kureha_code::theme::Theme::Light)),
+                    self.item("theme-dark", "Dark", "", |a| a.set_theme(kureha_code::theme::Theme::Dark)),
+                    self.item("theme-dracula", "Dracula", "", |a| a.set_theme(kureha_code::theme::preset("dracula").unwrap())),
+                    self.item("theme-nord", "Nord", "", |a| a.set_theme(kureha_code::theme::preset("nord").unwrap())),
+                    self.item("theme-solarized-dark", "Solarized Dark", "", |a| a.set_theme(kureha_code::theme::preset("solarized-dark").unwrap())),
+                    self.item("theme-solarized-light", "Solarized Light", "", |a| a.set_theme(kureha_code::theme::preset("solarized-light").unwrap())),
+                    self.item("theme-gruvbox-dark", "Gruvbox Dark", "", |a| a.set_theme(kureha_code::theme::preset("gruvbox-dark").unwrap())),
+                    self.item("theme-tokyo-night", "Tokyo Night", "", |a| a.set_theme(kureha_code::theme::preset("tokyo-night").unwrap())),
+                ])),
+                MenuEntry::Item(MenuItemModel::new("editor-color-themes", "Editor Color Theme").children(vec![
+                    self.item("editor-theme-light", "Light", "", |a| a.select_editor_preset("light")),
+                    self.item("editor-theme-dark", "Dark", "", |a| a.select_editor_preset("dark")),
+                    self.item("editor-theme-dracula", "Dracula", "", |a| a.select_editor_preset("dracula")),
+                    self.item("editor-theme-nord", "Nord", "", |a| a.select_editor_preset("nord")),
+                    self.item("editor-theme-solarized-dark", "Solarized Dark", "", |a| a.select_editor_preset("solarized-dark")),
+                    self.item("editor-theme-solarized-light", "Solarized Light", "", |a| a.select_editor_preset("solarized-light")),
+                    self.item("editor-theme-gruvbox-dark", "Gruvbox Dark", "", |a| a.select_editor_preset("gruvbox-dark")),
+                    self.item("editor-theme-tokyo-night", "Tokyo Night", "", |a| a.select_editor_preset("tokyo-night")),
+                ])),
                 MenuEntry::Separator,
                 self.item(
                     "minimap",

@@ -6,11 +6,12 @@ use scarlet_ui::prelude::{
 };
 use syntect::highlighting::{Color as SyntaxColor, StyleModifier, Theme as SyntaxTheme, ThemeItem};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Theme {
     #[default]
     Light,
     Dark,
+    Custom(std::sync::Arc<CustomTheme>),
 }
 
 /// Colors for editor and workbench chrome, derived from ScarletUI's palette.
@@ -34,39 +35,65 @@ pub struct WorkbenchColors {
 impl Theme {
     pub const ALL: [Self; 2] = [Self::Light, Self::Dark];
 
-    pub const fn name(self) -> &'static str {
+    pub fn name(&self) -> &str {
         match self {
             Self::Light => "Light",
             Self::Dark => "Dark",
+            Self::Custom(theme) => &theme.name,
         }
     }
 
-    pub const fn toggle(self) -> Self {
+    pub fn toggle(&self) -> Self {
         match self {
             Self::Light => Self::Dark,
             Self::Dark => Self::Light,
+            Self::Custom(theme) => {
+                if theme.dark {
+                    Self::Light
+                } else {
+                    Self::Dark
+                }
+            }
         }
     }
 
-    pub const fn scheme(self) -> ColorScheme {
+    pub fn scheme(&self) -> ColorScheme {
         match self {
             Self::Light => ColorScheme::Light,
             Self::Dark => ColorScheme::Dark,
+            Self::Custom(theme) => {
+                if theme.dark {
+                    ColorScheme::Dark
+                } else {
+                    ColorScheme::Light
+                }
+            }
         }
     }
 
-    pub fn palette(self) -> ColorPalette {
+    pub fn palette(&self) -> ColorPalette {
         match self {
             Self::Light => ColorPalette::light(),
             Self::Dark => ColorPalette::dark(),
+            Self::Custom(theme) => {
+                if theme.dark {
+                    ColorPalette::dark()
+                } else {
+                    ColorPalette::light()
+                }
+            }
         }
     }
 
-    pub fn colors(self) -> WorkbenchColors {
+    pub fn colors(&self) -> WorkbenchColors {
+        if let Self::Custom(theme) = self {
+            return theme.colors;
+        }
         let p = self.palette();
         let foreground = match self {
             Self::Light => Color::rgb(36, 41, 47),
             Self::Dark => Color::rgb(200, 204, 211),
+            Self::Custom(_) => unreachable!(),
         };
         let accent = p.primary();
         let mut colors = WorkbenchColors {
@@ -84,7 +111,7 @@ impl Theme {
             error: p.error(),
             warning: p.warning(),
         };
-        if self == Self::Dark {
+        if self == &Self::Dark {
             colors.background = Color::rgb(25, 28, 34);
             colors.surface = Color::rgb(33, 39, 49);
             colors.elevated = Color::rgb(40, 46, 56);
@@ -104,40 +131,87 @@ impl Theme {
     }
 
     /// The exposed workspace behind the inset panes.
-    pub fn workspace_background(self) -> Color {
+    pub fn workspace_background(&self) -> Color {
         match self {
             Self::Light => Color::rgb(222, 230, 241),
             Self::Dark => Color::rgb(19, 25, 36),
+            Self::Custom(theme) => theme.workspace,
         }
     }
 
     /// Glass pane, with a rim and a restrained shadow above the workspace.
-    pub fn chrome_style(self) -> SurfaceStyle {
+    pub fn chrome_style(&self) -> SurfaceStyle {
         SurfaceStyle::bubble_glass()
-            .material(GlassMaterial::regular().tint(self.colors().elevated.with_opacity(0.58)))
+            .material(self.glass_material(0))
             .elevation(ElevationRole::Raised)
     }
 
-    pub fn tab_style(self) -> SurfaceStyle {
+    pub fn tab_style(&self) -> SurfaceStyle {
         SurfaceStyle::bubble_glass()
-            .material(GlassMaterial::regular().tint(self.colors().elevated.with_opacity(0.78)))
+            .material(self.glass_material(1))
             .elevation(ElevationRole::Raised)
     }
 
     /// Denser glass keeps transient text readable over source code.
-    pub fn popup_style(self) -> SurfaceStyle {
+    pub fn popup_style(&self) -> SurfaceStyle {
         SurfaceStyle::bubble_glass()
-            .material(GlassMaterial::regular().tint(self.colors().elevated.with_opacity(0.84)))
+            .material(self.glass_material(2))
             .elevation(ElevationRole::Floating)
     }
 
-    pub fn input_material(self) -> GlassMaterial {
-        GlassMaterial::editing().tint(self.colors().elevated.with_opacity(0.78))
+    pub fn input_material(&self) -> GlassMaterial {
+        self.glass_material(3)
+    }
+
+    fn glass_material(&self, index: usize) -> GlassMaterial {
+        let (opacity, blur) = match self {
+            Self::Custom(theme) => (theme.opacity[index], theme.blur),
+            _ => ([0.58, 0.78, 0.84, 0.78][index], 18.0),
+        };
+        GlassMaterial::new(blur, self.colors().elevated.with_opacity(opacity))
+    }
+
+    /// Editor colors may differ from the surrounding workbench.
+    pub fn editor_colors(&self) -> WorkbenchColors {
+        match self {
+            Self::Custom(t) => t.editor_colors,
+            _ => self.colors(),
+        }
+    }
+    pub fn editor_font_size(&self) -> f32 {
+        match self {
+            Self::Custom(t) => t.font_size,
+            _ => 14.0,
+        }
+    }
+    pub fn editor_font(&self) -> Option<scarlet_ui::FontStack> {
+        match self {
+            Self::Custom(t) => t.font_stack.clone(),
+            _ => None,
+        }
+    }
+    /// Resolve the configured font off the UI thread before publishing this revision.
+    pub fn prepare_font(mut self, directory: &std::path::Path) -> Result<Self, String> {
+        if let Self::Custom(theme) = &mut self {
+            let font = crate::fonts::configured_stack(
+                theme.font_family.as_deref(),
+                theme.font_file.as_deref(),
+                directory,
+            )?;
+            std::sync::Arc::make_mut(theme).font_stack = font;
+        }
+        Ok(self)
+    }
+    pub fn with_editor_theme(&self, editor: &Theme) -> Theme {
+        let mut combined = custom::definition(self);
+        combined.editor_colors = editor.editor_colors();
+        combined.syntax = editor.syntect_theme();
+        Theme::Custom(std::sync::Arc::new(combined))
     }
 
     /// Preserves document, selection, scroll bindings, and decorations.
-    pub fn style_text_view(self, view: TextView) -> TextView {
-        let c = self.colors();
+    pub fn style_text_view(&self, view: TextView) -> TextView {
+        let c = self.editor_colors();
         view.background(c.background)
             .text_color(c.foreground)
             .placeholder_color(c.muted)
@@ -148,7 +222,10 @@ impl Theme {
     }
 
     /// Lexical token colors and the editor's neutral foreground share one model.
-    pub(crate) fn syntect_theme(self) -> SyntaxTheme {
+    pub(crate) fn syntect_theme(&self) -> SyntaxTheme {
+        if let Self::Custom(theme) = self {
+            return theme.syntax.clone();
+        }
         let mut theme = SyntaxTheme::default();
         theme.settings.foreground = Some(syntax_color(self.colors().foreground));
         theme.settings.background = Some(syntax_color(self.colors().background));
@@ -173,6 +250,7 @@ impl Theme {
                 [99, 201, 184],
                 [112, 177, 241],
             ],
+            Self::Custom(_) => unreachable!(),
         };
         for (scopes, index) in [
             ("comment", 0),
@@ -246,3 +324,9 @@ mod tests {
         assert_ne!(Theme::Light.colors(), Theme::Dark.colors());
     }
 }
+
+mod custom;
+pub use custom::{CustomTheme, THEME_TEMPLATE, parse_theme, theme_path};
+
+mod presets;
+pub use presets::{PRESETS, preset};

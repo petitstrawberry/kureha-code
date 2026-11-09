@@ -17,7 +17,6 @@ use std::{
 };
 use syntect::{
     easy::HighlightLines,
-    highlighting::Theme,
     parsing::{SyntaxDefinition, SyntaxReference, SyntaxSet},
     util::LinesWithEndings,
 };
@@ -139,7 +138,7 @@ impl Cache {
                 key: key.clone(),
                 cancel: cancel.clone(),
                 text: text.to_owned(),
-                theme: self.theme,
+                theme: self.theme.clone(),
             });
             Highlight::default()
         };
@@ -232,7 +231,7 @@ struct Snippets {
     sources: Mutex<VecDeque<SnippetSource>>,
     next_id: AtomicU64,
 }
-static SNIPPETS: [OnceLock<Snippets>; 2] = [const { OnceLock::new() }; 2];
+static SNIPPETS: [OnceLock<Snippets>; 3] = [const { OnceLock::new() }; 3];
 
 /// Bounded, asynchronous hover highlighting with the editor's grammars/colors.
 /// Each theme has a small independent cache so hovers cannot evict documents
@@ -241,12 +240,13 @@ pub fn snippet_spans(path: Option<&Path>, text: &str, theme: EditorTheme) -> Vec
     if text.len() > 20_000 || text.is_empty() {
         return Vec::new();
     }
-    let snippets = SNIPPETS[match theme {
+    let snippets = SNIPPETS[match &theme {
         EditorTheme::Light => 0,
         EditorTheme::Dark => 1,
+        EditorTheme::Custom(_) => 2,
     }]
     .get_or_init(|| Snippets {
-        service: Service::with_theme(theme),
+        service: Service::with_theme(theme.clone()),
         sources: Mutex::new(VecDeque::new()),
         next_id: AtomicU64::new(1),
     });
@@ -274,13 +274,11 @@ pub fn snippet_spans(path: Option<&Path>, text: &str, theme: EditorTheme) -> Vec
         sources.push_back(source);
         id
     };
-    let spans = snippets
-        .service
-        .shared
-        .0
-        .lock()
-        .unwrap()
-        .request(id, 0, path, text);
+    let spans = {
+        let mut cache = snippets.service.shared.0.lock().unwrap();
+        cache.set_theme(theme);
+        cache.request(id, 0, path, text)
+    };
     snippets.service.shared.1.notify_one();
     spans
 }
@@ -329,7 +327,7 @@ pub fn set_theme(theme: EditorTheme) -> bool {
 
 pub fn theme() -> EditorTheme {
     SERVICE.get().map_or(EditorTheme::default(), |service| {
-        service.shared.0.lock().unwrap().theme
+        service.shared.0.lock().unwrap().theme.clone()
     })
 }
 
@@ -358,7 +356,7 @@ pub fn cached(id: u64, revision: u64, path: Option<&Path>) -> Option<Snapshot> {
     Some(Snapshot {
         highlight: entry.highlight.clone(),
         generation: entry.generation,
-        theme: cache.theme,
+        theme: cache.theme.clone(),
     })
 }
 
@@ -378,7 +376,6 @@ pub fn fallback_reason(id: u64, revision: u64, path: Option<&Path>) -> Option<&'
 
 struct Catalog {
     syntaxes: SyntaxSet,
-    themes: [Theme; 2],
 }
 impl Catalog {
     fn new() -> Self {
@@ -391,10 +388,6 @@ impl Catalog {
         }
         Self {
             syntaxes: builder.build(),
-            themes: [
-                EditorTheme::Light.syntect_theme(),
-                EditorTheme::Dark.syntect_theme(),
-            ],
         }
     }
 
@@ -425,11 +418,8 @@ impl Catalog {
         if syntax.name == "Plain Text" {
             return Highlight::default();
         }
-        let theme = &self.themes[match request.theme {
-            EditorTheme::Light => 0,
-            EditorTheme::Dark => 1,
-        }];
-        let mut parser = HighlightLines::new(syntax, theme);
+        let theme = request.theme.syntect_theme();
+        let mut parser = HighlightLines::new(syntax, &theme);
         let neutral = theme.settings.foreground;
         let started = Instant::now();
         let mut result = Highlight::default();
@@ -889,6 +879,21 @@ mod tests {
             assert!(result.fallback.is_some());
         }
     }
+    #[test]
+    fn custom_palette_reload_rejects_old_jobs_and_uses_new_token_colors() {
+        let mut cache = Cache::default();
+        cache.set_theme(crate::theme::parse_theme("[syntax]\nkeyword='#112233'").unwrap());
+        cache.request(1, 0, Some(Path::new("main.rs")), "fn main() {}");
+        let old = cache.pending.pop_front().unwrap();
+        cache.set_theme(crate::theme::parse_theme("[syntax]\nkeyword='#aabbcc'").unwrap());
+        assert!(!cache.publish(&old, catalog().highlight(&old)));
+        cache.request(1, 0, Some(Path::new("main.rs")), "fn main() {}");
+        let fresh = cache.pending.pop_front().unwrap();
+        let colors = catalog().highlight(&fresh);
+        assert_eq!(color_at(&colors, 0), Some(Color::rgb(170,187,204)));
+        assert!(cache.publish(&fresh, colors));
+    }
+
     #[test]
     fn theme_switch_cancels_pending_and_inflight_and_rejects_roundtrip_results() {
         let mut cache = Cache::default();

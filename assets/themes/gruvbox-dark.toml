@@ -1,0 +1,26 @@
+name = "Gruvbox Dark"
+base = "dark"
+
+[colors]
+background = "#282828"
+foreground = "#ebdbb2"
+surface = "#3c3836"
+elevated = "#3c3836"
+workspace = "#282828"
+muted = "#928374"
+border = "#3c3836"
+accent = "#fabd2f"
+selection = "#3c3836"
+current_line = "#3c3836"
+minimap_viewport = "#fabd2f25"
+minimap_border = "#fabd2f80"
+
+[syntax]
+comment = "#928374"
+string = "#b8bb26"
+constant = "#d3869b"
+number = "#d3869b"
+keyword = "#fb4934"
+function = "#b8bb26"
+type = "#fabd2f"
+tag = "#83a598"

@@ -26,6 +26,44 @@ expression modes, wraps in either direction, and works on the active document.
 Regular-expression replacements support capture groups. LF is used internally; CRLF input is saved as CRLF. Opened
 files and Replace All results are limited to 16 MiB. The editor provides syntax colors, file-kind icons, language-server diagnostics, completion, definition navigation and hover information. Extensions are not implemented.
 
+## Themes and editor typography
+
+View → Color Theme selects the workbench palette. View → Editor Color Theme
+changes only the document area and its syntax colors. Bundled choices are Light,
+Dark, Dracula, Nord, Solarized Dark/Light, Gruvbox Dark and Tokyo Night.
+Menu choices apply for the current session.
+
+For persistent settings, choose View → Customize Theme… and save the generated
+TOML file. Changes reload automatically; invalid edits keep the last working
+configuration and show an error in the status bar. The default location is
+`~/.config/kureha-code/theme.toml` (or `$XDG_CONFIG_HOME/kureha-code/theme.toml`).
+`KUREHA_THEME` selects a different file. View → Reload Custom Theme reloads it
+explicitly, including a changed font file.
+
+For example, this keeps the surrounding interface light while giving only the
+editor Tokyo Night colors and an installed monospace font:
+
+```toml
+name = "My workspace"
+base = "light"
+
+[editor]
+theme = "tokyo-night"
+font_family = "Menlo"
+font_size = 16.0
+```
+
+Use `font_file = "/path/to/font.ttf"` instead of `font_family` to load a TTF/OTF;
+relative paths resolve beside the theme file, and `~/` is supported. Font size
+accepts 8–48 logical pixels. Omitting both font settings uses bundled JetBrains
+Mono with the existing fallback fonts. Menus, sidebar and terminal retain their
+own typography. Editor colors also apply to the minimap and hover code examples.
+
+[The complete example](assets/theme.toml) documents workbench/editor color,
+glass opacity/blur, syntax category and TextMate scope overrides. Custom colors
+accept `#RRGGBB` or `#RRGGBBAA`. [Palette sources and licenses](assets/themes/README.md)
+are included with the presets; these are Kureha mappings of those palettes.
+
 ## Desktop development
 
 Enter the Nix development shell before building:

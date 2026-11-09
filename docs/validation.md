@@ -255,3 +255,45 @@ captures are `9-lines.png` and `10-lines.png` in
 `../Scarlet/artifacts/kureha-gutter-20261024/`. The fixture was opened via the
 startup file argument after native file-dialog automation did not complete.
 This observation is host UI verification, not a Scarlet-native UI run.
+
+## Custom themes and hover responsiveness — 2026-11-09
+
+The theme settings worker loads TOML palettes and editor fonts outside the UI
+thread. Six bundled palette variants supplement Light/Dark; editor colors and
+font settings can differ from the surrounding workbench. Invalid and atomic
+saves, independent editor overrides and stale syntax-job rejection are covered.
+Settings examples and palette attribution are in `assets/theme.toml` and
+`assets/themes/README.md`.
+
+The initial hung-process sample was dominated by layout text measurement and
+parsed font-table cloning. Hover wrapping now searches UTF-8 boundaries, viewport
+and body share measured layouts, and code blocks use one asynchronous highlight
+request per hover (avoiding eviction churn after eight code blocks). ScarletUI
+PR #89 shares font faces and adds owned/installed-family font stacks.
+
+Validation on macOS AArch64:
+
+- `cargo test --lib --bin kureha-code`: 176 passed, 4 optional/manual cases ignored.
+- Pinned dependency `cargo check` and `cargo build --release --locked --offline` passed.
+  Both full-workbench hover tests also passed in release mode: initial layout
+  plus Escape took about 269 ms; six CPU-painted scroll frames took about 390 ms.
+- ScarletUI graphics tests: 20 passed, including owned font lifetime, fallback
+  and cache-identity coverage.
+- A 28-code-block hover test finishes highlighting and reuses measured layouts.
+  Full-workbench tests exercise Escape and scroll down/up inside the hover,
+  checking hover content movement and subsequent dismissal with painting enabled.
+- The manual preview generator produced 17 CPU-rendered fixtures: ten existing
+  Light/Dark scenes, six bundled palettes and a light workbench with a dark
+  editor and 18 px font. Representative fixtures are `screenshots/theme-dracula.png`
+  and `screenshots/theme-editor-only.png`.
+- Native winit/WGPU verification loaded Menlo at 18 px only in the editor,
+  opened rust-analyzer documentation for `std::fmt::Debug`, scrolled down through
+  multiple pages and back up, dismissed with Escape and moved the editor caret.
+
+The user also reported a hang specifically while scrolling inside hover text.
+A later sample of the user's process was idle; it did not capture that hang.
+The native reproduction above remained responsive. The CPU debug integration
+fixture spends roughly 1.1 seconds per painted scroll frame, mostly in backdrop
+painting; this is not a native GPU frame-time measurement. These checks do not
+establish that every reported hang has been eliminated. Scarlet-native runtime
+verification is still outstanding.
