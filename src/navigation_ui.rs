@@ -468,8 +468,11 @@ impl App {
         let original = self.nav.preview_original.lock().unwrap().take();
         let was_open = self.nav.is_open();
         self.nav.close();
-        if was_open && std::mem::take(&mut self.runtime.lock().unwrap().panel_return_focus) {
-            self.terminal.focus();
+        if was_open {
+            let session = self.runtime.lock().unwrap().terminal_return_focus.take();
+            if let Some(id) = session {
+                self.terminal.select(id);
+            }
         }
         if let Some(original) = original {
             if self.theme.get() != original {
@@ -576,7 +579,8 @@ impl App {
         self.find_open.set(false);
         self.project.close();
         self.close_navigation();
-        self.runtime.lock().unwrap().panel_return_focus = self.terminal_focused();
+        self.runtime.lock().unwrap().terminal_return_focus =
+            self.terminal.focused_session().map(|session| session.id);
         self.blur_terminals();
         if matches!(mode, Mode::Themes { .. }) {
             *self.nav.preview_original.lock().unwrap() = Some(self.theme.get());
@@ -1071,7 +1075,7 @@ impl App {
                 }
             }
             "panel" => self.toggle_panel(),
-            "restart-terminal" => self.terminal.restart(),
+            "restart-terminal" => self.restart_terminal(),
             "new-terminal" => self.new_terminal(),
             "problems" => self.show_problems(),
             "definition" => self.language_request("textDocument/definition"),

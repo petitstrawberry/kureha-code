@@ -116,7 +116,7 @@ impl App {
             self.focused_group.set(group);
             self.dismiss_language_panel();
         }
-        self.blur_terminals();
+        self.focus_group_terminal(group);
     }
     pub(super) fn allocate_group(&self, id: TabId) -> usize {
         let group = self.panes.get().len();
@@ -139,6 +139,10 @@ impl App {
         let Some(id) = self.group_id(source) else {
             return;
         };
+        if self.terminal.for_tab(id).is_some() {
+            self.split_terminal(id, down);
+            return;
+        }
         let group = self.add_group(
             id,
             source,
@@ -192,6 +196,7 @@ impl App {
         self.focus_group(target);
         if let Some(active) = active {
             self.set_group_id(target, active);
+            self.focus_group_terminal(target);
         }
         self.status
             .set("Pane closed; tabs moved to neighbour".into());
@@ -263,6 +268,7 @@ impl App {
             if next.is_none() {
                 self.retire_empty_group(group);
             }
+            self.focus_group_terminal(self.focused_group.get());
         }
         self.changed();
         true

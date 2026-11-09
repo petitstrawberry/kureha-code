@@ -367,8 +367,16 @@ impl App {
             }
             if keys.terminal_focused() {
                 if modifiers.primary() && matches!(keycode,KeyCode::Char('v'|'V')) && (cfg!(target_os="macos") || modifiers.shift) {keys.paste_terminal();return true;}
-                if modifiers.primary() && !modifiers.shift && matches!(keycode, KeyCode::Char('w' | 'W')) { keys.hide_panel(); return true; }
-                if *keycode == KeyCode::Tab && modifiers.control { keys.terminal.next(modifiers.shift); return true; }
+                if modifiers.primary() && !modifiers.shift && matches!(keycode, KeyCode::Char('w' | 'W')) {
+                    if let Some(tab) = keys.terminal.focused_session().and_then(|s| s.tab) { keys.close_terminal_tab(tab); }
+                    else { keys.hide_panel(); }
+                    return true;
+                }
+                if *keycode == KeyCode::Tab && modifiers.control {
+                    if keys.terminal.focused_session().is_some_and(|s| s.tab.is_some()) { keys.next_tab(modifiers.shift); }
+                    else { keys.terminal.next(modifiers.shift); }
+                    return true;
+                }
                 if modifiers.primary() && matches!(keycode, KeyCode::Char('j' | 'J')) {
                     keys.toggle_panel();
                     return true;
@@ -434,11 +442,10 @@ impl App {
     }
     fn editor_area(&self) -> impl View + Clone + use<> {
         let visible = self.panel_visible.get();
-        let side = self.panel_position.get() == terminal_ui::PanelPosition::Right;
         vstack! {
             SplitView::new(self.editor_groups(), if_view!(visible, self.terminal_panel(), VStack::new(())))
-                .axis(if side { scarlet_ui::views::SplitAxis::Horizontal } else { scarlet_ui::views::SplitAxis::Vertical })
-                .fraction(if visible { self.panel_fractions.get()[usize::from(side)] } else { 1.0 })
+                .axis(scarlet_ui::views::SplitAxis::Vertical)
+                .fraction(if visible { self.panel_fraction.get() } else { 1.0 })
                 .min_first(100.0).min_second(if visible { 100.0 } else { 0.0 })
                 .divider_thickness(if visible { 10.0 } else { 1.0 }).divider_hit_slop(0.0)
                 .divider_colors(Color::TRANSPARENT, self.theme.get().colors().accent.with_opacity(0.12))
@@ -462,9 +469,12 @@ impl App {
     fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
         self.tab_region(Surface::section(vstack! {
             self.tabs_view(group),
-            match self.group_document(group) {
-                Some(id) => Either::A(self.document_view(id, group)),
-                None => Either::B(VStack::new(()).frame(f32::INFINITY,f32::INFINITY).background(self.theme.get().editor_colors().background)),
+            match self.group_id(group).filter(|tab| self.terminal.for_tab(*tab).is_some()) {
+                Some(tab) => Either::A(self.terminal_tab_view(tab, group)),
+                None => Either::B(match self.group_document(group) {
+                    Some(id) => Either::A(self.document_view(id, group)),
+                    None => Either::B(VStack::new(()).frame(f32::INFINITY,f32::INFINITY).background(self.theme.get().editor_colors().background)),
+                }),
             },
         }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY))
             .surface_style(self.theme.get().chrome_style()).corner_radius(16.0).clip_content(true)
@@ -475,20 +485,24 @@ impl App {
         let active = self.group_id(group);
         let summaries = {
             let rt = self.runtime.lock().unwrap();
-            rt.group_tabs[group].iter().filter_map(|tab| rt.document_for_tab(*tab).and_then(|id| rt.workspace.get(id)).map(|doc| (*tab,doc))).map(|(tab,doc)| {
-                let saving = matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id, .. }) if *id == doc.id);
-                (tab, doc.path.clone(), format!("{}{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if rt.markdown.tabs.contains_key(&tab) { " · Preview" } else { "" }, if saving { " …" } else { "" }))
+            rt.group_tabs[group].iter().filter_map(|tab| {
+                if let Some(doc) = rt.document_for_tab(*tab).and_then(|id| rt.workspace.get(id)) {
+                    let saving = matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id, .. }) if *id == doc.id);
+                    Some((*tab, doc.path.clone(), format!("{}{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if rt.markdown.tabs.contains_key(tab) { " · Preview" } else { "" }, if saving { " …" } else { "" }), false))
+                } else {
+                    self.terminal.for_tab(*tab).map(|session| (*tab, None, terminal_ui::session_label(session.id), true))
+                }
             }).collect::<Vec<_>>()
         };
         let mut left = 0.0;
         let mut selected_range = (0.0, 0.0);
-        let tabs = summaries.into_iter().map(|(id, path, label)| {
+        let tabs = summaries.into_iter().map(|(id, path, label, terminal)| {
             let width = (label.chars().count() as f32 * 7.0 + 70.0).clamp(120.0, 240.0);
             if Some(id) == active { selected_range = (left, left + width); }
             left += width + 4.0;
             let select = self.clone();
             let close = self.clone();
-            let icon = file_icons::for_path(path.as_deref()).themed(&theme, Some(id) == active);
+            let icon = if terminal { file_icons::FileIcon { icon: Icon::Terminal, color: theme.colors().foreground } } else { file_icons::for_path(path.as_deref()).themed(&theme, Some(id) == active) };
             let content = hstack! {
                 Button::new(label).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).font_size(13.0).padding(7.0)
                     .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Pixels(18)).icon_style(icon.style())
