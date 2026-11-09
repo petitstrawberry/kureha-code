@@ -1,7 +1,7 @@
 use kureha_code::{
     explorer::{self, Explorer, Listing, Row},
     files, search,
-    workspace::{Bindings, DocumentId, Workspace},
+    workspace::{Bindings, DocumentId, TabId, Workspace},
 };
 use scarlet_ui::{
     Event, KeyCode, MenuBarModel, MenuEntry, MenuItemModel, PlatformWindow, WindowContext,
@@ -68,7 +68,7 @@ struct TreeJob {
 }
 #[derive(Default)]
 struct CloseRequest {
-    tab: Option<DocumentId>,
+    tab: Option<TabId>,
     target: Option<DocumentId>,
     discarded: BTreeSet<DocumentId>,
 }
@@ -116,7 +116,7 @@ struct Runtime {
     language: language::Service,
     minimap: kureha_code::minimap::MinimapCache,
     pane_bindings: BTreeMap<(DocumentId, usize), Bindings>,
-    group_tabs: Vec<Vec<DocumentId>>,
+    group_tabs: Vec<Vec<TabId>>,
     save_all: Vec<DocumentId>,
 }
 #[derive(Clone)]
@@ -132,10 +132,12 @@ struct App {
     panel_position: State<terminal_ui::PanelPosition>,
     panel_fractions: State<[f32; 2]>,
     terminal: terminal_ui::Panel,
-    panes: State<Vec<Option<DocumentId>>>,
+    panes: State<Vec<Option<TabId>>>,
     pane_layout: State<groups::PaneLayout>,
     focused_group: State<usize>,
     chrome: State<u64>,
+    syntax_revision: State<u64>,
+    markdown_revision: State<u64>,
     status: State<String>,
     position: State<String>,
     language_status: State<String>,
@@ -165,12 +167,8 @@ impl App {
         self.active_id().expect("test requires an open document")
     }
     fn close_active(&self) {
-        if self.is_preview_pane(self.focused_group.get()) {
-            self.close_markdown_preview(self.focused_group.get());
-            return;
-        }
-        if let Some(id) = self.active_id() {
-            self.request_close(Some(id));
+        if let Some(tab) = self.group_id(self.focused_group.get()) {
+            self.request_close(Some(tab));
         }
     }
     fn save_as(&self) {
@@ -214,6 +212,8 @@ impl App {
             focused_group,
             navigation,
             chrome: State::new(generate_state_id(), 0),
+            syntax_revision: State::new(generate_state_id(), 0),
+            markdown_revision: State::new(generate_state_id(), 0),
             status: State::new(generate_state_id(), "Ready".into()),
             position: State::new(generate_state_id(), String::new()),
             tree_rows: State::initial(generate_state_id()),
@@ -234,6 +234,9 @@ impl App {
         self.apply_theme(theme);
     }
     fn apply_theme(&self, theme: kureha_code::theme::Theme) {
+        for session in self.terminal.sessions() {
+            session.terminal.set_palette(theme.terminal_palette());
+        }
         self.theme.set(theme.clone());
         kureha_code::syntax::set_theme(theme);
         self.runtime.lock().unwrap().minimap.clear();
@@ -255,7 +258,7 @@ impl App {
         self.navigation.fetch_add(1, Ordering::Relaxed);
     }
     fn active_id(&self) -> Option<DocumentId> {
-        self.group_id(self.focused_group.get())
+        self.group_document(self.focused_group.get())
     }
     fn window_title(&self) -> String {
         let Some(id) = self.active_id() else {
@@ -282,7 +285,9 @@ impl App {
         rt.dialog.is_none()
             && rt.close.is_none()
             && rt.workspace.get(id).is_some_and(|doc| doc.image.is_none())
-            && !rt.markdown.panels.contains_key(&self.focused_group.get())
+            && !self
+                .group_id(self.focused_group.get())
+                .is_some_and(|tab| rt.markdown.tabs.contains_key(&tab))
             && !matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id: saving, .. }) if *saving == id)
     }
     fn sync_editor(&self, id: DocumentId) {
@@ -376,22 +381,22 @@ impl App {
         };
         bindings.selection.set(selection);
     }
-    fn activate(&self, id: DocumentId) {
+    fn activate(&self, id: TabId) {
         if self.blocked() {
             return;
         }
-        if self.active_id() != Some(id) && self.runtime.lock().unwrap().workspace.get(id).is_some()
+        if self.active_id() != Some(id)
+            && self.runtime.lock().unwrap().document_for_tab(id).is_some()
         {
             self.remember_location();
         }
         self.activate_unchecked(id);
     }
-    fn activate_unchecked(&self, id: DocumentId) {
-        self.focus_editor();
+    fn activate_unchecked(&self, id: TabId) {
         let group = self.focused_group.get();
         let exists = {
             let mut rt = self.runtime.lock().unwrap();
-            let exists = rt.workspace.get(id).is_some();
+            let exists = rt.document_for_tab(id).is_some();
             if exists && !rt.group_tabs[group].contains(&id) {
                 rt.group_tabs[group].push(id);
             }
@@ -406,7 +411,7 @@ impl App {
         if self.blocked() {
             return;
         }
-        let Some(id) = self.active_id() else {
+        let Some(id) = self.group_id(self.focused_group.get()) else {
             return;
         };
         let next = {
@@ -426,7 +431,6 @@ impl App {
         if self.blocked() {
             return;
         }
-        self.focus_editor();
         self.remember_location();
         let id = self.runtime.lock().unwrap().workspace.new_document();
         self.activate_unchecked(id);
@@ -436,21 +440,31 @@ impl App {
         let mut panes = self.panes.get();
         {
             let mut rt = self.runtime.lock().unwrap();
+            let remove: BTreeSet<_> = rt
+                .markdown
+                .tabs
+                .iter()
+                .filter_map(|(tab, p)| (p.document == id).then_some(*tab))
+                .chain(std::iter::once(id))
+                .collect();
             rt.workspace.remove(id);
             rt.history.remove(id);
             rt.image_zoom.retain(|(document, _), _| *document != id);
             rt.markdown.remove(id);
             rt.pane_bindings.retain(|(document, _), _| *document != id);
             for (group, tabs) in rt.group_tabs.iter_mut().enumerate() {
-                let index = tabs.iter().position(|tab| *tab == id).unwrap_or(0);
-                tabs.retain(|tab| *tab != id);
-                if panes[group] == Some(id) {
+                let index = tabs
+                    .iter()
+                    .position(|tab| remove.contains(tab))
+                    .unwrap_or(0);
+                tabs.retain(|tab| !remove.contains(tab));
+                if panes[group].is_some_and(|tab| remove.contains(&tab)) {
                     panes[group] = tabs.get(index.min(tabs.len().saturating_sub(1))).copied();
                 }
             }
         }
         self.panes.set(panes.clone());
-        let editors = self.editor_pane_order();
+        let editors = self.pane_order();
         let keep_empty = editors
             .iter()
             .all(|g| panes[*g].is_none())
@@ -459,7 +473,7 @@ impl App {
         let layout = self
             .pane_layout
             .get()
-            .retain(&|g| panes[g].is_some() || self.is_preview_pane(g) || Some(g) == keep_empty)
+            .retain(&|g| panes[g].is_some() || Some(g) == keep_empty)
             .unwrap_or(groups::PaneLayout::Leaf(self.focused_group.get()));
         self.pane_layout.set(layout);
         if !self.group_exists(self.focused_group.get()) {
@@ -470,7 +484,7 @@ impl App {
         self.update_position();
         self.changed();
     }
-    fn request_close(&self, tab: Option<DocumentId>) {
+    fn request_close(&self, tab: Option<TabId>) {
         if let Some(id) = tab {
             if self.close_shared_tab(id) {
                 return;
@@ -506,7 +520,9 @@ impl App {
                 .documents
                 .iter()
                 .find(|doc| {
-                    close.tab.is_none_or(|id| id == doc.id)
+                    close
+                        .tab
+                        .is_none_or(|tab| rt.document_for_tab(tab) == Some(doc.id))
                         && doc.editor.dirty()
                         && !close.discarded.contains(&doc.id)
                 })
@@ -517,14 +533,19 @@ impl App {
             target
         };
         if let Some((id, name)) = decision {
-            self.activate_unchecked(id);
+            if self.preview_tab(self.focused_group.get()).is_none() {
+                self.activate_unchecked(id);
+            }
             self.confirmation.set(format!("Save changes to {name}?"));
             open_window("confirm");
         } else {
             let close = self.runtime.lock().unwrap().close.take().unwrap();
             dismiss_window("confirm");
-            if let Some(id) = close.tab {
-                self.remove_document(id);
+            if let Some(tab) = close.tab {
+                let id = self.runtime.lock().unwrap().document_for_tab(tab);
+                if let Some(id) = id {
+                    self.remove_document(id);
+                }
             } else {
                 dismiss_window("main");
             }
@@ -632,7 +653,6 @@ impl App {
         self.changed();
     }
     fn open(&self, path: PathBuf) {
-        self.focus_editor();
         if self.blocked() || self.runtime.lock().unwrap().job.is_some() {
             return;
         }
@@ -1320,9 +1340,9 @@ impl App {
         text: String,
         image: Option<kureha_code::media::ImageAsset>,
     ) {
-        let group_closed = !self.group_exists(group) || self.is_preview_pane(group);
+        let group_closed = !self.group_exists(group);
         let destination = if group_closed {
-            self.editor_pane_order()[0]
+            self.pane_order()[0]
         } else {
             group
         };
@@ -1506,7 +1526,8 @@ impl Application for App {
         self.poll_language();
         self.poll_language_interactions();
         if kureha_code::syntax::poll() {
-            self.changed();
+            self.syntax_revision
+                .update(|revision| *revision = revision.wrapping_add(1));
         }
     }
 }

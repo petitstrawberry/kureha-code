@@ -1,0 +1,40 @@
+{
+  "source": {
+    "edits": 29,
+    "window_configures": [
+      "1100x760",
+      "1100x760",
+      "867x900"
+    ],
+    "presented_frames_after_first_edit": 57,
+    "layout_us": {
+      "median": 2756,
+      "p95": 10082,
+      "max": 10369
+    },
+    "frame_us": {
+      "median": 7179,
+      "p95": 16676,
+      "max": 18609
+    }
+  },
+  "preview": {
+    "edits": 29,
+    "window_configures": [
+      "1100x760",
+      "1100x760",
+      "867x900"
+    ],
+    "presented_frames_after_first_edit": 61,
+    "layout_us": {
+      "median": 2628,
+      "p95": 9190,
+      "max": 53397
+    },
+    "frame_us": {
+      "median": 8425,
+      "p95": 14593,
+      "max": 59385
+    }
+  }
+}

@@ -85,6 +85,7 @@ impl App {
 
     pub(super) fn bindings_for(&self, id: DocumentId, group: usize) -> Option<Bindings> {
         let mut rt = self.runtime.lock().unwrap();
+        let id = rt.document_for_tab(id)?;
         let first = rt.workspace.get(id)?.bindings.clone();
         if group == 0 {
             return Some(first);
@@ -99,10 +100,10 @@ impl App {
     pub(super) fn group_exists(&self, group: usize) -> bool {
         self.pane_layout.get().leaves().contains(&group)
     }
-    pub(super) fn group_id(&self, group: usize) -> Option<DocumentId> {
+    pub(super) fn group_id(&self, group: usize) -> Option<TabId> {
         self.panes.get().get(group).copied().flatten()
     }
-    pub(super) fn set_group_id(&self, group: usize, id: DocumentId) {
+    pub(super) fn set_group_id(&self, group: usize, id: TabId) {
         self.panes.update(|panes| panes[group] = Some(id));
     }
     pub(super) fn focus_group(&self, group: usize) {
@@ -117,19 +118,13 @@ impl App {
         }
         self.blur_terminals();
     }
-    pub(super) fn allocate_empty_group(&self) -> usize {
-        let group = self.panes.get().len();
-        self.runtime.lock().unwrap().group_tabs.push(Vec::new());
-        self.panes.update(|panes| panes.push(None));
-        group
-    }
-    pub(super) fn allocate_group(&self, id: DocumentId) -> usize {
+    pub(super) fn allocate_group(&self, id: TabId) -> usize {
         let group = self.panes.get().len();
         self.runtime.lock().unwrap().group_tabs.push(vec![id]);
         self.panes.update(|panes| panes.push(Some(id)));
         group
     }
-    pub(super) fn add_group(&self, id: DocumentId, beside: usize, edge: tab_drag::Edge) -> usize {
+    pub(super) fn add_group(&self, id: TabId, beside: usize, edge: tab_drag::Edge) -> usize {
         self.remember_pane_sizes();
         let group = self.allocate_group(id);
         self.pane_layout
@@ -140,9 +135,8 @@ impl App {
         if self.blocked() {
             return;
         }
-        self.focus_editor();
         let source = self.focused_group.get();
-        let Some(id) = self.active_id() else {
+        let Some(id) = self.group_id(source) else {
             return;
         };
         let group = self.add_group(
@@ -160,6 +154,11 @@ impl App {
             to.selection.set(from.selection.get());
             to.scroll.set(from.scroll.get());
         }
+        self.runtime
+            .lock()
+            .unwrap()
+            .markdown
+            .move_view(id, source, group, true);
         self.focus_group(group);
         self.status.set(
             if down {
@@ -172,12 +171,7 @@ impl App {
     }
     /// Remove only a view; tabs and PTYs migrate to its nearest neighbour.
     pub(super) fn close_split(&self) {
-        let group = self.focused_group.get();
-        if self.is_preview_pane(group) {
-            self.close_markdown_preview(group);
-            return;
-        }
-        let order = self.editor_pane_order();
+        let order = self.pane_order();
         if order.len() < 2 {
             return;
         }
@@ -203,7 +197,7 @@ impl App {
             .set("Pane closed; tabs moved to neighbour".into());
     }
     pub(super) fn retire_empty_group(&self, group: usize) {
-        if self.is_preview_pane(group) || self.editor_pane_order().len() < 2 {
+        if self.pane_order().len() < 2 {
             return;
         }
         if !self.runtime.lock().unwrap().group_tabs[group].is_empty() {
@@ -237,29 +231,36 @@ impl App {
             self.split_editor(false);
         }
     }
-    pub(super) fn close_shared_tab(&self, id: DocumentId) -> bool {
+    pub(super) fn close_shared_tab(&self, tab: TabId) -> bool {
+        if self.blocked() {
+            return false;
+        }
         let group = self.focused_group.get();
         let active = self.group_id(group);
         let next = {
             let mut rt = self.runtime.lock().unwrap();
-            if !rt
-                .group_tabs
-                .iter()
-                .enumerate()
-                .any(|(g, tabs)| g != group && tabs.contains(&id))
-            {
+            let Some(id) = rt.document_for_tab(tab) else {
+                return false;
+            };
+            if !rt.group_tabs.iter().enumerate().any(|(g, tabs)| {
+                tabs.iter()
+                    .any(|t| (g != group || *t != tab) && rt.document_for_tab(*t) == Some(id))
+            }) {
                 return false;
             }
             let tabs = &mut rt.group_tabs[group];
-            let position = tabs.iter().position(|tab| *tab == id).unwrap_or(0);
-            tabs.retain(|tab| *tab != id);
-            tabs.get(position.min(tabs.len().saturating_sub(1)))
-                .copied()
+            let index = tabs.iter().position(|t| *t == tab).unwrap_or(0);
+            tabs.retain(|t| *t != tab);
+            let next = tabs.get(index.min(tabs.len().saturating_sub(1))).copied();
+            rt.markdown.views_forget(tab, group);
+            if !rt.group_tabs.iter().any(|tabs| tabs.contains(&tab)) {
+                rt.markdown.remove_tab(tab);
+            }
+            next
         };
-        if active == Some(id) {
-            if let Some(next) = next {
-                self.activate_unchecked(next);
-            } else {
+        if active == Some(tab) {
+            self.panes.update(|panes| panes[group] = next);
+            if next.is_none() {
                 self.retire_empty_group(group);
             }
         }

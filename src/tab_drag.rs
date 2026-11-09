@@ -15,7 +15,7 @@ pub(super) enum RegionId {
     Panel,
     Session(u64),
     Group(usize),
-    Tab(usize, DocumentId),
+    Tab(usize, TabId),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Edge {
@@ -33,7 +33,7 @@ enum Destination {
 #[derive(Clone, Copy)]
 struct Gesture {
     group: usize,
-    id: DocumentId,
+    id: TabId,
     start: Point,
     dragging: bool,
     target: Option<Destination>,
@@ -260,7 +260,7 @@ impl App {
                 };
                 drag.dragging |= (p.x - drag.start.x).hypot(p.y - drag.start.y) >= 6.0;
                 if drag.dragging {
-                    drag.target = destination(&model.geometry, &tabs, &self.editor_pane_order(), p);
+                    drag.target = destination(&model.geometry, &tabs, &self.pane_order(), p);
                 }
                 let changed = model.gesture.is_none_or(|previous| {
                     previous.dragging != drag.dragging || previous.target != drag.target
@@ -288,7 +288,7 @@ impl App {
                     let target = destination(
                         &self.tab_drag.0.lock().unwrap().geometry,
                         &tabs,
-                        &self.editor_pane_order(),
+                        &self.pane_order(),
                         p,
                     );
                     match target {
@@ -328,23 +328,18 @@ impl App {
         }
     }
 
-    pub(super) fn move_tab(&self, id: DocumentId, source: usize, target: usize, index: usize) {
+    pub(super) fn move_tab(&self, id: TabId, source: usize, target: usize, index: usize) {
         self.move_tab_internal(id, source, target, index, true);
     }
     pub(super) fn move_tab_internal(
         &self,
-        id: DocumentId,
+        id: TabId,
         source: usize,
         target: usize,
         mut index: usize,
         remember: bool,
     ) {
-        if self.blocked()
-            || self.is_preview_pane(target)
-            || self.is_preview_pane(source)
-            || !self.group_exists(target)
-            || !self.group_exists(source)
-        {
+        if self.blocked() || !self.group_exists(target) || !self.group_exists(source) {
             return;
         }
         let source_active = self.group_id(source);
@@ -383,6 +378,7 @@ impl App {
             index = index.min(rt.group_tabs[target].len());
             rt.group_tabs[target].insert(index, id);
             if source != target {
+                rt.markdown.move_view(id, source, target, false);
                 if let Some(zoom) = rt.image_zoom.remove(&(id, source)) {
                     rt.image_zoom.insert((id, target), zoom);
                 }
@@ -411,26 +407,19 @@ impl App {
     }
 
     #[cfg(test)]
-    pub(super) fn split_tab(&self, id: DocumentId, source: usize, edge: Edge) {
+    pub(super) fn split_tab(&self, id: TabId, source: usize, edge: Edge) {
         self.split_tab_beside(id, source, source, edge);
     }
-    pub(super) fn split_tab_beside(
-        &self,
-        id: DocumentId,
-        source: usize,
-        beside: usize,
-        edge: Edge,
-    ) {
+    pub(super) fn split_tab_beside(&self, id: TabId, source: usize, beside: usize, edge: Edge) {
         self.split_tab_at(id, source, Some(beside), edge);
     }
-    pub(super) fn split_tab_outer(&self, id: DocumentId, source: usize, edge: Edge) {
+    pub(super) fn split_tab_outer(&self, id: TabId, source: usize, edge: Edge) {
         self.split_tab_at(id, source, None, edge);
     }
-    fn split_tab_at(&self, id: DocumentId, source: usize, beside: Option<usize>, edge: Edge) {
+    fn split_tab_at(&self, id: TabId, source: usize, beside: Option<usize>, edge: Edge) {
         if self.blocked()
             || !self.group_exists(source)
-            || self.is_preview_pane(source)
-            || beside.is_some_and(|g| !self.group_exists(g) || self.is_preview_pane(g))
+            || beside.is_some_and(|g| !self.group_exists(g))
         {
             return;
         }
@@ -453,9 +442,11 @@ impl App {
         to.scroll.set(from.scroll.get());
         let next = {
             let mut rt = self.runtime.lock().unwrap();
-            if rt.group_tabs[source].len() > 1 || detach {
+            let remove = rt.group_tabs[source].len() > 1 || detach;
+            if remove {
                 rt.group_tabs[source].retain(|tab| *tab != id);
             }
+            rt.markdown.move_view(id, source, group, !remove);
             if let Some(zoom) = rt.image_zoom.get(&(id, source)).copied() {
                 rt.image_zoom.insert((id, group), zoom);
             }
@@ -482,7 +473,7 @@ impl App {
 
 fn destination(
     geometry: &BTreeMap<RegionId, Rect>,
-    tabs: &[Vec<DocumentId>],
+    tabs: &[Vec<TabId>],
     order: &[usize],
     p: Point,
 ) -> Option<Destination> {

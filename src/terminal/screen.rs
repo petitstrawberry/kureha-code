@@ -22,11 +22,15 @@ pub(super) fn blank((cols, rows): (u16, u16)) -> TextGridBuffer {
 pub(super) fn snapshot(screen: &vt100::Screen, status: TerminalStatus) -> Snapshot {
     let (rows, cols) = screen.size();
     let mut grid = blank((cols, rows));
+    let mut colors =
+        vec![(vt100::Color::Default, vt100::Color::Default); rows as usize * cols as usize];
     for row in 0..rows {
         for col in 0..cols {
             let Some(source) = screen.cell(row, col) else {
                 continue;
             };
+            colors[row as usize * cols as usize + col as usize] =
+                (source.fgcolor(), source.bgcolor());
             let mut cell = TextGridCell::new(
                 if source.is_wide_continuation() {
                     '\0'
@@ -62,6 +66,7 @@ pub(super) fn snapshot(screen: &vt100::Screen, status: TerminalStatus) -> Snapsh
     cursor.visible = !screen.hide_cursor() && screen.scrollback() == 0;
     Snapshot {
         grid,
+        colors,
         cursor,
         application_cursor: screen.application_cursor(),
         bracketed_paste: screen.bracketed_paste(),
@@ -69,43 +74,7 @@ pub(super) fn snapshot(screen: &vt100::Screen, status: TerminalStatus) -> Snapsh
     }
 }
 fn color(value: vt100::Color, fallback: Color) -> Color {
-    match value {
-        vt100::Color::Default => fallback,
-        vt100::Color::Rgb(r, g, b) => Color::rgb(r, g, b),
-        vt100::Color::Idx(index) => {
-            const ANSI: [(u8, u8, u8); 16] = [
-                (0, 0, 0),
-                (205, 49, 49),
-                (13, 188, 121),
-                (229, 229, 16),
-                (36, 114, 200),
-                (188, 63, 188),
-                (17, 168, 205),
-                (229, 229, 229),
-                (102, 102, 102),
-                (241, 76, 76),
-                (35, 209, 139),
-                (245, 245, 67),
-                (59, 142, 234),
-                (214, 112, 214),
-                (41, 184, 219),
-                (255, 255, 255),
-            ];
-            let (r, g, b) = match index {
-                0..=15 => ANSI[index as usize],
-                16..=231 => {
-                    let n = index - 16;
-                    let c = |v| if v == 0 { 0 } else { 55 + v * 40 };
-                    (c(n / 36), c(n / 6 % 6), c(n % 6))
-                }
-                _ => {
-                    let level = 8 + (index - 232) * 10;
-                    (level, level, level)
-                }
-            };
-            Color::rgb(r, g, b)
-        }
-    }
+    super::TerminalPalette::default().resolve(value, fallback)
 }
 
 /// A bounded CSI query recognizer supplements vt100's screen parser, which

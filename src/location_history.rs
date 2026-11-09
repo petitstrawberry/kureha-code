@@ -31,7 +31,10 @@ impl History {
 }
 impl App {
     fn location_in(&self, group: usize) -> Option<Location> {
-        let id = self.group_id(group)?;
+        if self.preview_tab(group).is_some() {
+            return None;
+        }
+        let id = self.group_document(group)?;
         let bindings = self.bindings_for(id, group)?;
         Some(Location {
             id,

@@ -1,0 +1,225 @@
+[ScarletUI] platform-winit renderer=sgfx backend=wgpu
+[ScrollTiming] lower_us=32031 encode_us=37524 retained_draws=12 frame_vertex_bytes=860160
+[ScrollTiming] prepare_us=112 backend_us=38668
+[ScrollTiming] layout_us=2765 frame_us=41569
+[ScrollCycle] events_us=0 idle_us=160 cycle_us=44967 presented=true
+[WindowSize] configure 1100x760
+[ScrollTiming] lower_us=1797 encode_us=2688 retained_draws=12 frame_vertex_bytes=860160
+[ScrollTiming] prepare_us=111 backend_us=3177
+[ScrollTiming] layout_us=336 frame_us=3643
+[ScrollCycle] events_us=1129 idle_us=18 cycle_us=4915 presented=true
+[WindowSize] configure 1100x760
+[ScrollTiming] lower_us=2535 encode_us=4830 retained_draws=12 frame_vertex_bytes=860160
+[ScrollTiming] prepare_us=106 backend_us=7504
+[ScrollTiming] layout_us=348 frame_us=7989
+[ScrollCycle] events_us=294 idle_us=17 cycle_us=8433 presented=true
+[ScrollCycle] events_us=139 idle_us=14 cycle_us=182 presented=false
+[WindowSize] configure 867x900
+[ScrollTiming] lower_us=4229 encode_us=8228 retained_draws=12 frame_vertex_bytes=923040
+[ScrollTiming] prepare_us=132 backend_us=8775
+[ScrollTiming] layout_us=335 frame_us=9270
+[ScrollCycle] events_us=1077 idle_us=8 cycle_us=10531 presented=true
+[ScrollCycle] events_us=105 idle_us=14 cycle_us=139 presented=false
+[ScrollTiming] prepare_us=350 backend_us=2526
+[ScrollTiming] layout_us=947 frame_us=3852
+[ScrollCycle] events_us=0 idle_us=15 cycle_us=4113 presented=true
+[TypingProbe] edit=11
+[ScrollTiming] prepare_us=934 backend_us=7227
+[ScrollTiming] layout_us=10369 frame_us=18609
+[ScrollCycle] events_us=0 idle_us=272 cycle_us=22528 presented=true
+[TypingProbe] edit=12
+[ScrollTiming] prepare_us=1294 backend_us=4606
+[ScrollTiming] layout_us=8518 frame_us=14504
+[ScrollCycle] events_us=0 idle_us=207 cycle_us=15169 presented=true
+[ScrollTiming] prepare_us=983 backend_us=3694
+[ScrollTiming] layout_us=2247 frame_us=6998
+[ScrollCycle] events_us=0 idle_us=50 cycle_us=7310 presented=true
+[TypingProbe] edit=13
+[ScrollTiming] prepare_us=1489 backend_us=4922
+[ScrollTiming] layout_us=9264 frame_us=15788
+[ScrollCycle] events_us=0 idle_us=234 cycle_us=16621 presented=true
+[ScrollTiming] prepare_us=949 backend_us=3037
+[ScrollTiming] layout_us=2285 frame_us=6300
+[ScrollCycle] events_us=0 idle_us=13 cycle_us=6482 presented=true
+[TypingProbe] edit=14
+[ScrollTiming] prepare_us=1104 backend_us=3783
+[ScrollTiming] layout_us=7537 frame_us=12497
+[ScrollCycle] events_us=1 idle_us=157 cycle_us=13113 presented=true
+[ScrollTiming] prepare_us=717 backend_us=1955
+[ScrollTiming] layout_us=2034 frame_us=4740
+[ScrollCycle] events_us=0 idle_us=25 cycle_us=4964 presented=true
+[TypingProbe] edit=15
+[ScrollTiming] prepare_us=1585 backend_us=4468
+[ScrollTiming] layout_us=6056 frame_us=12196
+[ScrollCycle] events_us=1 idle_us=162 cycle_us=12844 presented=true
+[ScrollTiming] prepare_us=1076 backend_us=3705
+[ScrollTiming] layout_us=2540 frame_us=7375
+[ScrollCycle] events_us=1 idle_us=25 cycle_us=7744 presented=true
+[TypingProbe] edit=16
+[ScrollTiming] prepare_us=1223 backend_us=3916
+[ScrollTiming] layout_us=6168 frame_us=11394
+[ScrollCycle] events_us=2 idle_us=188 cycle_us=12166 presented=true
+[ScrollTiming] prepare_us=1010 backend_us=3500
+[ScrollTiming] layout_us=1994 frame_us=6574
+[ScrollCycle] events_us=1 idle_us=37 cycle_us=7049 presented=true
+[TypingProbe] edit=17
+[ScrollTiming] prepare_us=1230 backend_us=3782
+[ScrollTiming] layout_us=9302 frame_us=14380
+[ScrollCycle] events_us=2 idle_us=273 cycle_us=15228 presented=true
+[ScrollTiming] prepare_us=1071 backend_us=3523
+[ScrollTiming] layout_us=2445 frame_us=7100
+[ScrollCycle] events_us=1 idle_us=29 cycle_us=7438 presented=true
+[TypingProbe] edit=18
+[ScrollTiming] prepare_us=1246 backend_us=4489
+[ScrollTiming] layout_us=9359 frame_us=15197
+[ScrollCycle] events_us=2 idle_us=296 cycle_us=16211 presented=true
+[ScrollTiming] prepare_us=946 backend_us=3496
+[ScrollTiming] layout_us=2087 frame_us=6584
+[ScrollCycle] events_us=1 idle_us=46 cycle_us=6875 presented=true
+[TypingProbe] edit=19
+[ScrollTiming] prepare_us=1388 backend_us=4710
+[ScrollTiming] layout_us=10242 frame_us=16461
+[ScrollCycle] events_us=1 idle_us=296 cycle_us=17521 presented=true
+[ScrollTiming] prepare_us=1087 backend_us=3779
+[ScrollTiming] layout_us=2107 frame_us=7054
+[ScrollCycle] events_us=1 idle_us=60 cycle_us=7554 presented=true
+[TypingProbe] edit=20
+[ScrollTiming] prepare_us=1336 backend_us=4599
+[ScrollTiming] layout_us=8249 frame_us=14319
+[ScrollCycle] events_us=2 idle_us=245 cycle_us=15367 presented=true
+[ScrollTiming] prepare_us=914 backend_us=2959
+[ScrollTiming] layout_us=1770 frame_us=5713
+[ScrollCycle] events_us=2 idle_us=38 cycle_us=6028 presented=true
+[TypingProbe] edit=21
+[ScrollTiming] prepare_us=1597 backend_us=5614
+[ScrollTiming] layout_us=5179 frame_us=12487
+[ScrollCycle] events_us=1 idle_us=268 cycle_us=13497 presented=true
+[ScrollTiming] prepare_us=1103 backend_us=3581
+[ScrollTiming] layout_us=2404 frame_us=7190
+[ScrollCycle] events_us=1 idle_us=45 cycle_us=7650 presented=true
+[TypingProbe] edit=22
+[ScrollTiming] prepare_us=1413 backend_us=4625
+[ScrollTiming] layout_us=8423 frame_us=14589
+[ScrollCycle] events_us=2 idle_us=293 cycle_us=15689 presented=true
+[ScrollTiming] prepare_us=981 backend_us=3361
+[ScrollTiming] layout_us=2052 frame_us=6485
+[ScrollCycle] events_us=0 idle_us=51 cycle_us=6872 presented=true
+[TypingProbe] edit=23
+[ScrollTiming] prepare_us=710 backend_us=2628
+[ScrollTiming] layout_us=3796 frame_us=7179
+[ScrollCycle] events_us=0 idle_us=123 cycle_us=7477 presented=true
+[ScrollTiming] prepare_us=571 backend_us=1842
+[ScrollTiming] layout_us=1478 frame_us=3908
+[ScrollCycle] events_us=0 idle_us=8 cycle_us=4030 presented=true
+[TypingProbe] edit=24
+[ScrollTiming] prepare_us=666 backend_us=2531
+[ScrollTiming] layout_us=4988 frame_us=8238
+[ScrollCycle] events_us=0 idle_us=170 cycle_us=8751 presented=true
+[ScrollTiming] prepare_us=537 backend_us=1928
+[ScrollTiming] layout_us=1285 frame_us=3780
+[ScrollCycle] events_us=0 idle_us=20 cycle_us=3947 presented=true
+[TypingProbe] edit=25
+[ScrollTiming] prepare_us=1326 backend_us=4971
+[ScrollTiming] layout_us=10049 frame_us=16455
+[ScrollCycle] events_us=1 idle_us=292 cycle_us=17193 presented=true
+[ScrollTiming] prepare_us=1050 backend_us=3471
+[ScrollTiming] layout_us=2365 frame_us=6966
+[ScrollCycle] events_us=0 idle_us=35 cycle_us=7271 presented=true
+[TypingProbe] edit=26
+[ScrollTiming] prepare_us=1371 backend_us=4320
+[ScrollTiming] layout_us=8768 frame_us=14507
+[ScrollCycle] events_us=1 idle_us=238 cycle_us=15093 presented=true
+[ScrollTiming] prepare_us=904 backend_us=2984
+[ScrollTiming] layout_us=2174 frame_us=6089
+[ScrollCycle] events_us=0 idle_us=13 cycle_us=6267 presented=true
+[TypingProbe] edit=27
+[ScrollTiming] prepare_us=1413 backend_us=5085
+[ScrollTiming] layout_us=10082 frame_us=16676
+[ScrollCycle] events_us=2 idle_us=320 cycle_us=17487 presented=true
+[ScrollTiming] prepare_us=1027 backend_us=2975
+[ScrollTiming] layout_us=2289 frame_us=6345
+[ScrollCycle] events_us=1 idle_us=31 cycle_us=6579 presented=true
+[TypingProbe] edit=28
+[ScrollTiming] prepare_us=1353 backend_us=5032
+[ScrollTiming] layout_us=8333 frame_us=14787
+[ScrollCycle] events_us=0 idle_us=203 cycle_us=15317 presented=true
+[ScrollTiming] prepare_us=1066 backend_us=3180
+[ScrollTiming] layout_us=2372 frame_us=6666
+[ScrollCycle] events_us=1 idle_us=22 cycle_us=6902 presented=true
+[TypingProbe] edit=29
+[ScrollTiming] prepare_us=1165 backend_us=3108
+[ScrollTiming] layout_us=8883 frame_us=13194
+[ScrollCycle] events_us=0 idle_us=243 cycle_us=13716 presented=true
+[ScrollTiming] prepare_us=854 backend_us=2534
+[ScrollTiming] layout_us=2025 frame_us=5437
+[ScrollCycle] events_us=0 idle_us=8 cycle_us=5581 presented=true
+[TypingProbe] edit=30
+[ScrollTiming] prepare_us=1403 backend_us=4790
+[ScrollTiming] layout_us=8609 frame_us=14847
+[ScrollCycle] events_us=0 idle_us=212 cycle_us=15343 presented=true
+[ScrollTiming] prepare_us=1091 backend_us=3072
+[ScrollTiming] layout_us=2394 frame_us=6594
+[ScrollCycle] events_us=0 idle_us=11 cycle_us=6792 presented=true
+[TypingProbe] edit=31
+[ScrollTiming] prepare_us=1221 backend_us=3439
+[ScrollTiming] layout_us=9497 frame_us=14214
+[ScrollCycle] events_us=0 idle_us=300 cycle_us=14817 presented=true
+[ScrollTiming] prepare_us=927 backend_us=2784
+[ScrollTiming] layout_us=2292 frame_us=6030
+[ScrollCycle] events_us=0 idle_us=22 cycle_us=6212 presented=true
+[TypingProbe] edit=32
+[ScrollTiming] prepare_us=1680 backend_us=5326
+[ScrollTiming] layout_us=9202 frame_us=16322
+[ScrollCycle] events_us=0 idle_us=235 cycle_us=17140 presented=true
+[ScrollTiming] prepare_us=1132 backend_us=3034
+[ScrollTiming] layout_us=1976 frame_us=6251
+[ScrollCycle] events_us=1 idle_us=43 cycle_us=6559 presented=true
+[TypingProbe] edit=33
+[ScrollTiming] prepare_us=1322 backend_us=5190
+[ScrollTiming] layout_us=8998 frame_us=15639
+[ScrollCycle] events_us=0 idle_us=238 cycle_us=16482 presented=true
+[ScrollTiming] prepare_us=972 backend_us=2884
+[ScrollTiming] layout_us=2250 frame_us=6162
+[ScrollCycle] events_us=1 idle_us=48 cycle_us=6454 presented=true
+[TypingProbe] edit=34
+[ScrollTiming] prepare_us=1042 backend_us=4388
+[ScrollTiming] layout_us=7140 frame_us=12637
+[ScrollCycle] events_us=1 idle_us=153 cycle_us=13281 presented=true
+[ScrollTiming] prepare_us=1076 backend_us=3097
+[ScrollTiming] layout_us=1936 frame_us=6151
+[ScrollCycle] events_us=0 idle_us=25 cycle_us=6434 presented=true
+[TypingProbe] edit=35
+[ScrollTiming] prepare_us=1745 backend_us=5087
+[ScrollTiming] layout_us=6794 frame_us=13712
+[ScrollCycle] events_us=0 idle_us=150 cycle_us=14263 presented=true
+[ScrollTiming] prepare_us=947 backend_us=3261
+[ScrollTiming] layout_us=2033 frame_us=6280
+[ScrollCycle] events_us=1 idle_us=29 cycle_us=6576 presented=true
+[TypingProbe] edit=36
+[ScrollTiming] prepare_us=1529 backend_us=5491
+[ScrollTiming] layout_us=9930 frame_us=17063
+[ScrollCycle] events_us=0 idle_us=304 cycle_us=17875 presented=true
+[ScrollTiming] prepare_us=801 backend_us=3056
+[ScrollTiming] layout_us=2249 frame_us=6164
+[ScrollCycle] events_us=1 idle_us=28 cycle_us=6445 presented=true
+[TypingProbe] edit=37
+[ScrollTiming] prepare_us=514 backend_us=1762
+[ScrollTiming] layout_us=2756 frame_us=5054
+[ScrollCycle] events_us=0 idle_us=61 cycle_us=5279 presented=true
+[ScrollTiming] prepare_us=459 backend_us=1475
+[ScrollTiming] layout_us=1057 frame_us=3005
+[ScrollCycle] events_us=0 idle_us=6 cycle_us=3108 presented=true
+[TypingProbe] edit=38
+[ScrollTiming] prepare_us=670 backend_us=2341
+[ScrollTiming] layout_us=3732 frame_us=6773
+[ScrollCycle] events_us=0 idle_us=77 cycle_us=7080 presented=true
+[ScrollTiming] prepare_us=625 backend_us=1911
+[ScrollTiming] layout_us=1460 frame_us=4018
+[ScrollCycle] events_us=0 idle_us=10 cycle_us=4163 presented=true
+[TypingProbe] edit=39
+[ScrollTiming] prepare_us=1294 backend_us=4293
+[ScrollTiming] layout_us=8755 frame_us=14414
+[ScrollCycle] events_us=0 idle_us=196 cycle_us=14967 presented=true
+[ScrollTiming] prepare_us=1137 backend_us=3387
+[ScrollTiming] layout_us=1967 frame_us=6551
+[ScrollCycle] events_us=0 idle_us=19 cycle_us=6781 presented=true

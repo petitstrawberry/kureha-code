@@ -14,6 +14,7 @@ pub struct CustomTheme {
     pub(super) name: String,
     pub(super) dark: bool,
     pub(super) colors: WorkbenchColors,
+    pub(super) terminal: crate::terminal::TerminalPalette,
     pub(super) workspace: Color,
     pub(super) opacity: [f32; 4],
     pub(super) blur: f32,
@@ -97,6 +98,7 @@ pub(super) fn definition(base: &Theme) -> CustomTheme {
             name: base.name().into(),
             dark: base == &Theme::Dark,
             colors: base.colors(),
+            terminal: base.terminal_palette(),
             editor_colors: base.colors(),
             workspace: base.workspace_background(),
             opacity: [0.58, 0.78, 0.84, 0.78],
@@ -129,7 +131,8 @@ pub fn parse_theme(source: &str) -> Result<Theme, String> {
             "glass",
             "syntax",
             "syntax_rules",
-            "editor",
+            "code",
+            "terminal",
         ]
         .contains(&key.as_str())
         {
@@ -179,6 +182,19 @@ pub fn parse_theme(source: &str) -> Result<Theme, String> {
             *target = color(value, key)?;
         }
     }
+    // Workbench overrides also update terminal defaults; explicit terminal
+    // settings inherited from a base survive when those colors are untouched.
+    if let Some(colors) = root.get("colors").and_then(toml::Value::as_table) {
+        if colors.contains_key("background") {
+            theme.terminal.background = theme.colors.background;
+        }
+        if colors.contains_key("foreground") {
+            theme.terminal.foreground = theme.colors.foreground;
+        }
+        if colors.contains_key("accent") {
+            theme.terminal.cursor = theme.colors.accent.with_opacity(0.65);
+        }
+    }
     if let Some(value) = root.get("glass") {
         for (key, value) in table(value, "glass")? {
             match key.as_str() {
@@ -192,18 +208,17 @@ pub fn parse_theme(source: &str) -> Result<Theme, String> {
         }
     }
     theme.editor_colors = theme.colors;
-    if let Some(value) = root.get("editor") {
-        let editor = table(value, "editor")?;
+    if let Some(value) = root.get("code") {
+        let editor = table(value, "code")?;
         if let Some(value) = editor.get("theme") {
-            let name = value.as_str().ok_or("editor.theme must be a preset name")?;
+            let name = value.as_str().ok_or("code.theme must be a preset name")?;
             let selected = match name {
                 "light" => Theme::Light,
                 "dark" => Theme::Dark,
-                name => {
-                    super::preset(name).ok_or_else(|| format!("Unknown editor theme: {name}"))?
-                }
+                name => super::preset(name).ok_or_else(|| format!("Unknown code theme: {name}"))?,
             };
             theme.editor_colors = selected.editor_colors();
+            theme.terminal = selected.terminal_palette();
             theme.syntax = selected.syntect_theme();
         }
         for (key, value) in editor {
@@ -212,7 +227,7 @@ pub fn parse_theme(source: &str) -> Result<Theme, String> {
                 "font_size" => {
                     theme.font_size = number(value, key, 48.0)?;
                     if theme.font_size < 8.0 {
-                        return Err("editor.font_size must be 8..48".into());
+                        return Err("code.font_size must be 8..48".into());
                     }
                 }
                 "font_family" => {
@@ -237,11 +252,52 @@ pub fn parse_theme(source: &str) -> Result<Theme, String> {
                 "foreground" => theme.editor_colors.foreground = color(value, key)?,
                 "selection" => theme.editor_colors.selection = color(value, key)?,
                 "current_line" => theme.editor_colors.current_line = color(value, key)?,
-                _ => return Err(format!("Unknown editor key: {key}")),
+                _ => return Err(format!("Unknown code key: {key}")),
             }
+        }
+        if editor.contains_key("background") {
+            theme.terminal.background = theme.editor_colors.background;
+        }
+        if editor.contains_key("foreground") {
+            theme.terminal.foreground = theme.editor_colors.foreground;
         }
         if theme.font_file.is_some() && theme.font_family.is_some() {
             return Err("Choose font_family or font_file, not both".into());
+        }
+    }
+    if let Some(value) = root.get("terminal") {
+        const ANSI: [&str; 16] = [
+            "black",
+            "red",
+            "green",
+            "yellow",
+            "blue",
+            "magenta",
+            "cyan",
+            "white",
+            "bright_black",
+            "bright_red",
+            "bright_green",
+            "bright_yellow",
+            "bright_blue",
+            "bright_magenta",
+            "bright_cyan",
+            "bright_white",
+        ];
+        for (key, value) in table(value, "terminal")? {
+            let target = match key.as_str() {
+                "background" => &mut theme.terminal.background,
+                "foreground" => &mut theme.terminal.foreground,
+                "cursor" => &mut theme.terminal.cursor,
+                key => {
+                    let index = ANSI
+                        .iter()
+                        .position(|name| *name == key)
+                        .ok_or_else(|| format!("Unknown terminal key: {key}"))?;
+                    &mut theme.terminal.ansi[index]
+                }
+            };
+            *target = color(value, key)?;
         }
     }
     theme.syntax.settings.foreground = Some(syntax_color(theme.editor_colors.foreground));
@@ -302,7 +358,7 @@ mod tests {
     use super::*;
     #[test]
     fn editor_palette_and_typography_do_not_change_workbench_colors() {
-        let theme = parse_theme("base='light'\n[editor]\ntheme='tokyo-night'\nfont_size=18\nfont_family='Menlo'\nforeground='#eeeeee'").unwrap();
+        let theme = parse_theme("base='light'\n[code]\ntheme='tokyo-night'\nfont_size=18\nfont_family='Menlo'\nforeground='#eeeeee'").unwrap();
         assert_eq!(theme.colors(), Theme::Light.colors());
         assert_eq!(theme.editor_colors().background, Color::rgb(26, 27, 38));
         assert_eq!(theme.editor_colors().foreground, Color::rgb(238, 238, 238));
@@ -310,7 +366,37 @@ mod tests {
         for (id, _) in super::super::PRESETS {
             assert!(super::super::preset(id).is_some());
         }
-        assert!(parse_theme("[editor]\nfont_size=0").is_err());
+        assert!(parse_theme("[code]\nfont_size=0").is_err());
+    }
+
+    #[test]
+    fn code_palette_pairs_editor_and_terminal_with_optional_terminal_overrides() {
+        let ui = super::super::preset("kureha").unwrap();
+        for (id, _) in super::super::PRESETS {
+            let code = super::super::preset(id).unwrap();
+            let combined = ui.with_code_theme(&code);
+            assert_eq!(combined.colors(), ui.colors());
+            assert_eq!(combined.editor_colors(), code.editor_colors());
+            assert_eq!(combined.terminal_palette(), code.terminal_palette());
+            assert_eq!(code.terminal_palette().background, code.colors().background);
+        }
+        let theme = parse_theme("base='kureha'\n[code]\ntheme='monokai'\nbackground='#272722'\n[terminal]\nred='#aabbcc'\ncursor='#dd558880'").unwrap();
+        assert_eq!(theme.colors(), ui.colors());
+        assert_eq!(
+            theme.terminal_palette().background,
+            theme.editor_colors().background
+        );
+        assert_eq!(
+            theme.terminal_palette().foreground,
+            theme.editor_colors().foreground
+        );
+        assert_eq!(theme.terminal_palette().ansi[1], Color::rgb(170, 187, 204));
+        assert_eq!(
+            theme.terminal_palette().cursor,
+            Color::rgba(221, 85, 136, 128.0 / 255.0)
+        );
+        assert!(parse_theme("[terminal]\nred='#xyz'").is_err());
+        assert!(parse_theme("[terminal]\npink='#aabbcc'").is_err());
     }
 
     #[test]

@@ -11,6 +11,8 @@ use std::{
 };
 
 pub type DocumentId = u64;
+/// Tab identities share the document ID allocator but need not own a document.
+pub type TabId = u64;
 
 #[derive(Clone)]
 pub struct Bindings {
@@ -145,9 +147,13 @@ impl Workspace {
         doc.disk_text = None;
         id
     }
-    fn add(&mut self, path: Option<PathBuf>, text: &str) -> DocumentId {
+    pub fn new_tab_id(&mut self) -> TabId {
         let id = self.next_id;
         self.next_id += 1;
+        id
+    }
+    fn add(&mut self, path: Option<PathBuf>, text: &str) -> DocumentId {
+        let id = self.new_tab_id();
         self.documents.push(Document::new(id, path, text));
         id
     }

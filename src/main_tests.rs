@@ -1546,7 +1546,7 @@ fn empty_workspace_stays_empty_until_a_document_is_explicitly_created_or_opened(
     assert!(app.runtime.lock().unwrap().workspace.documents.is_empty());
     assert_eq!(app.active_id(), None);
     assert_eq!(app.window_title(), env!("APP_NAME"));
-    assert_eq!(app.editor_pane_order(), vec![0]);
+    assert_eq!(app.pane_order(), vec![0]);
     app.on_idle();
     assert!(app.position.get().is_empty());
     assert!(app.language_status.get().is_empty());

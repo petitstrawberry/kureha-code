@@ -460,31 +460,24 @@ impl App {
         )
     }
     fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
-        self.tab_region(
-            Surface::section(
-                if self.is_preview_pane(group) { Either::A(self.markdown_pane(group)) } else { Either::B(vstack! { self.tabs_view(group),
-                    match self.group_id(group) {
-                        Some(id) => Either::A(self.document_view(id, group)),
-                        None => Either::B(VStack::new(()).frame(f32::INFINITY, f32::INFINITY).background(self.theme.get().editor_colors().background)),
-                    }, }
-                    .spacing(0.0)
-                    .frame(f32::INFINITY, f32::INFINITY)) },
-            )
-            .surface_style(self.theme.get().chrome_style())
-            .corner_radius(16.0)
-            .clip_content(true)
-            .key(format!("editor-group-{group}")),
-            tab_drag::RegionId::Group(group),
-        )
+        self.tab_region(Surface::section(vstack! {
+            self.tabs_view(group),
+            match self.group_document(group) {
+                Some(id) => Either::A(self.document_view(id, group)),
+                None => Either::B(VStack::new(()).frame(f32::INFINITY,f32::INFINITY).background(self.theme.get().editor_colors().background)),
+            },
+        }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY))
+            .surface_style(self.theme.get().chrome_style()).corner_radius(16.0).clip_content(true)
+            .key(format!("editor-group-{group}")), tab_drag::RegionId::Group(group))
     }
     fn tabs_view(&self, group: usize) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let active = self.group_id(group);
         let summaries = {
             let rt = self.runtime.lock().unwrap();
-            rt.group_tabs[group].iter().filter_map(|id| rt.workspace.get(*id)).map(|doc| {
+            rt.group_tabs[group].iter().filter_map(|tab| rt.document_for_tab(*tab).and_then(|id| rt.workspace.get(id)).map(|doc| (*tab,doc))).map(|(tab,doc)| {
                 let saving = matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id, .. }) if *id == doc.id);
-                (doc.id, doc.path.clone(), format!("{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if saving { " …" } else { "" }))
+                (tab, doc.path.clone(), format!("{}{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if rt.markdown.tabs.contains_key(&tab) { " · Preview" } else { "" }, if saving { " …" } else { "" }))
             }).collect::<Vec<_>>()
         };
         let mut left = 0.0;
@@ -523,6 +516,14 @@ impl App {
         }.spacing(2.0).padding_insets(EdgeInsets::new(8.0, 8.0, 8.0, 6.0))
     }
     pub(super) fn editor_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
+        LiveEditor {
+            app: self.clone(),
+            id,
+            group,
+            document: self.bindings_for(id, group).unwrap().document,
+        }
+    }
+    fn editor_content(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         let bindings = self.bindings_for(id, group).unwrap();
         let edited = self.clone();
         let keys = self.clone();
@@ -594,9 +595,8 @@ impl App {
             .on_text_change(move |delta| {
                 edited.edit(id, delta);
                 edited.schedule_completion(id, delta);
-                // Every revision needs fresh syntax/diagnostic decorations,
-                // including typing after the dirty flag is already set.
-                edited.changed();
+                // Document state rebuilds only this editor's decorations.
+                // Workbench chrome changes only when the dirty flag changes.
             });
         let editor = theme
             .style_text_view(editor)
@@ -900,6 +900,30 @@ impl App {
                     "Ctrl+Shift+V",
                     App::open_markdown_preview,
                 ),
+                self.item(
+                    "markdown-preview-side",
+                    "Open Markdown Preview to Side",
+                    "",
+                    App::markdown_preview_to_side,
+                ),
+                self.item(
+                    "markdown-source",
+                    "Show Markdown Source",
+                    "",
+                    App::markdown_source,
+                ),
+                self.item(
+                    "markdown-file-sync",
+                    "Toggle Markdown File Sync",
+                    "",
+                    App::markdown_follow_toggle,
+                ),
+                self.item(
+                    "markdown-scroll-sync",
+                    "Toggle Markdown Scroll Sync",
+                    "",
+                    App::markdown_scroll_toggle,
+                ),
                 MenuEntry::Separator,
                 self.item("split-right", "Split Editor Right", "Ctrl+\\", |a| {
                     a.split_editor(false)
@@ -951,12 +975,9 @@ impl App {
                 self.item("select-color-theme", "Select Color Theme…", "", |a| {
                     a.show_theme_picker(false)
                 }),
-                self.item(
-                    "select-editor-theme",
-                    "Select Editor Color Theme…",
-                    "",
-                    |a| a.show_theme_picker(true),
-                ),
+                self.item("select-code-theme", "Select Code Color Theme…", "", |a| {
+                    a.show_theme_picker(true)
+                }),
                 MenuEntry::Separator,
                 self.item(
                     "minimap",
@@ -1015,6 +1036,28 @@ impl App {
                 ),
             ]),
         ])
+    }
+}
+
+/// Keep document/decorations updates out of the workbench's subscription list.
+#[derive(Clone)]
+struct LiveEditor {
+    app: App,
+    id: DocumentId,
+    group: usize,
+    document: State<TextDocument>,
+}
+impl View for LiveEditor {
+    fn create_element(&self) -> Box<dyn Element> {
+        Box::new(ComponentElement::new_with_builder(self.clone(), |view| {
+            Box::new(view.app.editor_content(view.id, view.group))
+        }))
+    }
+    fn listenables(&self) -> Vec<&dyn Listenable> {
+        vec![&self.document, &self.app.syntax_revision]
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

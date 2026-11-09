@@ -252,8 +252,10 @@ impl App {
         let new = self.clone();
         let hide = self.clone();
         let focus = self.clone();
-        let background = kureha_code::terminal::background_color();
+        let palette = theme.terminal_palette();
+        let background = palette.background;
         let body = if let Some(session) = active {
+            session.terminal.set_palette(palette);
             Either::A(
                 session
                     .terminal

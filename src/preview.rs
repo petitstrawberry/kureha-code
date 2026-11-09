@@ -24,10 +24,12 @@ impl App {
             .workspace
             .get(id)
             .and_then(|doc| doc.image.clone());
-        if let Some(image) = image {
-            Either::A(self.image_view(id, group, image))
+        if let Some(tab) = self.preview_tab(group) {
+            Either::A(self.markdown_view(tab, group))
+        } else if let Some(image) = image {
+            Either::B(Either::A(self.image_view(id, group, image)))
         } else {
-            Either::B(self.editor_view(id, group))
+            Either::B(Either::B(self.editor_view(id, group)))
         }
     }
     fn set_image_zoom(&self, id: DocumentId, group: usize, zoom: f32) {

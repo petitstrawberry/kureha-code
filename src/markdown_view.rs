@@ -11,6 +11,19 @@ use scarlet_ui::{
     renderer::PaintContext,
 };
 use std::any::Any;
+#[cfg(test)]
+pub(super) mod metrics {
+    #[derive(Default, Debug)]
+    pub struct Counts {
+        pub layouts: Vec<f32>,
+        pub paints: usize,
+        pub wraps: usize,
+    }
+    thread_local! { pub static COUNTS: std::cell::RefCell<Counts> = Default::default(); }
+    pub fn take() -> Counts {
+        COUNTS.with(|c| std::mem::take(&mut *c.borrow_mut()))
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct MarkdownView {
@@ -21,7 +34,7 @@ pub(super) struct MarkdownView {
     pub on_scroll: Arc<dyn Fn(f32) + Send + Sync>,
     pub position: Arc<Mutex<PreviewPosition>>,
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct PreviewPosition {
     pub viewport: Rect,
     pub mapping: Vec<(f32, f32)>,
@@ -85,6 +98,8 @@ impl MarkdownView {
         self.layout_cached(width, &mut CellCache::new())
     }
     fn layout_cached(&self, width: f32, cache: &mut CellCache) -> Layout {
+        #[cfg(test)]
+        metrics::COUNTS.with(|c| c.borrow_mut().layouts.push(width));
         let width = width.max(1.0);
         let page = (width - 40.0).clamp(1.0, 840.0);
         let left = ((width - page) * 0.5).max(0.0);
@@ -229,6 +244,8 @@ impl MarkdownView {
         size: f32,
         layout: &mut Layout,
     ) -> f32 {
+        #[cfg(test)]
+        metrics::COUNTS.with(|c| c.borrow_mut().wraps += 1);
         let code = matches!(block.kind, Kind::Code(_));
         let mut x = 0.0;
         let mut y = top;
@@ -543,6 +560,8 @@ impl ElementRenderObject for Renderer {
         }
     }
     fn paint<'a>(&'a self, ctx: &mut PaintContext<'a>, origin: Point) -> bool {
+        #[cfg(test)]
+        metrics::COUNTS.with(|c| c.borrow_mut().paints += 1);
         let colors = self.view.theme.editor_colors();
         let visible = self.viewport.unwrap_or(Rect::new(Point::ZERO, self.size()));
         ctx.push_clip(Rect::new(origin, self.size()));

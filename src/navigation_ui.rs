@@ -21,7 +21,7 @@ enum Mode {
     Commands,
     Line,
     Themes {
-        editor_only: bool,
+        code_only: bool,
     },
 }
 #[derive(Clone, Debug)]
@@ -193,6 +193,30 @@ const COMMANDS: &[CommandDescriptor] = &[
         ""
     ),
     command!(
+        "markdown-preview-side",
+        "Markdown: Open Preview to Side",
+        "split source",
+        ""
+    ),
+    command!(
+        "markdown-source",
+        "Markdown: Show Source",
+        "preview editor",
+        ""
+    ),
+    command!(
+        "markdown-file-sync",
+        "Markdown: Toggle File Sync",
+        "preview follow pin",
+        ""
+    ),
+    command!(
+        "markdown-scroll-sync",
+        "Markdown: Toggle Scroll Sync",
+        "preview position",
+        ""
+    ),
+    command!(
         "markdown-preview",
         "Markdown: Open Preview",
         "source render",
@@ -309,9 +333,9 @@ const COMMANDS: &[CommandDescriptor] = &[
         "Primary+K Primary+T"
     ),
     command!(
-        "select-editor-theme",
-        "Preferences: Select Editor Color Theme",
-        "syntax colors palette",
+        "select-code-theme",
+        "Preferences: Select Code Color Theme",
+        "code editor terminal syntax colors palette",
         ""
     ),
     command!(
@@ -453,8 +477,8 @@ impl App {
             }
         }
     }
-    pub(super) fn show_theme_picker(&self, editor_only: bool) {
-        self.show_navigation(Mode::Themes { editor_only });
+    pub(super) fn show_theme_picker(&self, code_only: bool) {
+        self.show_navigation(Mode::Themes { code_only });
     }
     fn preview_selected_theme(&self) {
         if !matches!(self.nav.mode.get(), Mode::Themes { .. }) {
@@ -479,7 +503,7 @@ impl App {
             }
         }
     }
-    fn theme_rows(&self, editor_only: bool, query: &str) -> Vec<Row> {
+    fn theme_rows(&self, code_only: bool, query: &str) -> Vec<Row> {
         use kureha_code::theme::{PRESETS, Theme, preset};
         let original = self
             .nav
@@ -499,8 +523,8 @@ impl App {
             .into_iter()
             .map(|choice| {
                 let label = choice.name().to_owned();
-                let theme = if editor_only {
-                    original.with_editor_theme(&choice)
+                let theme = if code_only {
+                    original.with_code_theme(&choice)
                 } else {
                     choice
                 };
@@ -807,9 +831,9 @@ impl App {
                 service.requested = false;
                 service.displayed_query = Some(request);
             }
-            Mode::Themes { editor_only } => {
+            Mode::Themes { code_only } => {
                 let rows = if navigation::validate_query(&query).is_ok() {
-                    self.theme_rows(editor_only, &query)
+                    self.theme_rows(code_only, &query)
                 } else {
                     Vec::new()
                 };
@@ -1013,32 +1037,36 @@ impl App {
             "duplicate-down" => self.edit_command(super::editing_ui::Command::DuplicateDown),
             "markdown-refresh" => self.refresh_markdown_preview(),
             "markdown-preview" => self.open_markdown_preview(),
+            "markdown-preview-side" => self.markdown_preview_to_side(),
+            "markdown-source" => self.markdown_source(),
+            "markdown-file-sync" => self.markdown_follow_toggle(),
+            "markdown-scroll-sync" => self.markdown_scroll_toggle(),
             "split-right" => self.split_editor(false),
             "split-down" => self.split_editor(true),
             "focus-other" => self.focus_other_group(),
             "close-split" => self.close_split(),
             "select-color-theme" => self.show_theme_picker(false),
-            "select-editor-theme" => self.show_theme_picker(true),
+            "select-code-theme" => self.show_theme_picker(true),
             "theme-edit" => self.open_theme_settings(),
             "theme-reload" => self.reload_theme_settings(),
             "minimap" => self.toggle_minimap(),
             "tab-outer-left" => {
-                if let Some(id) = self.active_id() {
+                if let Some(id) = self.group_id(self.focused_group.get()) {
                     self.split_tab_outer(id, self.focused_group.get(), tab_drag::Edge::Left);
                 }
             }
             "tab-outer-right" => {
-                if let Some(id) = self.active_id() {
+                if let Some(id) = self.group_id(self.focused_group.get()) {
                     self.split_tab_outer(id, self.focused_group.get(), tab_drag::Edge::Right);
                 }
             }
             "tab-outer-top" => {
-                if let Some(id) = self.active_id() {
+                if let Some(id) = self.group_id(self.focused_group.get()) {
                     self.split_tab_outer(id, self.focused_group.get(), tab_drag::Edge::Top);
                 }
             }
             "tab-outer-bottom" => {
-                if let Some(id) = self.active_id() {
+                if let Some(id) = self.group_id(self.focused_group.get()) {
                     self.split_tab_outer(id, self.focused_group.get(), tab_drag::Edge::Bottom);
                 }
             }
@@ -1077,8 +1105,8 @@ impl App {
         let placeholder = match self.nav.mode.get() {
             Mode::Commands => "Type a command",
             Mode::Line => "Go to line:column",
-            Mode::Themes { editor_only: false } => "Select Color Theme",
-            Mode::Themes { editor_only: true } => "Select Editor Color Theme",
+            Mode::Themes { code_only: false } => "Select Color Theme",
+            Mode::Themes { code_only: true } => "Select Code Color Theme",
             _ => "Search files by name · > commands · : line",
         };
         let height = if self.nav.effective_mode() == Mode::Line {
@@ -1271,7 +1299,7 @@ mod tests {
             .unwrap();
         app.nav.selected.set(Some(entry));
         app.accept_navigation();
-        assert_eq!(app.nav.mode.get(), Mode::Themes { editor_only: false });
+        assert_eq!(app.nav.mode.get(), Mode::Themes { code_only: false });
         assert_eq!(app.theme.get(), original);
         assert!(app.nav.rows.get().iter().any(|row| row.label == "Light"));
         app.nav.query.set("monokai".into());
@@ -1304,10 +1332,10 @@ mod tests {
     }
 
     #[test]
-    fn editor_theme_preview_restores_custom_fonts_and_preserves_workbench_colors() {
+    fn code_theme_preview_restores_custom_fonts_and_preserves_workbench_colors() {
         let app = app_with_text("source");
         let custom =
-            kureha_code::theme::parse_theme("name='Custom'\nbase='kureha'\n[editor]\nfont_size=18")
+            kureha_code::theme::parse_theme("name='Custom'\nbase='kureha'\n[code]\nfont_size=18")
                 .unwrap();
         app.set_theme(custom.clone());
         app.show_theme_picker(true);
@@ -1321,6 +1349,12 @@ mod tests {
             kureha_code::theme::preset("monokai")
                 .unwrap()
                 .editor_colors()
+        );
+        assert_eq!(
+            app.theme.get().terminal_palette(),
+            kureha_code::theme::preset("monokai")
+                .unwrap()
+                .terminal_palette()
         );
         app.navigation_key(KeyCode::Escape, KeyModifiers::empty());
         assert_eq!(app.theme.get(), custom);

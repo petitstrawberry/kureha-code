@@ -5,6 +5,8 @@
 //! `open(folder)` starts a fresh shell in that folder. Hiding the panel may keep
 //! the session alive; `close()` or dropping the last Terminal releases it.
 mod backend;
+mod palette;
+pub use palette::TerminalPalette;
 mod screen;
 #[cfg(test)]
 mod tests;
@@ -26,11 +28,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-
-/// Neutral canvas shared by the ANSI grid and the surrounding content inset.
-pub fn background_color() -> scarlet_ui::Color {
-    screen::background()
-}
 
 pub const CELL_WIDTH: f32 = 8.0;
 pub const CELL_HEIGHT: f32 = 17.0;
@@ -69,6 +66,7 @@ struct Inbox {
 }
 struct Snapshot {
     grid: TextGridBuffer,
+    colors: Vec<(vt100::Color, vt100::Color)>,
     cursor: TextGridCursor,
     application_cursor: bool,
     bracketed_paste: bool,
@@ -89,6 +87,8 @@ struct Shared {
     session: Mutex<Option<Session>>,
     size: Mutex<(u16, u16)>,
     grid: State<TextGridBuffer>,
+    colors: Mutex<Vec<(vt100::Color, vt100::Color)>>,
+    palette: State<TerminalPalette>,
     cursor: State<TextGridCursor>,
     status: State<TerminalStatus>,
     focused: State<bool>,
@@ -115,6 +115,8 @@ impl Terminal {
                 session: Mutex::new(None),
                 size: Mutex::new(DEFAULT_SIZE),
                 grid: State::new(generate_state_id(), screen::blank(DEFAULT_SIZE)),
+                colors: Mutex::new(Vec::new()),
+                palette: State::new(generate_state_id(), TerminalPalette::default()),
                 cursor: State::new(generate_state_id(), TextGridCursor::new(0, 0)),
                 status: State::new(generate_state_id(), TerminalStatus::Idle),
                 focused: State::new(generate_state_id(), false),
@@ -130,7 +132,10 @@ impl Terminal {
     pub fn open(&self, cwd: impl AsRef<Path>) {
         self.close();
         let size = *self.shared.size.lock().unwrap();
-        self.shared.grid.set(screen::blank(size));
+        self.shared.colors.lock().unwrap().clear();
+        self.shared
+            .grid
+            .set(self.shared.palette.get().recolor(screen::blank(size), &[]));
         self.shared.status.set(TerminalStatus::Starting);
         self.shared
             .application_cursor
@@ -173,7 +178,17 @@ impl Terminal {
         let Some(snapshot) = snapshot else {
             return false;
         };
-        self.shared.grid.set(snapshot.grid);
+        self.apply_snapshot(snapshot);
+        true
+    }
+    fn apply_snapshot(&self, snapshot: Snapshot) {
+        let grid = self
+            .shared
+            .palette
+            .get()
+            .recolor(snapshot.grid, &snapshot.colors);
+        *self.shared.colors.lock().unwrap() = snapshot.colors;
+        self.shared.grid.set(grid);
         self.shared.cursor.set(snapshot.cursor);
         self.shared.status.set(snapshot.status);
         self.shared
@@ -182,7 +197,17 @@ impl Terminal {
         self.shared
             .bracketed_paste
             .store(snapshot.bracketed_paste, Ordering::Relaxed);
-        true
+    }
+    /// Recolor existing output without restarting the shell or waiting for I/O.
+    pub fn set_palette(&self, palette: TerminalPalette) {
+        if self.shared.palette.get() == palette {
+            return;
+        }
+        let colors = self.shared.colors.lock().unwrap();
+        self.shared
+            .grid
+            .set(palette.recolor(self.shared.grid.get(), &colors));
+        self.shared.palette.set(palette);
     }
     pub fn status(&self) -> TerminalStatus {
         self.shared.status.get()
@@ -327,10 +352,12 @@ impl Terminal {
     fn content(&self, font: Option<FontStack>) -> impl View + Clone + use<> {
         let terminal = self.clone();
         let cell_size = view::cell_size(font.as_ref());
+        let palette = self.shared.palette.get();
         let mut grid = TextGrid::new(self.shared.grid.clone())
             .cell_size(cell_size.width, cell_size.height)
             .font_size(14.0)
-            .background_color(screen::background())
+            .background_color(palette.background)
+            .cursor_color(palette.cursor)
             .cursor(if self.focused() {
                 Some(self.shared.cursor.get())
             } else {

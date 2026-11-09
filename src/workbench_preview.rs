@@ -23,7 +23,7 @@ fn workbench_preview() {
                 .map(|(id, _)| kureha_code::theme::preset(id).unwrap()),
         )
         .chain([kureha_code::theme::parse_theme(
-            "name='Editor Only'\nbase='light'\n[editor]\ntheme='tokyo-night'\nfont_size=18",
+            "name='Code Colors'\nbase='light'\n[code]\ntheme='tokyo-night'\nfont_size=18",
         )
         .unwrap()]);
     for theme in themes {

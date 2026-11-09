@@ -1,0 +1,26 @@
+{
+  "before": {
+    "scroll_frames": 29,
+    "layout_us": {
+      "median": 40435,
+      "max": 48483
+    },
+    "frame_us": {
+      "median": 43378,
+      "p95_nearest_rank": 46593,
+      "max": 51374
+    }
+  },
+  "after": {
+    "scroll_frames": 29,
+    "layout_us": {
+      "median": 49,
+      "max": 144
+    },
+    "frame_us": {
+      "median": 3357,
+      "p95_nearest_rank": 5747,
+      "max": 9934
+    }
+  }
+}

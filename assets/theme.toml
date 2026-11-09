@@ -30,8 +30,8 @@ string = "#8b6243"
 # scope = "entity.name.function"
 # color = "#e1d396"
 
-[editor]
-# Independent from the sidebar, tabs and other application controls.
+[code]
+# Editor and terminal colors; independent from sidebar and tabs.
 # theme = "tokyo-night"
 font_size = 14.0
 # font_family = "Menlo" # an installed family; default is bundled JetBrains Mono
@@ -40,3 +40,14 @@ font_size = 14.0
 # foreground = "#c0caf5"
 # selection = "#334466"
 # current_line = "#24283b"
+
+[terminal]
+# Defaults follow the workbench theme. Optional overrides:
+# background = "#fffbfd"
+# foreground = "#463641"
+# cursor = "#c84c79a6"
+# red = "#b63b5e"
+# Also: black, green, yellow, blue, magenta, cyan, white,
+# and bright_black, bright_red, bright_green, bright_yellow,
+# bright_blue, bright_magenta, bright_cyan, bright_white.
+# 256-color slots 16–255 and explicit RGB colors are set by shell applications.
