@@ -191,11 +191,14 @@ args = []
 ## Themes, minimap and terminal
 
 View offers Light/Dark, minimap visibility and the integrated terminal. The editor
-surface is flat and borderless. The sidebar, tabs, status bar and panel headers
-share Bubble Glass materials; search, completion, rename and hover use denser
-floating glass to keep text readable over source. Themes include syntax colors and subdued selection
+surface is flat and borderless inside an inset, rounded glass pane. The sidebar
+and editor groups share Bubble Glass rims and elevation above a tinted workspace;
+active tabs keep their glass material. The status line sits directly on the
+workspace. Search, completion, rename and hover use denser floating glass to keep
+text readable over source. Themes include syntax colors and subdued selection
 and separators. Primary K then primary T switches theme; primary K then primary M
-toggles the minimap. The overview has fixed two-pixel row spacing, clips and scrolls
+toggles the minimap (empty documents reserve no minimap space). The overview has
+fixed two-pixel row spacing, clips and scrolls
 with the document, and uses a translucent neutral viewport. Source and paint work
 are bounded; very large documents use at most 768 sampled rows.
 
@@ -209,3 +212,12 @@ shell integration beyond the PTY are not implemented.
 This is not yet VS Code feature parity. Arbitrarily nested editor groups,
 multi-cursor editing, code folding, workspace-wide symbol rename, Git/diff tools,
 debugging, extension hosting, and persistent workspace restoration remain open.
+
+Visual review fixtures use the real ScarletUI renderer. To regenerate light/dark
+empty, populated, Find, command palette and project search views:
+
+```sh
+KUREHA_WORKBENCH_PREVIEW=artifacts/bubble-glass cargo test --bin kureha-code workbench_preview -- --ignored --test-threads=1
+```
+
+The manual test writes PPM images to that directory; it does not launch a window.

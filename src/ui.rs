@@ -329,19 +329,26 @@ impl App {
         let theme = self.theme.get();
         let keys = self.clone();
         ZStack::new((vstack! {
-            SplitView::new(if_view!(self.project.is_open(), self.project_search_view(), self.explorer_view()), self.editor_area())
-                .fraction(0.22).min_first(170.0).min_second(420.0).divider_colors(theme.colors().border,theme.colors().accent)
-                .frame(f32::INFINITY, f32::INFINITY),
+            SplitView::new(
+                Surface::section(if_view!(self.project.is_open(), self.project_search_view(), self.explorer_view()))
+                    .surface_style(theme.chrome_style()).corner_radius(16.0).clip_content(true),
+                self.editor_area(),
+            )
+                .fraction(0.22).min_first(190.0).min_second(420.0)
+                .divider_thickness(10.0).divider_hit_slop(0.0)
+                .divider_colors(Color::TRANSPARENT,theme.colors().accent.with_opacity(0.12))
+                .frame(f32::INFINITY, f32::INFINITY)
+                .padding_insets(EdgeInsets::new(10.0, 10.0, 10.0, 0.0)),
             hstack! {
                 Text::from_state(self.status.clone()).font_size(11.0).color(theme.colors().foreground),
                 Spacer::new(),
                 Text::from_state(self.language_status.clone()).font_size(11.0).color(theme.colors().muted),
                 Text::from_state(self.position.clone()).font_size(11.0).color(theme.colors().muted),
-            }.spacing(12.0).padding(6.0).surface_style(theme.chrome_style()),
+            }.spacing(12.0).padding_insets(EdgeInsets::new(18.0, 8.0, 18.0, 8.0)),
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY)
-        .background(theme.colors().background), self.navigation_overlay())).alignment(Alignment::TopLeading)
+        .background(theme.workspace_background()), self.navigation_overlay())).alignment(Alignment::TopLeading)
         .frame(f32::INFINITY,f32::INFINITY)
         .on_event_capture(move |event| {
             let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event else {
@@ -421,7 +428,9 @@ impl App {
     fn editor_area(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         vstack! {
-            SplitView::new(self.editor_groups(),self.bottom_panel()).axis(scarlet_ui::views::SplitAxis::Vertical).divider_colors(theme.colors().border,theme.colors().accent)
+            SplitView::new(self.editor_groups(),self.bottom_panel()).axis(scarlet_ui::views::SplitAxis::Vertical)
+                .divider_thickness(if self.terminal_visible.get() {10.0} else {1.0}).divider_hit_slop(0.0)
+                .divider_colors(Color::TRANSPARENT,theme.colors().accent.with_opacity(0.12))
                 .fraction(if self.terminal_visible.get() {0.70} else {1.0})
                 .min_first(120.0).min_second(if self.terminal_visible.get() {100.0} else {0.0})
                 .frame(f32::INFINITY,f32::INFINITY),
@@ -456,28 +465,40 @@ impl App {
         } else {
             0.0
         })
-        .divider_colors(theme.colors().border, theme.colors().accent)
+        .divider_thickness(if self.second.get().is_some() {
+            10.0
+        } else {
+            1.0
+        })
+        .divider_hit_slop(0.0)
+        .divider_colors(Color::TRANSPARENT, theme.colors().accent.with_opacity(0.12))
         .frame(f32::INFINITY, f32::INFINITY)
     }
     fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
-        vstack! { self.tabs_view(group), self.editor_view(self.group_id(group), group), }
-            .spacing(0.0)
-            .frame(f32::INFINITY, f32::INFINITY)
-            .key(format!("editor-group-{group}"))
+        Surface::section(
+            vstack! { self.tabs_view(group), self.editor_view(self.group_id(group), group), }
+                .spacing(0.0)
+                .frame(f32::INFINITY, f32::INFINITY),
+        )
+        .surface_style(self.theme.get().chrome_style())
+        .corner_radius(16.0)
+        .clip_content(true)
+        .key(format!("editor-group-{group}"))
     }
     fn bottom_panel(&self) -> impl View + Clone + use<> {
         let close = self.clone();
         let restart = self.clone();
         let theme = self.theme.get();
-        if_view!(self.terminal_visible.get(),vstack! {
+        if_view!(self.terminal_visible.get(),Surface::section(vstack! {
             hstack! {
                 Text::new("Terminal").font_size(11.0).color(theme.colors().muted),
                 Spacer::new(),
                 Button::new("New Session").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || {restart.terminal.close();restart.show_terminal();}),
                 Button::new("×").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move ||close.toggle_terminal()),
-            }.spacing(8.0).padding(6.0).surface_style(theme.chrome_style()),
+            }.spacing(8.0).padding(10.0),
             self.terminal.view_with_font(self.editor_font.clone()),
-        }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY),VStack::new(()))
+        }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY))
+            .surface_style(theme.chrome_style()).corner_radius(16.0).clip_content(true),VStack::new(()))
     }
     fn tabs_view(&self, group: usize) -> impl View + Clone + use<> {
         let theme = self.theme.get();
@@ -497,24 +518,24 @@ impl App {
             left += width + 4.0;
             let select = self.clone();
             let close = self.clone();
-            let background = if id == active { theme.colors().elevated.with_opacity(0.88) } else { Color::TRANSPARENT };
             let icon = file_icons::for_path(path.as_deref());
-            hstack! {
+            let content = hstack! {
                 Button::new(label).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).font_size(13.0).padding(7.0)
                     .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Small)
                     .on_click(move || {select.focus_group(group); select.activate(id);}).frame(width - 28.0, 32.0),
                 Button::new("×").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(4.0)
                     .on_click(move || {close.focus_group(group); close.request_close(Some(id));}).frame(28.0, 32.0),
-            }.spacing(0.0).frame(width, 32.0)
-                .surface_style(theme.chrome_style()).fill(background).corner_radius(8.0).clip_content(true).key(id)
+            }.spacing(0.0).frame(width, 32.0);
+            let surface = Surface::section(content).corner_radius(10.0).clip_content(true);
+            if id == active { surface.surface_style(theme.tab_style()) }
+                else { surface.fill(Color::TRANSPARENT) }.key(id)
         }).collect::<Vec<_>>();
         ScrollView::new(HStack::new(ViewCollection(tabs)).spacing(4.0))
             .horizontal()
             .content_size(left, 32.0)
             .scroll_to_horizontal_range(selected_range.0, selected_range.1)
             .frame(f32::INFINITY, 34.0)
-            .padding_insets(EdgeInsets::new(6.0, 4.0, 6.0, 4.0))
-            .surface_style(theme.chrome_style())
+            .padding_insets(EdgeInsets::new(8.0, 8.0, 8.0, 6.0))
     }
     fn editor_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         let bindings = self.bindings_for(id, group).unwrap();
@@ -548,6 +569,7 @@ impl App {
             minimap.1.as_deref(),
             &minimap.0,
         );
+        let show_minimap = self.minimap_visible.get() && snapshot.source_len > 0;
         let minimap_scroll = bindings.scroll.clone();
         let editor = TextView::with_document(bindings.document, bindings.selection)
             .text_spans(styles)
@@ -646,7 +668,7 @@ impl App {
                 false
             })
             .key(id);
-        vstack! {
+        Surface::section(vstack! {
             if_view!(fallback.is_some(),
                 Text::new(fallback.unwrap_or("")).font_size(11.0)
                     .color(theme.colors().muted).padding(6.0),
@@ -654,16 +676,20 @@ impl App {
             hstack! {
                 ZStack::new((editor,if_view!(self.focused_group.get()==group,self.language_popup(),VStack::new(())),if_view!(self.find_open.get() && self.focused_group.get()==group,super::popup::Anchored::top_right(self.find_view()),VStack::new(())))).alignment(Alignment::TopLeading)
                     .frame(f32::INFINITY,f32::INFINITY),
-                kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme).width(if self.second.get().is_some() {54.0} else {100.0}).enabled(self.minimap_visible.get()).line_height(self.editor_font.as_ref().map_or_else(||scarlet_ui::graphics::line_height_sized(14.0),|font|scarlet_ui::graphics::line_height_sized_with_font_stack(14.0,font)) as f32).view(),
+                kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme).width(if self.second.get().is_some() {54.0} else {100.0}).enabled(show_minimap).line_height(self.editor_font.as_ref().map_or_else(||scarlet_ui::graphics::line_height_sized(14.0),|font|scarlet_ui::graphics::line_height_sized_with_font_stack(14.0,font)) as f32).view(),
             }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY),
         }
         .spacing(0.0)
-        .frame(f32::INFINITY, f32::INFINITY)
+        .frame(f32::INFINITY, f32::INFINITY))
+        .fill(theme.colors().background).corner_radius(12.0).clip_content(true)
+        .padding_insets(EdgeInsets::new(4.0, 0.0, 4.0, 4.0))
     }
     fn explorer_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let open = self.clone();
         let refresh = self.clone();
+        let empty_open = self.clone();
+        let search = self.clone();
         let rows = self.clone();
         let has_root = self.runtime.lock().unwrap().explorer.root.is_some();
         self.nav
@@ -671,14 +697,15 @@ impl App {
             .retain("tree:", self.tree_rows.get().into_iter().map(|row| row.key));
         vstack! {
             hstack! {
-                Text::new("Explorer").font_size(12.0).color(theme.colors().foreground),
+                Text::new("Explorer").font_size(13.0).color(theme.colors().foreground),
                 Spacer::new(),
-                Button::new("Open Folder").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).font_size(11.0).padding(5.0).on_click(move || open.show_folder()),
+                Button::icon_only(Icon::FolderOpen).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(6.0).on_click(move || open.show_folder()),
+                Button::icon_only(Icon::Search).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(6.0).on_click(move || search.show_project_search()),
                 Button::icon_only(Icon::Refresh).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(5.0).enabled(has_root).on_click(move || {
                     let root = refresh.runtime.lock().unwrap().explorer.root.clone();
                     if let Some(root) = root { refresh.open_folder(root); }
                 }),
-            }.spacing(4.0).padding(8.0),
+            }.spacing(2.0).padding_insets(EdgeInsets::new(14.0, 10.0, 8.0, 8.0)),
             if_view!(has_root,
                 ListView::new(self.tree_rows.clone(), self.tree_selected.clone(), 27.0, move |index, row: Row, selected| {
                     let app = rows.clone();
@@ -699,11 +726,17 @@ impl App {
                 }).item_key(|row| row.key.clone().into())
                   .frame(f32::INFINITY, f32::INFINITY),
                 vstack! {
-                    Text::new("Open a folder to browse files.").font_size(12.0).color(theme.colors().muted),
+                    IconView::new(Icon::Folder).size(IconSize::Large).color(theme.colors().muted),
+                    Text::new("No folder open").font_size(13.0).color(theme.colors().foreground),
+                    Text::new("Explore your project files").font_size(11.0).color(theme.colors().muted),
+                    Button::new("Open Folder").icon(Icon::Plus).icon_size(IconSize::Small)
+                        .font_size(12.0).text_color(theme.colors().foreground).material(theme.input_material())
+                        .on_click(move || empty_open.show_folder()),
                     Spacer::new(),
-                }.padding(12.0).frame(f32::INFINITY, f32::INFINITY)
+                }.spacing(12.0).padding_insets(EdgeInsets::new(12.0, 28.0, 12.0, 12.0))
+                    .frame(f32::INFINITY, f32::INFINITY)
             ),
-        }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY).surface_style(theme.chrome_style())
+        }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY)
     }
     fn find_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();

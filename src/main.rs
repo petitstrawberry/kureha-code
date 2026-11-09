@@ -1342,7 +1342,7 @@ impl Application for App {
     fn scenes(&self) -> impl Scene {
         scenes! {
             Window::new(self.window_title(), self.content()).scene_key("main")
-                .app_id(env!("APP_ID")).background_color(self.theme.get().colors().background).menu_bar(self.menu()).size(Size::new(1100.0, 760.0)).min_size(Size::new(720.0, 400.0)),
+                .app_id(env!("APP_ID")).background_color(self.theme.get().workspace_background()).menu_bar(self.menu()).size(Size::new(1100.0, 760.0)).min_size(Size::new(720.0, 400.0)),
             Window::new("Unsaved Changes", self.confirmation_view()).scene_key("confirm")
                 .app_id(env!("APP_ID")).open_at_launch(false).size(Size::new(560.0, 240.0)),
         }
@@ -1418,3 +1418,6 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod workbench_preview;

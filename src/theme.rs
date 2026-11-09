@@ -103,10 +103,25 @@ impl Theme {
         colors
     }
 
-    /// Shared flat glass for persistent workbench chrome; it owns no extra space.
+    /// The exposed workspace behind the inset panes.
+    pub fn workspace_background(self) -> Color {
+        match self {
+            Self::Light => Color::rgb(222, 230, 241),
+            Self::Dark => Color::rgb(19, 25, 36),
+        }
+    }
+
+    /// Glass pane, with a rim and a restrained shadow above the workspace.
     pub fn chrome_style(self) -> SurfaceStyle {
         SurfaceStyle::bubble_glass()
-            .material(GlassMaterial::regular().tint(self.colors().surface.with_opacity(0.72)))
+            .material(GlassMaterial::regular().tint(self.colors().elevated.with_opacity(0.58)))
+            .elevation(ElevationRole::Raised)
+    }
+
+    pub fn tab_style(self) -> SurfaceStyle {
+        SurfaceStyle::bubble_glass()
+            .material(GlassMaterial::regular().tint(self.colors().elevated.with_opacity(0.78)))
+            .elevation(ElevationRole::Raised)
     }
 
     /// Denser glass keeps transient text readable over source code.

@@ -738,7 +738,7 @@ impl App {
         };
         vstack! {
             hstack! {
-                Text::new("Search").font_size(11.0).color(colors.muted),
+                Text::new("Search").font_size(13.0).color(colors.foreground),
                 Spacer::new(),
                 Button::new("×").header_style().font_size(13.0).padding(4.0)
                     .text_color(colors.foreground).background_color(Color::TRANSPARENT).on_click(move || close.close()),
@@ -787,8 +787,8 @@ impl App {
                         false
                     })
             }).item_key(|row| row.key.clone().into()).frame(f32::INFINITY, f32::INFINITY),
-        }.alignment(Alignment::Leading).spacing(6.0).padding(8.0)
-            .frame(f32::INFINITY, f32::INFINITY).surface_style(self.theme.get().chrome_style())
+        }.alignment(Alignment::Leading).spacing(8.0).padding(12.0)
+            .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {
                 if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) {
                     focus.owns_focus.set(true);
