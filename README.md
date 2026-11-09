@@ -1,7 +1,6 @@
 # Kureha Code
 
 A native, cross-platform code editor written in pure Rust with ScarletUI.
-It runs without an embedded web browser.
 
 <!-- ![Markdown source and preview](docs/screenshots/markdown-preview.png) -->
 
