@@ -101,10 +101,10 @@ impl App {
             target
         };
         if let Some(target) = target {
-            let group = if target.group == 1 && self.second.get().is_some() {
-                1
+            let group = if self.group_exists(target.group) {
+                target.group
             } else {
-                0
+                self.pane_order()[0]
             };
             self.focus_group(group);
             self.activate_unchecked(target.id);
@@ -269,6 +269,7 @@ mod tests {
             .unwrap()
             .document
             .set(TextDocument::from_str("猫"));
+        app.focus_group(1);
         app.close_split();
         app.go_back();
         assert_eq!(app.focused_group.get(), 0);

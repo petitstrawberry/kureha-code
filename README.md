@@ -10,8 +10,8 @@ caret, selection and scroll position. New/Open add tabs without replacing
 unsaved work; closing a dirty tab or the window offers Save, Discard and Cancel.
 Cut/Copy/Paste use ScarletUI's asynchronous platform clipboard. Paste, Cut and
 Replace All each have independent undo steps. View can split the editor right or
-down into two resizable groups with separate tab lists. A document opened in both
-groups shares text and history while keeping separate selections and viewports.
+down into nested, resizable groups with separate tab lists, including three columns
+or two columns above another group. A document opened in multiple groups shares text and history while keeping separate selections and viewports.
 Closing a group keeps its unsaved documents in the remaining group.
 
 Open Folder loads a shallow tree asynchronously, expanding directories only on
@@ -250,15 +250,29 @@ fixed two-pixel row spacing, clips and scrolls
 with the document, and uses a translucent neutral viewport. Source and paint work
 are bounded; very large documents use at most 768 sampled rows.
 
-Primary J or Control+backtick toggles the terminal. It runs a real PTY shell in the
-explorer root (otherwise the file’s directory), with ANSI colors, resizing,
-scrollback and asynchronous output. macOS/Unix uses openpty; Scarlet uses /dev/ptmx
-and /bin/sh. Clipboard paste is session-bound. Windows ConPTY is not implemented;
+Primary J or Control+backtick toggles the utility panel (Toggle Panel in the View
+menu), independently of the editor's split layout and keyboard focus. It opens
+below the editors by default. The panel contains shell sessions with a compact
+session strip: + starts another session, each session's × terminates that shell,
+and the far-right × hides the panel while keeping all sessions running. There is
+no extra heading, path footer, running-status label, or editor navigation toolbar.
+
+Control+Shift+backtick creates a session. Drag a session toward the workbench's
+right edge to dock the panel beside the editors, or toward the bottom edge to
+return it below; a tinted destination previews the drop. This relocates the
+utility panel, not an editor document. File tabs cannot enter the panel. Ordinary
+editor splits retain their own tabs, selection, scroll and undo history.
+
+Sessions run real PTY shells in the explorer root (otherwise the file's directory),
+with ANSI colors, resizing, scrollback and asynchronous output. Hidden/background
+sessions continue to drain output. Clipboard paste is bound to session identity,
+generation and focus epoch. Exited output remains until the session is closed or
+restarted with Terminal: Restart Session. macOS/Unix uses openpty; Scarlet uses /dev/ptmx
+and /bin/sh. Windows ConPTY is not implemented;
 opening the terminal there reports unsupported. Terminal text selection/copy and
 shell integration beyond the PTY are not implemented.
 
-This is not yet VS Code feature parity. Arbitrarily nested editor groups,
-multi-cursor editing, code folding, workspace-wide symbol rename, Git/diff tools,
+This is not yet VS Code feature parity. Multi-cursor editing, code folding, workspace-wide symbol rename, Git/diff tools,
 debugging, extension hosting, and persistent workspace restoration remain open.
 
 Visual review fixtures use the real ScarletUI renderer. To regenerate light/dark
@@ -290,15 +304,23 @@ the file worker, with a 32 MiB input and 16 megapixel output limit. SVG remains 
 text document. Save and text-edit commands cannot overwrite an image preview.
 
 Drag a tab to another position in its tab strip to reorder it, or to the
-left/right/top/bottom edge of a single editor pane to split. A highlighted area
-shows the destination. With two panes open, drop into the other pane or its tab
-strip to move the tab. Selection, scroll position, unsaved edits and Undo history
+left/right/top/bottom edge of any editor pane to split that pane. A highlighted
+area shows the destination. The outermost 16 logical pixels of the editor area
+target the entire editor tree; farther inside, an edge targets the individual
+pane. This lets an existing vertical stack remain on the left while a new pane
+uses the entire right side (and likewise for the other three edges). The palette
+also offers Move Tab to Far Left/Far Right/Top/Bottom. Drop into another pane’s
+centre or tab strip to move the tab. Splits can mix vertical and horizontal directions. Selection, scroll position, unsaved edits and Undo history
 are preserved. Empty panes collapse; splitting the only tab keeps a view in
-both panes. Escape or dropping outside the editor cancels the gesture. The
-existing two-pane limit remains.
+both panes when splitting that same pane. Moving the sole tab to another pane
+collapses the empty source. Escape or dropping outside the editor cancels the gesture.
 
 HTML/Markdown previews are at the WebView design stage, not enabled yet.
 [The WebView design](docs/webview.md) reuses Myrica's engine/worker boundary and
 allows platform-native WebViews through separate presentation adapters. It
 covers in-memory documents, relative resources, native-view composition and the
 handoff between Myrica, ScarletUI and Kureha.
+
+On macOS, the theme extends through the native titlebar while keeping the system
+traffic lights and resizing. Drag the empty title strip to move the window.
+Other platforms retain their existing system decoration.

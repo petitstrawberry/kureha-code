@@ -176,7 +176,7 @@ impl ProjectSearch {
 
 impl App {
     pub(super) fn show_project_search(&self) {
-        self.terminal.blur();
+        self.blur_terminals();
         self.find_open.set(false);
         self.dismiss_language_panel();
         self.project.owns_focus.set(true);
@@ -632,7 +632,13 @@ impl App {
         }
     }
 
-    fn select_project_result(&self, id: DocumentId, source: &Source, range: Range<usize>, remember: bool) {
+    fn select_project_result(
+        &self,
+        id: DocumentId,
+        source: &Source,
+        range: Range<usize>,
+        remember: bool,
+    ) {
         let current = {
             let rt = self.runtime.lock().unwrap();
             rt.workspace
@@ -668,7 +674,7 @@ impl App {
         bindings.selection.set(selection);
         self.project.owns_focus.set(false);
         self.project.focus_query.set(false);
-        self.terminal.blur();
+        self.blur_terminals();
         self.dismiss_language_panel();
         self.changed();
     }
