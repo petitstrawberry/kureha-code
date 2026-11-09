@@ -798,7 +798,7 @@ impl App {
             super::popup::Anchored::top_center(vstack! {
                 TextField::new(self.nav.query.clone()).placeholder(placeholder).placeholder_color(colors.muted).font_size(13.0)
                     .text_color(colors.foreground).background_color(colors.elevated)
-                    .border_color(colors.border).focused_border_color(colors.accent)
+                    .border_color(colors.border).focused_border_color(colors.accent).material(self.theme.get().input_material())
                     .autofocus(true).on_submit(move || submit.accept_navigation())
                     .on_cancel(move || close.nav.close()).frame(f32::INFINITY, 32.0),
                 ListView::new(self.nav.rows.clone(), self.nav.selected.clone(), 34.0, move |index, row: Row, selected| {
@@ -819,7 +819,7 @@ impl App {
                 }).item_key(|row| row.key.clone().into()).frame(f32::INFINITY, height),
                 Text::from_state(self.nav.hint.clone()).font_size(11.0).color(colors.muted)
                     .frame_width(f32::INFINITY),
-            }.spacing(6.0).padding(8.0).background(colors.elevated).frame_width(f32::INFINITY).border(colors.border, 1.0).clip()),
+            }.spacing(8.0).padding(12.0).frame_width(f32::INFINITY).surface_style(self.theme.get().popup_style()).corner_radius(12.0).clip_content(true)),
             VStack::new(())
         )
     }
@@ -1067,7 +1067,7 @@ mod tests {
     }
 
     #[test]
-    fn palette_rows_are_flat_and_activate_across_their_full_width() {
+    fn palette_rows_keep_quiet_selection_and_activate_across_their_full_width() {
         use scarlet_ui::{
             event::{MouseButton, MouseEvent},
             pipeline::RenderingPipeline,
@@ -1094,10 +1094,9 @@ mod tests {
                         command,
                         PaintCommand::StrokeRect { .. }
                             | PaintCommand::StrokeRoundedRect { .. }
-                            | PaintCommand::FillRoundedRect { .. }
                             | PaintCommand::FillVerticalGradientRoundedRect { .. }
                     )),
-                    "row painted button or focus chrome"
+                    "row painted a button border or gradient"
                 );
             }
             for child in e.children() {

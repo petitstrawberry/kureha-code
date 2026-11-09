@@ -1,7 +1,9 @@
 //! Editor themes shared by syntax highlighting, the workbench, and minimap.
 //! Apply `style_text_view` to the editor and use `colors` for workbench surfaces.
 //! Theme selection is explicit; call `syntax::set_theme` when it changes.
-use scarlet_ui::prelude::{Color, ColorPalette, ColorScheme, TextView};
+use scarlet_ui::prelude::{
+    Color, ColorPalette, ColorScheme, ElevationRole, GlassMaterial, SurfaceStyle, TextView,
+};
 use syntect::highlighting::{Color as SyntaxColor, StyleModifier, Theme as SyntaxTheme, ThemeItem};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -83,9 +85,9 @@ impl Theme {
             warning: p.warning(),
         };
         if self == Self::Dark {
-            colors.background = Color::rgb(28, 30, 34);
-            colors.surface = Color::rgb(33, 35, 39);
-            colors.elevated = Color::rgb(40, 42, 46);
+            colors.background = Color::rgb(25, 28, 34);
+            colors.surface = Color::rgb(33, 39, 49);
+            colors.elevated = Color::rgb(40, 46, 56);
             colors.muted = Color::rgb(143, 149, 158);
             colors.border = Color::rgb(53, 56, 62);
             colors.current_line = Color::rgb(34, 37, 42);
@@ -93,9 +95,29 @@ impl Theme {
             colors.minimap_viewport = Color::rgba(114, 125, 144, 0.15);
             colors.minimap_border = Color::rgba(114, 125, 144, 0.45);
         } else {
+            colors.background = Color::rgb(252, 253, 255);
+            colors.surface = Color::rgb(235, 240, 248);
+            colors.elevated = Color::rgb(250, 252, 255);
             colors.selection = Color::rgba(51, 114, 187, 0.24);
         }
         colors
+    }
+
+    /// Shared flat glass for persistent workbench chrome; it owns no extra space.
+    pub fn chrome_style(self) -> SurfaceStyle {
+        SurfaceStyle::bubble_glass()
+            .material(GlassMaterial::regular().tint(self.colors().surface.with_opacity(0.72)))
+    }
+
+    /// Denser glass keeps transient text readable over source code.
+    pub fn popup_style(self) -> SurfaceStyle {
+        SurfaceStyle::bubble_glass()
+            .material(GlassMaterial::regular().tint(self.colors().elevated.with_opacity(0.84)))
+            .elevation(ElevationRole::Floating)
+    }
+
+    pub fn input_material(self) -> GlassMaterial {
+        GlassMaterial::editing().tint(self.colors().elevated.with_opacity(0.78))
     }
 
     /// Preserves document, selection, scroll bindings, and decorations.

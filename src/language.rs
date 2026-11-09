@@ -1931,11 +1931,11 @@ impl App {
             Surface::floating(vstack! {
                 TextField::new(rename_input).font_size(13.0).autofocus(true)
                     .text_color(colors.foreground).background_color(colors.elevated)
-                    .border_color(colors.border).focused_border_color(colors.accent)
+                    .border_color(colors.border).focused_border_color(colors.accent).material(self.theme.get().input_material())
                     .on_submit(move || submit.submit_rename())
                     .on_cancel(move || { cancel.dismiss_language_panel(); }).frame(320.0, 30.0),
                 Text::new("Current file only · Enter apply · Esc cancel").font_size(11.0).color(colors.muted),
-            }.spacing(5.0).padding(8.0)).fill(colors.elevated).border_color(colors.border).corner_radius(4.0), self.language_anchor.clone()), VStack::new(()));
+            }.spacing(6.0).padding(10.0)).surface_style(self.theme.get().popup_style()).corner_radius(10.0), self.language_anchor.clone()), VStack::new(()));
         let (rows, height) = match panel {
             Panel::Completion(_, items) => {
                 let len = items.len();
@@ -1952,7 +1952,7 @@ impl App {
                                 .background_color(if selected == index {
                                     colors.selection
                                 } else {
-                                    colors.elevated
+                                    Color::TRANSPARENT
                                 })
                                 .on_click(move || app.accept_completion(index))
                                 .padding(5.0)
@@ -1981,9 +1981,8 @@ impl App {
                         path.as_deref()
                     ),
                     Surface::floating(scroll)
-                        .fill(colors.elevated)
-                        .border_color(colors.border)
-                        .corner_radius(4.0)
+                        .surface_style(self.theme.get().popup_style())
+                        .corner_radius(10.0)
                 ),
                 self.language_anchor.clone()
             )
@@ -2057,7 +2056,7 @@ impl App {
                     .header_style()
                     .font_size(12.0)
                     .text_color(colors.foreground)
-                    .background_color(colors.surface)
+                    .background_color(Color::TRANSPARENT)
                     .padding(5.0)
                     .on_click(move || {
                         if let Some(location) = &target {
@@ -2070,7 +2069,7 @@ impl App {
         if_view!(is_open, vstack! {
             hstack! { Text::new(title).font_size(12.0).color(colors.foreground), Spacer::new(), Button::new("×").header_style().text_color(colors.foreground).on_click(move || { close.dismiss_language_panel(); }), }.spacing(8.0),
             ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0)).frame(f32::INFINITY, 140.0),
-        }.spacing(4.0).padding(8.0).background(colors.surface), VStack::new(()))
+        }.spacing(6.0).padding(10.0).surface_style(self.theme.get().chrome_style()), VStack::new(()))
     }
 }
 

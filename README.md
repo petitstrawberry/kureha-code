@@ -191,7 +191,9 @@ args = []
 ## Themes, minimap and terminal
 
 View offers Light/Dark, minimap visibility and the integrated terminal. The editor
-surface is flat and borderless; themes include syntax colors and subdued selection
+surface is flat and borderless. The sidebar, tabs, status bar and panel headers
+share Bubble Glass materials; search, completion, rename and hover use denser
+floating glass to keep text readable over source. Themes include syntax colors and subdued selection
 and separators. Primary K then primary T switches theme; primary K then primary M
 toggles the minimap. The overview has fixed two-pixel row spacing, clips and scrolls
 with the document, and uses a translucent neutral viewport. Source and paint work

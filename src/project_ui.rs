@@ -732,19 +732,19 @@ impl App {
                 .background_color(if selected {
                     colors.selection
                 } else {
-                    colors.surface
+                    Color::TRANSPARENT
                 })
                 .on_click(move || state.update(|value| *value = !*value))
         };
         vstack! {
             hstack! {
-                Text::new("SEARCH").font_size(11.0).color(colors.muted),
+                Text::new("Search").font_size(11.0).color(colors.muted),
                 Spacer::new(),
                 Button::new("×").header_style().font_size(13.0).padding(4.0)
-                    .text_color(colors.foreground).background_color(colors.surface).on_click(move || close.close()),
+                    .text_color(colors.foreground).background_color(Color::TRANSPARENT).on_click(move || close.close()),
             }.spacing(4.0),
             TextField::new(self.project.query.clone()).font_size(13.0).padding(5.0)
-                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border)
+                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border).material(self.theme.get().input_material())
                 .placeholder("Search in files").autofocus(self.project.focus_query.get()).on_submit(move || submit.search_project()).frame(f32::INFINITY, 28.0),
             hstack! {
                 option("Aa", self.project.match_case.clone()),
@@ -752,11 +752,11 @@ impl App {
                 option(".*", self.project.regex.clone()),
                 Spacer::new(),
                 Button::new(if busy { "Cancel" } else { "Search" }).header_style().font_size(12.0).padding(5.0)
-                    .text_color(colors.foreground).background_color(colors.surface)
+                    .text_color(colors.foreground).background_color(Color::TRANSPARENT)
                     .on_click(move || if busy { cancel.cancel() } else { run.search_project() }),
             }.spacing(3.0),
             TextField::new(self.project.replacement.clone()).font_size(13.0).padding(5.0)
-                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border)
+                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border).material(self.theme.get().input_material())
                 .placeholder("Replace with").frame(f32::INFINITY, 28.0).on_event_capture(move |event| {
                     if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) {
                         replacement_focus.focus_query.set(false);
@@ -764,16 +764,16 @@ impl App {
                     false
                 }),
             Button::new("Replace All in Files").header_style().font_size(12.0).padding(5.0)
-                .text_color(colors.foreground).background_color(colors.surface).enabled(can_replace)
+                .text_color(colors.foreground).background_color(Color::TRANSPARENT).enabled(can_replace)
                 .on_click(move || replace.replace_project()).frame(f32::INFINITY, 28.0),
             Text::from_state(self.project.message.clone()).font_size(11.0).color(colors.muted),
             if_view!(self.runtime.lock().unwrap().explorer.root.is_none(),
                 Button::new("Open Folder…").header_style().font_size(13.0).text_color(colors.foreground)
-                    .background_color(colors.surface).on_click(move || open_folder.show_folder()),
+                    .background_color(Color::TRANSPARENT).on_click(move || open_folder.show_folder()),
                 VStack::new(())),
             ListView::new(self.project.rows.clone(), self.project.selected.clone(), 48.0, move |index, row: ResultRow, selected| {
                 let click = rows.clone();
-                let background = if selected == Some(index) { colors.selection } else { colors.surface };
+                let background = if selected == Some(index) { colors.selection } else { Color::TRANSPARENT };
                 vstack! {
                     Text::new(row.location.clone()).font_size(11.0).color(colors.muted),
                     Text::new(row.preview.clone()).font_size(13.0).color(colors.foreground),
@@ -788,7 +788,7 @@ impl App {
                     })
             }).item_key(|row| row.key.clone().into()).frame(f32::INFINITY, f32::INFINITY),
         }.alignment(Alignment::Leading).spacing(6.0).padding(8.0)
-            .background(colors.surface).frame(f32::INFINITY, f32::INFINITY)
+            .frame(f32::INFINITY, f32::INFINITY).surface_style(self.theme.get().chrome_style())
             .on_event_capture(move |event| {
                 if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) {
                     focus.owns_focus.set(true);

@@ -306,9 +306,7 @@ impl View for HoverCard {
                     Surface::floating(
                         ScrollView::new(Body(card.clone())).scrollbar_color(colors.muted),
                     )
-                    .fill(colors.elevated)
-                    .border_color(colors.border)
-                    .corner_radius(6.0),
+                    .surface_style(card.theme.popup_style()),
                 )]
             },
         ))
@@ -420,7 +418,7 @@ impl ElementRenderObject for BodyRenderer {
                         (self.size.width - 2.0).max(0.0),
                         section.height + GAP,
                     ),
-                    colors.current_line,
+                    colors.current_line.with_opacity(0.45),
                 );
             }
             for (index, line) in section.lines.iter().enumerate() {
@@ -607,11 +605,19 @@ mod tests {
         )
         .max_size(Size::new(520.0, 340.0));
         let mut pipeline = RenderingPipeline::new();
+        let backdrop = Text::new(
+            "pub extern \"C\" fn start_kernel(boot_info: &BootInfo) -> ! {\n    let cpu_id = boot_info.cpu_id;\n    let cpu_count = boot_info.cpu_count;\n    crate::arch::setup_interrupts();\n    crate::sched::schedule(cpu_id);\n}\n\n".repeat(8),
+        ).font_size(13.0).color(theme.colors().muted).padding(20.0);
         pipeline.set_root(
-            Window::new("Hover", overlay.background(theme.colors().background))
-                .decorated(false)
-                .size(Size::new(620.0, 410.0))
-                .create_element(),
+            Window::new(
+                "Hover",
+                ZStack::new((backdrop, overlay))
+                    .alignment(Alignment::TopLeading)
+                    .background(theme.colors().background),
+            )
+            .decorated(false)
+            .size(Size::new(620.0, 410.0))
+            .create_element(),
         );
         pipeline.layout_initial();
         pipeline

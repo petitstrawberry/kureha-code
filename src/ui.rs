@@ -95,17 +95,22 @@ fn build_list_row<V: View + Clone>(row: &ListRow<V>) -> Box<dyn View> {
     } else {
         Color::TRANSPARENT
     };
-    let content = row
-        .content
-        .clone()
-        .background(background)
-        .hover_color(if row.selected {
-            row.colors.selection
-        } else if row.enabled {
-            row.colors.current_line
-        } else {
-            Color::TRANSPARENT
-        });
+    let content = Surface::section(
+        row.content
+            .clone()
+            .background(Color::TRANSPARENT)
+            .hover_color(if row.selected {
+                row.colors.selection
+            } else if row.enabled {
+                row.colors.current_line
+            } else {
+                Color::TRANSPARENT
+            }),
+    )
+    .fill(background)
+    .corner_radius(7.0)
+    .clip_content(true)
+    .padding_insets(EdgeInsets::new(4.0, 0.0, 4.0, 0.0));
     if !row.enabled {
         row.input.focused.set(false);
         row.input.pressed.set(false);
@@ -332,7 +337,7 @@ impl App {
                 Spacer::new(),
                 Text::from_state(self.language_status.clone()).font_size(11.0).color(theme.colors().muted),
                 Text::from_state(self.position.clone()).font_size(11.0).color(theme.colors().muted),
-            }.spacing(12.0).padding(6.0).background(theme.colors().surface),
+            }.spacing(12.0).padding(6.0).surface_style(theme.chrome_style()),
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY)
@@ -466,11 +471,11 @@ impl App {
         let theme = self.theme.get();
         if_view!(self.terminal_visible.get(),vstack! {
             hstack! {
-                Text::new("TERMINAL").font_size(11.0).color(theme.colors().muted),
+                Text::new("Terminal").font_size(11.0).color(theme.colors().muted),
                 Spacer::new(),
-                Button::new("New Session").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || {restart.terminal.close();restart.show_terminal();}),
-                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move ||close.toggle_terminal()),
-            }.spacing(8.0).padding(5.0).background(theme.colors().surface),
+                Button::new("New Session").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || {restart.terminal.close();restart.show_terminal();}),
+                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move ||close.toggle_terminal()),
+            }.spacing(8.0).padding(6.0).surface_style(theme.chrome_style()),
             self.terminal.view_with_font(self.editor_font.clone()),
         }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY),VStack::new(()))
     }
@@ -489,25 +494,27 @@ impl App {
         let tabs = summaries.into_iter().map(|(id, path, label)| {
             let width = (label.chars().count() as f32 * 7.0 + 70.0).clamp(120.0, 240.0);
             if id == active { selected_range = (left, left + width); }
-            left += width;
+            left += width + 4.0;
             let select = self.clone();
             let close = self.clone();
-            let background = if id == active { theme.colors().background } else { theme.colors().surface };
+            let background = if id == active { theme.colors().elevated.with_opacity(0.88) } else { Color::TRANSPARENT };
             let icon = file_icons::for_path(path.as_deref());
             hstack! {
-                Button::new(label).header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).font_size(13.0).padding(7.0)
+                Button::new(label).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).font_size(13.0).padding(7.0)
                     .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Small)
-                    .background_color(background).on_click(move || {select.focus_group(group); select.activate(id);}).frame(width - 28.0, 32.0),
-                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).padding(4.0).background_color(background)
+                    .on_click(move || {select.focus_group(group); select.activate(id);}).frame(width - 28.0, 32.0),
+                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(4.0)
                     .on_click(move || {close.focus_group(group); close.request_close(Some(id));}).frame(28.0, 32.0),
-            }.spacing(0.0).frame(width, 32.0).background(background).key(id)
+            }.spacing(0.0).frame(width, 32.0)
+                .surface_style(theme.chrome_style()).fill(background).corner_radius(8.0).clip_content(true).key(id)
         }).collect::<Vec<_>>();
-        ScrollView::new(HStack::new(ViewCollection(tabs)).spacing(0.0))
+        ScrollView::new(HStack::new(ViewCollection(tabs)).spacing(4.0))
             .horizontal()
             .content_size(left, 32.0)
             .scroll_to_horizontal_range(selected_range.0, selected_range.1)
             .frame(f32::INFINITY, 34.0)
-            .background(theme.colors().surface)
+            .padding_insets(EdgeInsets::new(6.0, 4.0, 6.0, 4.0))
+            .surface_style(theme.chrome_style())
     }
     fn editor_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         let bindings = self.bindings_for(id, group).unwrap();
@@ -664,10 +671,10 @@ impl App {
             .retain("tree:", self.tree_rows.get().into_iter().map(|row| row.key));
         vstack! {
             hstack! {
-                Text::new("EXPLORER").font_size(11.0).color(theme.colors().muted),
+                Text::new("Explorer").font_size(12.0).color(theme.colors().foreground),
                 Spacer::new(),
-                Button::new("Open Folder").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).font_size(11.0).padding(5.0).on_click(move || open.show_folder()),
-                Button::icon_only(Icon::Refresh).header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).padding(5.0).enabled(has_root).on_click(move || {
+                Button::new("Open Folder").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).font_size(11.0).padding(5.0).on_click(move || open.show_folder()),
+                Button::icon_only(Icon::Refresh).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(5.0).enabled(has_root).on_click(move || {
                     let root = refresh.runtime.lock().unwrap().explorer.root.clone();
                     if let Some(root) = root { refresh.open_folder(root); }
                 }),
@@ -696,7 +703,7 @@ impl App {
                     Spacer::new(),
                 }.padding(12.0).frame(f32::INFINITY, f32::INFINITY)
             ),
-        }.spacing(0.0).background(theme.colors().surface).frame(f32::INFINITY, f32::INFINITY)
+        }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY).surface_style(theme.chrome_style())
     }
     fn find_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
@@ -712,25 +719,25 @@ impl App {
         let options = self.find_options.get();
         vstack! {
             hstack! {
-                TextField::new(self.query.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).placeholder("Find").autofocus(true)
+                TextField::new(self.query.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).material(theme.input_material()).placeholder("Find").autofocus(true)
                     .on_submit(move || submit.find(false)).frame_width(f32::INFINITY),
-                Button::new("Previous").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || previous.find(true)),
-                Button::new("Next").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || next.find(false)),
-                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || close.find_open.set(false)),
+                Button::new("Previous").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || previous.find(true)),
+                Button::new("Next").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || next.find(false)),
+                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || close.find_open.set(false)),
             }.spacing(6.0),
             hstack! {
-                TextField::new(self.replacement.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).placeholder("Replace with").frame_width(f32::INFINITY),
-                Button::new("Replace").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || replace.replace_match()),
-                Button::new("Replace All").header_style().text_color(theme.colors().foreground).background_color(theme.colors().surface).on_click(move || all.replace_all()),
+                TextField::new(self.replacement.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).material(theme.input_material()).placeholder("Replace with").frame_width(f32::INFINITY),
+                Button::new("Replace").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || replace.replace_match()),
+                Button::new("Replace All").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || all.replace_all()),
             }.spacing(6.0),
             hstack! {
-                Button::new("Aa").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(if options.match_case {theme.colors().selection} else {theme.colors().surface}).on_click(move ||case.find_options.update(|o| o.match_case = !o.match_case)),
-                Button::new("Whole Word").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(if options.whole_word {theme.colors().selection} else {theme.colors().surface}).on_click(move ||word.find_options.update(|o| o.whole_word = !o.whole_word)),
-                Button::new(".*").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(if options.regex {theme.colors().selection} else {theme.colors().surface}).on_click(move ||regex.find_options.update(|o| o.regex = !o.regex)),
+                Button::new("Aa").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(if options.match_case {theme.colors().selection} else {Color::TRANSPARENT}).on_click(move ||case.find_options.update(|o| o.match_case = !o.match_case)),
+                Button::new("Whole Word").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(if options.whole_word {theme.colors().selection} else {Color::TRANSPARENT}).on_click(move ||word.find_options.update(|o| o.whole_word = !o.whole_word)),
+                Button::new(".*").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(if options.regex {theme.colors().selection} else {Color::TRANSPARENT}).on_click(move ||regex.find_options.update(|o| o.regex = !o.regex)),
                 Spacer::new(),
             }.spacing(4.0),
             Text::from_state(self.search_status.clone()).font_size(11.0).color(theme.colors().muted),
-        }.alignment(Alignment::Leading).spacing(4.0).padding(8.0).background(theme.colors().surface)
+        }.alignment(Alignment::Leading).spacing(6.0).padding(10.0).surface_style(theme.popup_style()).corner_radius(10.0).clip_content(true)
     }
     pub(super) fn confirmation_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
@@ -738,21 +745,22 @@ impl App {
         let discard = self.clone();
         let cancel = self.clone();
         vstack! {
-            Text::from_state(self.confirmation.clone()).font_size(18.0),
-            Text::new("Your changes will be lost if you discard them.").font_size(13.0),
+            Text::from_state(self.confirmation.clone()).font_size(18.0).color(theme.colors().foreground),
+            Text::new("Your changes will be lost if you discard them.").font_size(13.0).color(theme.colors().muted),
             Text::from_state(self.status.clone()).font_size(11.0).color(theme.colors().foreground),
             Spacer::new(),
             hstack! {
-                Button::new("Cancel").on_click(move || cancel.cancel_close()),
+                Button::new("Cancel").material(theme.input_material()).text_color(theme.colors().foreground).on_click(move || cancel.cancel_close()),
                 Spacer::new(),
-                Button::new("Discard").on_click(move || discard.discard_close()),
-                Button::new("Save").on_click(move || save.save()),
+                Button::new("Discard").material(theme.input_material()).text_color(theme.colors().foreground).on_click(move || discard.discard_close()),
+                Button::new("Save").material(theme.input_material()).text_color(theme.colors().foreground).on_click(move || save.save()),
             }.spacing(10.0),
         }
         .alignment(Alignment::Leading)
         .spacing(14.0)
         .padding(24.0)
         .frame(f32::INFINITY, f32::INFINITY)
+        .surface_style(theme.chrome_style())
     }
     fn item(&self, id: &str, label: &str, shortcut: &str, action: fn(&App)) -> MenuEntry {
         let app = self.clone();
