@@ -250,7 +250,7 @@ fixed two-pixel row spacing, clips and scrolls
 with the document, and uses a translucent neutral viewport. Source and paint work
 are bounded; very large documents use at most 768 sampled rows.
 
-Primary J or Control+backtick toggles the utility panel (「パネル」 in the View
+Primary J or Control+backtick toggles the utility panel (Toggle Panel in the View
 menu), independently of the editor's split layout and keyboard focus. It opens
 below the editors by default. The panel contains shell sessions with a compact
 session strip: + starts another session, each session's × terminates that shell,

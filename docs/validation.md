@@ -453,7 +453,7 @@ Validation on macOS AArch64:
 ## Utility panel, nested splits and macOS chrome — 2026-11-09
 
 The utility panel is separate from editor documents and the split tree. Its
-Japanese menu name is パネル. Cmd+J/Control+backtick toggles visibility regardless
+View menu command is Toggle Panel. Cmd+J/Control+backtick toggles visibility regardless
 of keyboard focus; the panel's rightmost × hides it without terminating shells.
 Each session's × closes just that PTY. The panel strip contains session names,
 + and ×, with no heading, history buttons, path/status footer or empty footer row.

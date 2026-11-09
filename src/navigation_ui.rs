@@ -348,7 +348,7 @@ const COMMANDS: &[CommandDescriptor] = &[
     command!("new-terminal", "Terminal: New Session", "shell tab", ""),
     command!(
         "panel",
-        "表示: パネルの表示／非表示",
+        "View: Toggle Panel",
         "panel terminal console dock",
         "Primary+J"
     ),

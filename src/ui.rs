@@ -964,7 +964,7 @@ impl App {
                     "Ctrl+Shift+`",
                     App::new_terminal,
                 ),
-                self.item("panel", "パネル", "Ctrl+J", App::toggle_panel),
+                self.item("panel", "Toggle Panel", "Ctrl+J", App::toggle_panel),
             ]),
             MenuItemModel::new("code", "Code").children(vec![
                 self.item(
