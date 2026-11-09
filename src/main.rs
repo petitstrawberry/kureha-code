@@ -24,6 +24,7 @@ use std::{
 };
 mod editing_ui;
 mod groups;
+mod hover;
 mod language;
 mod navigation_ui;
 mod popup;

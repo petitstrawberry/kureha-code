@@ -224,7 +224,7 @@ fn markup(value: &Value) -> String {
     } else if let Some(s) = value.get("value").and_then(Value::as_str) {
         s.into()
     } else if let Some(array) = value.as_array() {
-        array.iter().map(markup).collect::<Vec<_>>().join("\n")
+        array.iter().map(markup).collect::<Vec<_>>().join("\n\n")
     } else {
         String::new()
     }
@@ -1904,11 +1904,20 @@ impl App {
             .collect()
     }
     pub(super) fn language_popup(&self) -> impl View + Clone + use<> {
-        let (panel, selected) = {
+        let active = self.active_id();
+        let (panel, selected, path) = {
             let rt = self.runtime.lock().unwrap();
-            (rt.language.panel.clone(), rt.language.selected_completion)
+            (
+                rt.language.panel.clone(),
+                rt.language.selected_completion,
+                rt.workspace.get(active).and_then(|doc| doc.path.clone()),
+            )
         };
         let colors = self.theme.get().colors();
+        let hover_text = match &panel {
+            Panel::Hover(text) => Some(text.clone()),
+            _ => None,
+        };
         let rename = match &panel {
             Panel::Rename(_, name) => Some(name.clone()),
             _ => None,
@@ -1936,55 +1945,26 @@ impl App {
                         .enumerate()
                         .map(|(index, choice)| {
                             let app = self.clone();
-                            Either::A(
-                                Button::new(format!("{}   {}", choice.label, choice.detail))
-                                    .header_style()
-                                    .font_size(13.0)
-                                    .text_color(colors.foreground)
-                                    .background_color(if selected == index {
-                                        colors.selection
-                                    } else {
-                                        colors.elevated
-                                    })
-                                    .on_click(move || app.accept_completion(index))
-                                    .padding(5.0)
-                                    .frame(420.0, 26.0),
-                            )
+                            Button::new(format!("{}   {}", choice.label, choice.detail))
+                                .header_style()
+                                .font_size(13.0)
+                                .text_color(colors.foreground)
+                                .background_color(if selected == index {
+                                    colors.selection
+                                } else {
+                                    colors.elevated
+                                })
+                                .on_click(move || app.accept_completion(index))
+                                .padding(5.0)
+                                .frame(420.0, 26.0)
                         })
                         .collect::<Vec<_>>(),
                     (len.min(8) as f32 * 26.0).max(26.0),
                 )
             }
-            Panel::Hover(text) => {
-                let mut lines = Vec::new();
-                for line in text.lines().take(80) {
-                    let chars = line.chars().collect::<Vec<_>>();
-                    if chars.is_empty() {
-                        lines.push(String::new());
-                    }
-                    for chunk in chars.chunks(52) {
-                        lines.push(chunk.iter().collect::<String>());
-                    }
-                }
-                let height = (lines.len() as f32 * 19.0).clamp(19.0, 220.0);
-                (
-                    lines
-                        .into_iter()
-                        .map(|line| {
-                            Either::B(
-                                Text::new(line)
-                                    .font_size(13.0)
-                                    .color(colors.foreground)
-                                    .frame(420.0, 19.0),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                    height,
-                )
-            }
             _ => (Vec::new(), 0.0),
         };
-        let shown = !rows.is_empty();
+        let shown = hover_text.is_some() || !rows.is_empty();
         let hovered = self.clone();
         let scroll = ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0))
             .scroll_to_vertical_range(selected as f32 * 26.0, (selected + 1) as f32 * 26.0)
@@ -1992,12 +1972,26 @@ impl App {
         let information = if_view!(
             shown,
             super::popup::Anchored::new(
-                Surface::floating(scroll)
-                    .fill(colors.elevated)
-                    .border_color(colors.border)
-                    .corner_radius(4.0),
+                if_view!(
+                    hover_text.is_some(),
+                    super::hover::HoverCard::new(
+                        hover_text.as_deref().unwrap_or_default(),
+                        self.theme.get(),
+                        self.editor_font.clone(),
+                        path.as_deref()
+                    ),
+                    Surface::floating(scroll)
+                        .fill(colors.elevated)
+                        .border_color(colors.border)
+                        .corner_radius(4.0)
+                ),
                 self.language_anchor.clone()
             )
+            .max_size(if hover_text.is_some() {
+                Size::new(520.0, 340.0)
+            } else {
+                Size::new(440.0, 260.0)
+            })
             .on_event_capture(move |event| {
                 if matches!(
                     event,

@@ -1,4 +1,40 @@
 use super::*;
+
+#[test]
+fn hover_overlay_preserves_the_editor_bounds_document_and_selection() {
+    use scarlet_ui::pipeline::RenderingPipeline;
+    let app = App::new();
+    let id = app.active_id();
+    let bindings = app.bindings(id).unwrap();
+    let window = || Window::new("Hover integration", app.content())
+        .decorated(false).size(Size::new(1100.0, 760.0));
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_paint_enabled(false);
+    pipeline.set_root(window().create_element());
+    pipeline.layout_initial();
+    pipeline.render();
+    fn editor(e: &dyn Element, origin: Point) -> Option<(scarlet_ui::element::ElementId, Rect)> {
+        let origin = Point::new(origin.x + e.position().x, origin.y + e.position().y);
+        if e.type_name_debug().contains("TextViewRenderObject") {
+            return Some((e.id(), Rect::new(origin, e.bounds().size)));
+        }
+        e.children().iter().find_map(|child| editor(child.as_ref(), origin))
+    }
+    let original = editor(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
+    let selection = bindings.selection.get();
+    let text = bindings.document.get();
+    for panel in [Panel::Hover("sample\n\npub fn example()\n\nDocumentation.".into()), Panel::Closed] {
+        app.runtime.lock().unwrap().language.panel = panel;
+        app.language_anchor.set(Point::new(100.0, 100.0));
+        pipeline.element_tree_mut().root_mut().unwrap().update(&window());
+        pipeline.layout_initial();
+        pipeline.render();
+        assert_eq!(editor(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap(), original);
+        assert_eq!(bindings.selection.get(), selection);
+        assert_eq!(bindings.document.get().as_str(), text.as_str());
+    }
+}
+
 #[test]
 fn utf16_positions_keep_japanese_and_astral_characters_on_boundaries() {
     let text = "a猫🍁b\n末尾";

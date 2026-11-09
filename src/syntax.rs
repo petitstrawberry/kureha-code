@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -181,13 +181,21 @@ struct Service {
 }
 impl Service {
     fn new() -> Self {
-        let shared = Arc::new((Mutex::new(Cache::default()), Condvar::new()));
+        Self::with_theme(EditorTheme::default())
+    }
+    fn with_theme(theme: EditorTheme) -> Self {
+        let shared = Arc::new((
+            Mutex::new(Cache {
+                theme,
+                ..Cache::default()
+            }),
+            Condvar::new(),
+        ));
         let worker = shared.clone();
         let running = std::thread::Builder::new()
             .name("kureha-syntax".into())
             .stack_size(4 * 1024 * 1024)
             .spawn(move || {
-                let mut catalog = None;
                 loop {
                     let request = {
                         let (lock, wake) = &*worker;
@@ -202,7 +210,7 @@ impl Service {
                     }
                     // Grammar decompression and regex compilation happen here,
                     // including on first use, outside the UI/cache lock.
-                    let catalog = catalog.get_or_insert_with(Catalog::new);
+                    let catalog = CATALOG.get_or_init(Catalog::new);
                     let highlight = catalog.highlight(&request);
                     worker.0.lock().unwrap().publish(&request, highlight);
                 }
@@ -212,6 +220,70 @@ impl Service {
     }
 }
 static SERVICE: OnceLock<Service> = OnceLock::new();
+static CATALOG: OnceLock<Catalog> = OnceLock::new();
+
+struct SnippetSource {
+    text: String,
+    path: Option<PathBuf>,
+    id: u64,
+}
+struct Snippets {
+    service: Service,
+    sources: Mutex<VecDeque<SnippetSource>>,
+    next_id: AtomicU64,
+}
+static SNIPPETS: [OnceLock<Snippets>; 2] = [const { OnceLock::new() }; 2];
+
+/// Bounded, asynchronous hover highlighting with the editor's grammars/colors.
+/// Each theme has a small independent cache so hovers cannot evict documents
+/// or briefly reuse colors from the other theme. `poll` reports their results.
+pub fn snippet_spans(path: Option<&Path>, text: &str, theme: EditorTheme) -> Vec<TextStyleSpan> {
+    if text.len() > 20_000 || text.is_empty() {
+        return Vec::new();
+    }
+    let snippets = SNIPPETS[match theme {
+        EditorTheme::Light => 0,
+        EditorTheme::Dark => 1,
+    }]
+    .get_or_init(|| Snippets {
+        service: Service::with_theme(theme),
+        sources: Mutex::new(VecDeque::new()),
+        next_id: AtomicU64::new(1),
+    });
+    if !snippets.service.running {
+        return Vec::new();
+    }
+    let id = {
+        let mut sources = snippets.sources.lock().unwrap();
+        let source = if let Some(index) = sources
+            .iter()
+            .position(|source| source.text == text && source.path.as_deref() == path)
+        {
+            sources.remove(index).unwrap()
+        } else {
+            if sources.len() >= 8 {
+                sources.pop_front();
+            }
+            SnippetSource {
+                text: text.into(),
+                path: path.map(Path::to_path_buf),
+                id: snippets.next_id.fetch_add(1, Ordering::Relaxed),
+            }
+        };
+        let id = source.id;
+        sources.push_back(source);
+        id
+    };
+    let spans = snippets
+        .service
+        .shared
+        .0
+        .lock()
+        .unwrap()
+        .request(id, 0, path, text);
+    snippets.service.shared.1.notify_one();
+    spans
+}
 
 /// Foreground spans for exactly this document ID, engine revision, and path.
 /// Repeated paints do not copy text, hash text, enqueue jobs, or reparse it.
@@ -232,11 +304,17 @@ pub fn spans(id: u64, revision: u64, path: Option<&Path>, text: &str) -> Vec<Tex
 }
 
 /// True once for newly published, non-stale work; call `App::changed()` then.
-/// Does not start a worker or load grammars until a document requests spans.
+/// Does not start a worker or load grammars until content requests spans.
 pub fn poll() -> bool {
-    SERVICE
+    let mut changed = SERVICE
         .get()
-        .is_some_and(|service| std::mem::take(&mut service.shared.0.lock().unwrap().changed))
+        .is_some_and(|service| std::mem::take(&mut service.shared.0.lock().unwrap().changed));
+    for snippets in &SNIPPETS {
+        if let Some(snippets) = snippets.get() {
+            changed |= std::mem::take(&mut snippets.service.shared.0.lock().unwrap().changed);
+        }
+    }
+    changed
 }
 
 /// Select the shared syntax theme. A change cancels queued/in-flight work and
