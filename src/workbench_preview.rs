@@ -121,3 +121,126 @@ fn workbench_preview() {
         }
     }
 }
+
+#[test]
+#[ignore = "manual native-renderer review; writes terminal layout PPMs"]
+fn terminal_layout_preview() {
+    let directory =
+        PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let app = App::new();
+    app.apply_theme(kureha_code::theme::preset("kureha").unwrap());
+    let first = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .open(PathBuf::from("src/main.rs"), include_str!("main.rs"));
+    app.activate(first);
+    app.split_editor(false);
+    let second = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .open(PathBuf::from("src/groups.rs"), include_str!("groups.rs"));
+    app.activate(second);
+    app.new_terminal();
+    let terminal = app.terminal.active().unwrap().terminal;
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while terminal.status() != kureha_code::terminal::TerminalStatus::Running {
+        terminal.poll();
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    terminal.send_input(b"exec /bin/sh -i\r");
+    terminal.send_input(b"stty -echo; printf '\\033[2J\\033[H\\033[38;5;211mKureha Code\\033[0m\\n\\n$ cargo test\\n\\n\\033[32mAll checks passed.\\033[0m\\n\\nSession stays alive when hidden or moved.\\nReady.\\n'\r");
+    let mut pipeline = RenderingPipeline::new();
+    for scene in [
+        "terminal-bottom",
+        "terminal-three-columns",
+        "terminal-hidden",
+        "terminal-restored",
+    ] {
+        match scene {
+            "terminal-three-columns" => app.panel_position.set(terminal_ui::PanelPosition::Right),
+            "terminal-hidden" => app.hide_panel(),
+            "terminal-restored" => app.toggle_panel(),
+            _ => {}
+        }
+        let window = || {
+            Window::new("Kureha", app.content())
+                .decorated(false)
+                .size(Size::new(1440.0, 900.0))
+        };
+        pipeline.set_root(window().create_element());
+        pipeline.layout_initial();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            app.poll_terminals();
+            syntax::poll();
+            pipeline
+                .element_tree_mut()
+                .root_mut()
+                .unwrap()
+                .update(&window());
+            pipeline.render();
+            thread::sleep(Duration::from_millis(20));
+        }
+        pipeline.set_root(window().create_element());
+        pipeline.layout_initial();
+        let buffer = pipeline.render().expect("terminal layout paints");
+        let mut file = std::io::BufWriter::new(
+            std::fs::File::create(directory.join(format!("{scene}.ppm"))).unwrap(),
+        );
+        write!(file, "P6\n{} {}\n255\n", buffer.width(), buffer.height()).unwrap();
+        for pixel in buffer.data().chunks_exact(4) {
+            file.write_all(&[pixel[2], pixel[1], pixel[0]]).unwrap();
+        }
+    }
+    pipeline.teardown();
+    terminal.close();
+}
+
+#[test]
+#[ignore = "manual outer-edge layout review"]
+fn outer_layout_preview() {
+    let directory =
+        PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let app = App::new();
+    app.apply_theme(kureha_code::theme::preset("kureha").unwrap());
+    let first = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .open(PathBuf::from("src/main.rs"), include_str!("main.rs"));
+    app.activate(first);
+    app.split_editor(true);
+    let id = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .open(PathBuf::from("src/groups.rs"), include_str!("groups.rs"));
+    app.activate(id);
+    app.split_tab_outer(id, 1, tab_drag::Edge::Right);
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_root(
+        Window::new("Outer", app.content())
+            .decorated(false)
+            .size(Size::new(1440.0, 900.0))
+            .create_element(),
+    );
+    pipeline.layout_initial();
+    let buffer = pipeline.render().unwrap();
+    let mut file = std::io::BufWriter::new(
+        std::fs::File::create(directory.join("editor-outer-right.ppm")).unwrap(),
+    );
+    write!(file, "P6\n{} {}\n255\n", buffer.width(), buffer.height()).unwrap();
+    for pixel in buffer.data().chunks_exact(4) {
+        file.write_all(&[pixel[2], pixel[1], pixel[0]]).unwrap();
+    }
+    pipeline.teardown();
+}

@@ -286,7 +286,7 @@ const COMMANDS: &[CommandDescriptor] = &[
     ),
     command!(
         "close-split",
-        "View: Close Second Editor Group",
+        "View: Close Editor Group",
         "pane unsplit",
         ""
     ),
@@ -314,11 +314,42 @@ const COMMANDS: &[CommandDescriptor] = &[
         "appearance colors settings",
         ""
     ),
+    command!(
+        "tab-outer-left",
+        "View: Move Tab to Far Left",
+        "entire editor area layout",
+        ""
+    ),
+    command!(
+        "tab-outer-right",
+        "View: Move Tab to Far Right",
+        "entire editor area layout",
+        ""
+    ),
+    command!(
+        "tab-outer-top",
+        "View: Move Tab to Top",
+        "entire editor area layout",
+        ""
+    ),
+    command!(
+        "tab-outer-bottom",
+        "View: Move Tab to Bottom",
+        "entire editor area layout",
+        ""
+    ),
     command!("minimap", "View: Toggle Minimap", "overview", ""),
     command!(
-        "terminal",
-        "View: Toggle Terminal",
-        "shell console panel",
+        "restart-terminal",
+        "Terminal: Restart Session",
+        "shell restart",
+        ""
+    ),
+    command!("new-terminal", "Terminal: New Session", "shell tab", ""),
+    command!(
+        "panel",
+        "表示: パネルの表示／非表示",
+        "panel terminal console dock",
         "Primary+J"
     ),
     command!(
@@ -399,7 +430,11 @@ const COMMANDS: &[CommandDescriptor] = &[
 impl App {
     pub(super) fn close_navigation(&self) {
         let original = self.nav.preview_original.lock().unwrap().take();
+        let was_open = self.nav.is_open();
         self.nav.close();
+        if was_open && std::mem::take(&mut self.runtime.lock().unwrap().panel_return_focus) {
+            self.terminal.focus();
+        }
         if let Some(original) = original {
             if self.theme.get() != original {
                 self.apply_theme(original);
@@ -504,8 +539,9 @@ impl App {
         self.dismiss_language_panel();
         self.find_open.set(false);
         self.project.close();
-        self.terminal.blur();
         self.close_navigation();
+        self.runtime.lock().unwrap().panel_return_focus = self.terminal_focused();
+        self.blur_terminals();
         if matches!(mode, Mode::Themes { .. }) {
             *self.nav.preview_original.lock().unwrap() = Some(self.theme.get());
         }
@@ -971,7 +1007,29 @@ impl App {
             "theme-edit" => self.open_theme_settings(),
             "theme-reload" => self.reload_theme_settings(),
             "minimap" => self.toggle_minimap(),
-            "terminal" => self.toggle_terminal(),
+            "tab-outer-left" => self.split_tab_outer(
+                self.active_id(),
+                self.focused_group.get(),
+                tab_drag::Edge::Left,
+            ),
+            "tab-outer-right" => self.split_tab_outer(
+                self.active_id(),
+                self.focused_group.get(),
+                tab_drag::Edge::Right,
+            ),
+            "tab-outer-top" => self.split_tab_outer(
+                self.active_id(),
+                self.focused_group.get(),
+                tab_drag::Edge::Top,
+            ),
+            "tab-outer-bottom" => self.split_tab_outer(
+                self.active_id(),
+                self.focused_group.get(),
+                tab_drag::Edge::Bottom,
+            ),
+            "panel" => self.toggle_panel(),
+            "restart-terminal" => self.terminal.restart(),
+            "new-terminal" => self.new_terminal(),
             "problems" => self.show_problems(),
             "definition" => self.language_request("textDocument/definition"),
             "references" => self.find_references(),
@@ -1731,7 +1789,7 @@ mod tests {
             "project-search",
             "split-right",
             "definition",
-            "terminal",
+            "panel",
             "select-color-theme",
             "go-line",
         ] {

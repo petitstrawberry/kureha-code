@@ -27,6 +27,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Neutral canvas shared by the ANSI grid and the surrounding content inset.
+pub fn background_color() -> scarlet_ui::Color {
+    screen::background()
+}
+
 pub const CELL_WIDTH: f32 = 8.0;
 pub const CELL_HEIGHT: f32 = 17.0;
 const DEFAULT_SIZE: (u16, u16) = (80, 16);

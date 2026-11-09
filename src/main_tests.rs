@@ -29,8 +29,14 @@ fn shifted_split_shortcut_accepts_logical_pipe_character() {
         keycode: KeyCode::Char('|'),
         modifiers,
     }));
-    assert!(app.split_down.get());
-    assert_eq!(app.second.get(), Some(app.group_id(0)));
+    assert!(matches!(
+        app.pane_layout.get(),
+        groups::PaneLayout::Split { down: true, .. }
+    ));
+    assert_eq!(
+        app.panes.get().get(1).copied().flatten(),
+        Some(app.group_id(0))
+    );
     pipeline.teardown();
 }
 
@@ -80,7 +86,7 @@ fn split_editors_share_text_and_undo_but_keep_tabs_selection_and_scroll_independ
     );
     assert_eq!(app.group_id(0), id);
     app.close_split();
-    assert!(app.second.get().is_none());
+    assert!(app.panes.get().get(1).copied().flatten().is_none());
     assert!(app.runtime.lock().unwrap().group_tabs[0].contains(&other));
 }
 
@@ -1246,8 +1252,8 @@ fn clicking_document_returns_shortcuts_from_terminal_to_editor() {
     use scarlet_ui::event::{MouseButton, MouseEvent};
     use scarlet_ui::pipeline::RenderingPipeline;
     let app = test_app("fn main() {}", None, false);
-    app.terminal_visible.set(true);
-    app.terminal.focus();
+    app.new_terminal();
+    let terminal = app.terminal.active().unwrap().terminal;
     let window = || {
         Window::new("Focus", app.content())
             .decorated(false)
@@ -1272,7 +1278,7 @@ fn clicking_document_returns_shortcuts_from_terminal_to_editor() {
     }));
     pipeline.render();
     assert!(
-        !app.terminal.focused(),
+        !terminal.focused(),
         "terminal kept focus after document click"
     );
     let mut modifiers = scarlet_ui::event::KeyModifiers::empty();
@@ -1344,7 +1350,7 @@ fn split_lifecycle_remove_right_tab_preserves_left_and_uses_right_neighbors() {
         let rt = app.runtime.lock().unwrap();
         assert!(rt.workspace.get(closed).is_none());
         assert_eq!(rt.group_tabs[0], vec![left]);
-        assert!(rt.group_tabs[1].contains(&app.second.get().unwrap()));
+        assert!(rt.group_tabs[1].contains(&app.panes.get().get(1).copied().flatten().unwrap()));
     }
 }
 
@@ -1387,17 +1393,16 @@ fn split_lifecycle_removing_last_group_tab_keeps_the_other_group() {
         app.request_close(Some(if group == 0 { left } else { right }));
 
         if group == 0 {
-            assert_ne!(app.group_id(0), right);
-            assert_ne!(app.group_id(0), left);
+            assert!(!app.group_exists(0));
             assert_eq!(app.group_id(1), right);
             assert_eq!(right_view.selection.get(), TextSelection::collapsed(8));
             assert_eq!(app.runtime.lock().unwrap().group_tabs[1], vec![right]);
         } else {
             assert_eq!(app.group_id(0), left);
-            assert!(app.second.get().is_none());
+            assert!(app.panes.get().get(1).copied().flatten().is_none());
             assert!(app.runtime.lock().unwrap().group_tabs[1].is_empty());
         }
-        assert_eq!(app.focused_group.get(), 0);
+        assert_eq!(app.focused_group.get(), 1 - group);
     }
 }
 
@@ -1492,7 +1497,7 @@ fn split_lifecycle_async_open_after_group_close_is_a_background_tab() {
     assert!(rt.group_tabs[0].contains(&opened));
     assert!(rt.group_tabs[1].is_empty());
     drop(rt);
-    assert!(app.second.get().is_none());
+    assert!(app.panes.get().get(1).copied().flatten().is_none());
     assert_eq!(app.focused_group.get(), 0);
     assert_eq!(app.active_id(), left);
     assert_eq!(left_view.selection.get(), TextSelection::collapsed(3));

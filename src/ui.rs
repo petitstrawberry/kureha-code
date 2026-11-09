@@ -329,6 +329,7 @@ impl App {
         let theme = self.theme.get();
         let keys = self.clone();
         let content = ZStack::new((vstack! {
+            self.window_header(),
             SplitView::new(
                 Surface::section(if_view!(self.project.is_open(), self.project_search_view(), self.explorer_view()))
                     .surface_style(theme.chrome_style()).corner_radius(16.0).clip_content(true),
@@ -342,7 +343,7 @@ impl App {
             hstack! {
                 Text::from_state(self.status.clone()).font_size(11.0).color(theme.colors().foreground),
                 Spacer::new(),
-                Text::from_state(self.language_status.clone()).font_size(11.0).color(theme.colors().muted),
+                if_view!(!self.terminal_focused(), Text::from_state(self.language_status.clone()).font_size(11.0).color(theme.colors().muted), VStack::new(())),
                 Text::from_state(self.position.clone()).font_size(11.0).color(theme.colors().muted),
             }.spacing(12.0).padding_insets(EdgeInsets::new(18.0, 8.0, 18.0, 8.0)),
         }
@@ -361,16 +362,18 @@ impl App {
                 keys.show_project_search(); return true;
             }
             if modifiers.control && matches!(keycode, KeyCode::Char('`')) {
-                keys.toggle_terminal();
+                if modifiers.shift { keys.new_terminal(); } else { keys.toggle_panel(); }
                 return true;
             }
-            if keys.terminal_visible.get() && keys.terminal.focused() {
+            if keys.terminal_focused() {
                 if modifiers.primary() && matches!(keycode,KeyCode::Char('v'|'V')) && (cfg!(target_os="macos") || modifiers.shift) {keys.paste_terminal();return true;}
+                if modifiers.primary() && !modifiers.shift && matches!(keycode, KeyCode::Char('w' | 'W')) { keys.hide_panel(); return true; }
+                if *keycode == KeyCode::Tab && modifiers.control { keys.terminal.next(modifiers.shift); return true; }
                 if modifiers.primary() && matches!(keycode, KeyCode::Char('j' | 'J')) {
-                    keys.toggle_terminal();
+                    keys.toggle_panel();
                     return true;
                 }
-                return false;
+                if !(modifiers.primary() && matches!(keycode, KeyCode::Char('w' | 'W' | 'n' | 'N' | 'o' | 'O' | '1'..='9' | '\\' | '|') | KeyCode::Tab) || modifiers.control && *keycode == KeyCode::Tab) { return false; }
             }
             if keys.language_key(*keycode, *modifiers) {
                 return true;
@@ -404,9 +407,8 @@ impl App {
             }
             match keycode {
                 KeyCode::Char('\\' | '|') => keys.split_editor(modifiers.shift),
-                KeyCode::Char('1') => keys.focus_group(0),
-                KeyCode::Char('2') => { if keys.second.get().is_none() { keys.split_editor(false); } else { keys.focus_group(1); } },
-                KeyCode::Char('j' | 'J') => keys.toggle_terminal(),
+                KeyCode::Char('1'..='9') => { if let KeyCode::Char(n) = keycode { keys.focus_pane_number(*n as usize - '1' as usize); } },
+                KeyCode::Char('j' | 'J') => keys.toggle_panel(),
                 KeyCode::Char('n' | 'N') => keys.new_document(),
                 KeyCode::Char('o' | 'O') if modifiers.shift => keys.show_folder(),
                 KeyCode::Char('o' | 'O') => keys.picker(DialogPurpose::Open),
@@ -428,53 +430,31 @@ impl App {
         self.tab_region(content, tab_drag::RegionId::Root)
     }
     fn editor_area(&self) -> impl View + Clone + use<> {
-        let theme = self.theme.get();
+        let visible = self.panel_visible.get();
+        let side = self.panel_position.get() == terminal_ui::PanelPosition::Right;
         vstack! {
-            SplitView::new(self.editor_groups(),self.bottom_panel()).axis(scarlet_ui::views::SplitAxis::Vertical)
-                .divider_thickness(if self.terminal_visible.get() {10.0} else {1.0}).divider_hit_slop(0.0)
-                .divider_colors(Color::TRANSPARENT,theme.colors().accent.with_opacity(0.12))
-                .fraction(if self.terminal_visible.get() {0.70} else {1.0})
-                .min_first(120.0).min_second(if self.terminal_visible.get() {100.0} else {0.0})
-                .frame(f32::INFINITY,f32::INFINITY),
+            SplitView::new(self.editor_groups(), if_view!(visible, self.terminal_panel(), VStack::new(())))
+                .axis(if side { scarlet_ui::views::SplitAxis::Horizontal } else { scarlet_ui::views::SplitAxis::Vertical })
+                .fraction(if visible { self.panel_fractions.get()[usize::from(side)] } else { 1.0 })
+                .min_first(100.0).min_second(if visible { 100.0 } else { 0.0 })
+                .divider_thickness(if visible { 10.0 } else { 1.0 }).divider_hit_slop(0.0)
+                .divider_colors(Color::TRANSPARENT, self.theme.get().colors().accent.with_opacity(0.12))
+                .frame(f32::INFINITY, f32::INFINITY),
             self.language_panel(),
-        }
-        .spacing(0.0)
-        .frame(f32::INFINITY, f32::INFINITY)
+        }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY)
     }
     fn editor_groups(&self) -> impl View + Clone + use<> {
-        let theme = self.theme.get();
-        SplitView::new(
-            self.editor_group(if self.split_reversed.get() { 1 } else { 0 }),
-            if_view!(
-                self.second.get().is_some(),
-                self.editor_group(if self.split_reversed.get() { 0 } else { 1 }),
-                VStack::new(())
-            ),
+        self.tab_region(
+            PaneStack {
+                app: self.clone(),
+                layout: self
+                    .pane_layout
+                    .get()
+                    .retain(&|g| self.group_exists(g))
+                    .unwrap(),
+            },
+            tab_drag::RegionId::EditorArea,
         )
-        .axis(if self.split_down.get() {
-            scarlet_ui::views::SplitAxis::Vertical
-        } else {
-            scarlet_ui::views::SplitAxis::Horizontal
-        })
-        .fraction(if self.second.get().is_some() {
-            0.5
-        } else {
-            1.0
-        })
-        .min_first(if self.split_down.get() { 100.0 } else { 180.0 })
-        .min_second(if self.second.get().is_some() {
-            if self.split_down.get() { 100.0 } else { 180.0 }
-        } else {
-            0.0
-        })
-        .divider_thickness(if self.second.get().is_some() {
-            10.0
-        } else {
-            1.0
-        })
-        .divider_hit_slop(0.0)
-        .divider_colors(Color::TRANSPARENT, theme.colors().accent.with_opacity(0.12))
-        .frame(f32::INFINITY, f32::INFINITY)
     }
     fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
         self.tab_region(
@@ -489,21 +469,6 @@ impl App {
             .key(format!("editor-group-{group}")),
             tab_drag::RegionId::Group(group),
         )
-    }
-    fn bottom_panel(&self) -> impl View + Clone + use<> {
-        let close = self.clone();
-        let restart = self.clone();
-        let theme = self.theme.get();
-        if_view!(self.terminal_visible.get(),Surface::section(vstack! {
-            hstack! {
-                Text::new("Terminal").font_size(11.0).color(theme.colors().muted),
-                Spacer::new(),
-                Button::new("New Session").header_style().font_size(12.0).text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || {restart.terminal.close();restart.show_terminal();}),
-                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move ||close.toggle_terminal()),
-            }.spacing(8.0).padding(10.0),
-            self.terminal.view_with_font(self.editor_font.clone()),
-        }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY))
-            .surface_style(theme.chrome_style()).corner_radius(16.0).clip_content(true),VStack::new(()))
     }
     fn tabs_view(&self, group: usize) -> impl View + Clone + use<> {
         let theme = self.theme.get();
@@ -648,7 +613,10 @@ impl App {
                 ) {
                     keys.focus_group(group);
                 }
-                if let Event::Mouse(MouseEvent::Wheel { delta_x, delta_y, .. }) = event {
+                if let Event::Mouse(MouseEvent::Wheel {
+                    delta_x, delta_y, ..
+                }) = event
+                {
                     if (*delta_x != 0 || *delta_y != 0) && keys.focused_group.get() == group {
                         keys.dismiss_hover_for_scroll();
                     }
@@ -695,7 +663,7 @@ impl App {
             hstack! {
                 ZStack::new((editor,if_view!(self.focused_group.get()==group,self.language_popup(),VStack::new(())),if_view!(self.find_open.get() && self.focused_group.get()==group,super::popup::Anchored::top_right(self.find_view()),VStack::new(())))).alignment(Alignment::TopLeading)
                     .frame(f32::INFINITY,f32::INFINITY),
-                kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme.clone()).width(if self.second.get().is_some() {54.0} else {100.0}).enabled(show_minimap).line_height(font.as_ref().map_or_else(||scarlet_ui::graphics::line_height_sized(theme.editor_font_size()),|font|scarlet_ui::graphics::line_height_sized_with_font_stack(theme.editor_font_size(),font)) as f32).view(),
+                kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme.clone()).width(if self.pane_order().len() > 1 {54.0} else {100.0}).enabled(show_minimap).line_height(font.as_ref().map_or_else(||scarlet_ui::graphics::line_height_sized(theme.editor_font_size()),|font|scarlet_ui::graphics::line_height_sized_with_font_stack(theme.editor_font_size(),font)) as f32).view(),
             }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY),
         }
         .spacing(0.0)
@@ -935,20 +903,50 @@ impl App {
                     "",
                     App::focus_other_group,
                 ),
+                self.item("close-group", "Close Editor Group", "", App::close_split),
+                MenuEntry::Separator,
                 self.item(
-                    "close-group",
-                    "Close Second Editor Group",
-                    "",
-                    App::close_split,
+                    "go-back",
+                    "Go Back",
+                    if cfg!(target_os = "macos") {
+                        "Ctrl+-"
+                    } else {
+                        "Alt+Left"
+                    },
+                    App::go_back,
+                ),
+                self.item(
+                    "go-forward",
+                    "Go Forward",
+                    if cfg!(target_os = "macos") {
+                        "Ctrl+Shift+-"
+                    } else {
+                        "Alt+Right"
+                    },
+                    App::go_forward,
                 ),
                 MenuEntry::Separator,
-                self.item("go-back", "Go Back", if cfg!(target_os="macos") {"Ctrl+-"} else {"Alt+Left"}, App::go_back),
-                self.item("go-forward", "Go Forward", if cfg!(target_os="macos") {"Ctrl+Shift+-"} else {"Alt+Right"}, App::go_forward),
-                MenuEntry::Separator,
-                self.item("theme-edit", "Customize Theme…", "", App::open_theme_settings),
-                self.item("theme-reload", "Reload Custom Theme", "", App::reload_theme_settings),
-                self.item("select-color-theme", "Select Color Theme…", "", |a| a.show_theme_picker(false)),
-                self.item("select-editor-theme", "Select Editor Color Theme…", "", |a| a.show_theme_picker(true)),
+                self.item(
+                    "theme-edit",
+                    "Customize Theme…",
+                    "",
+                    App::open_theme_settings,
+                ),
+                self.item(
+                    "theme-reload",
+                    "Reload Custom Theme",
+                    "",
+                    App::reload_theme_settings,
+                ),
+                self.item("select-color-theme", "Select Color Theme…", "", |a| {
+                    a.show_theme_picker(false)
+                }),
+                self.item(
+                    "select-editor-theme",
+                    "Select Editor Color Theme…",
+                    "",
+                    |a| a.show_theme_picker(true),
+                ),
                 MenuEntry::Separator,
                 self.item(
                     "minimap",
@@ -961,11 +959,12 @@ impl App {
                     App::toggle_minimap,
                 ),
                 self.item(
-                    "terminal",
-                    "Toggle Terminal",
-                    "Ctrl+J",
-                    App::toggle_terminal,
+                    "new-terminal",
+                    "New Terminal",
+                    "Ctrl+Shift+`",
+                    App::new_terminal,
                 ),
+                self.item("panel", "パネル", "Ctrl+J", App::toggle_panel),
             ]),
             MenuItemModel::new("code", "Code").children(vec![
                 self.item(
@@ -1006,5 +1005,65 @@ impl App {
                 ),
             ]),
         ])
+    }
+}
+
+/// A split belongs to its subtree; adding a right pane never rotates a bottom pane.
+#[derive(Clone)]
+struct PaneStack {
+    app: App,
+    layout: groups::PaneLayout,
+}
+impl View for PaneStack {
+    fn create_element(&self) -> Box<dyn Element> {
+        Box::new(scarlet_ui::element::ComponentElement::new_with_builder(
+            self.clone(),
+            build_panes,
+        ))
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+fn build_panes(stack: &PaneStack) -> Box<dyn View> {
+    match &stack.layout {
+        groups::PaneLayout::Leaf(group) => Box::new(stack.app.editor_group(*group)),
+        groups::PaneLayout::Split {
+            id,
+            down,
+            fraction,
+            first,
+            second,
+        } => {
+            let min = if *down { 80.0 } else { 100.0 };
+            Box::new(
+                SplitView::new(
+                    PaneStack {
+                        app: stack.app.clone(),
+                        layout: *first.clone(),
+                    },
+                    PaneStack {
+                        app: stack.app.clone(),
+                        layout: *second.clone(),
+                    },
+                )
+                .axis(if *down {
+                    scarlet_ui::views::SplitAxis::Vertical
+                } else {
+                    scarlet_ui::views::SplitAxis::Horizontal
+                })
+                .fraction(*fraction)
+                .min_first(min)
+                .min_second(min)
+                .divider_thickness(10.0)
+                .divider_hit_slop(0.0)
+                .divider_colors(
+                    Color::TRANSPARENT,
+                    stack.app.theme.get().colors().accent.with_opacity(0.12),
+                )
+                .frame(f32::INFINITY, f32::INFINITY)
+                .key(format!("pane-split-{id}")),
+            )
+        }
     }
 }

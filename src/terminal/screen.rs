@@ -197,19 +197,22 @@ struct Measure {
 impl ElementRenderObject for Measure {
     fn layout(&mut self, constraints: LayoutConstraints) -> Size {
         let grid = self.terminal.shared.grid.get();
-        self.size = constraints.constrain(Size::new(
+        // Stack intrinsic passes may supply tight infinity via a flexible frame.
+        // Never allocate a backing bitmap or resize a PTY from that probe.
+        let finite = constraints.max_width.is_finite() && constraints.max_height.is_finite();
+        self.size = Size::new(
             if constraints.max_width.is_finite() {
-                constraints.max_width
+                constraints.max_width.max(0.0)
             } else {
                 grid.columns() as f32 * self.cell_size.width
             },
             if constraints.max_height.is_finite() {
-                constraints.max_height
+                constraints.max_height.max(0.0)
             } else {
                 grid.rows() as f32 * self.cell_size.height
             },
-        ));
-        if self.size.width > 0.0 && self.size.height > 0.0 {
+        );
+        if finite && self.size.width > 0.0 && self.size.height > 0.0 {
             self.terminal.resize(
                 (self.size.width / self.cell_size.width) as u16,
                 (self.size.height / self.cell_size.height) as u16,

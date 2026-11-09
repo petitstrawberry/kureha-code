@@ -448,3 +448,50 @@ Validation on macOS AArch64:
   of Light/Dark, Escape restoration to Kureha, and continued Cmd+P typing with
   updated results and stable populated-panel height. Other platforms are not
   verified by this pass.
+
+
+## Utility panel, nested splits and macOS chrome — 2026-11-09
+
+The utility panel is separate from editor documents and the split tree. Its
+Japanese menu name is パネル. Cmd+J/Control+backtick toggles visibility regardless
+of keyboard focus; the panel's rightmost × hides it without terminating shells.
+Each session's × closes just that PTY. The panel strip contains session names,
++ and ×, with no heading, history buttons, path/status footer or empty footer row.
+Normal editor strips have no terminal-add button. Multiple sessions retain their
+own output, and hidden/background sessions continue polling. Paste requests are
+bound to session ID, generation and focus epoch.
+
+The panel starts below the entire editor tree. Dragging a session to the right
+or bottom docking edge relocates the whole utility panel; file tabs do not enter
+it. The editor tree separately supports nested horizontal/vertical splits and
+three columns. A tab dropped in the outermost 16 logical pixels of the editor
+area targets the entire tree, while inner edge zones target the individual pane.
+Both targets have distinct area previews. Palette commands select all four outer
+edges explicitly. Stable pane identities prevent delayed file opens from entering
+a newly created replacement pane. Closing a pane retains documents and the
+neighbour's existing active tab and viewport.
+
+Validation:
+
+- Host suite: 108 library + 91 application tests passed; seven manual/optional
+  tests are excluded from the default run. Release build passed with locked,
+  offline dependencies in the Nix development shell.
+- Real PTY regression verifies two independent shell variables, hidden output,
+  hide/show and selection clipboard invalidation, and closing only the target PTY.
+- Mounted pointer/layout regressions cover panel docking independent of nested
+  editors, all four whole-editor drop edges versus local edges, minimum-size
+  nested layouts, and preserving selection/scroll/text/undo when moving tabs.
+- Five CPU-rendered layout fixtures passed. Reviewed bottom/right docking,
+  hidden/restored panel, and a full-height right editor beside a vertical stack.
+  Representative images are panel-bottom.png, panel-right.png and
+  editor-outer-right.png in docs/screenshots.
+- Native macOS release review confirmed the compact panel, its visibility toggle,
+  separate editor tabs without +, and simultaneous horizontal/vertical editor
+  splits above the panel. The native accessibility tree retained close,
+  minimize and fullscreen controls with the unified titlebar.
+
+ScarletUI is pinned to published commit 1e0c15585dda178b8e70594ed850d9148da2918d
+([upstream PR #91](https://github.com/petitstrawberry/scarlet-ui/pull/91)). Its
+SYSTEM_OVERLAY mode preserves native macOS controls over full-size content;
+20 core window tests and 38 winit tests passed. Other hosts use normal decoration.
+The separately reported VT100 panic was explicitly excluded from this task.

@@ -549,9 +549,9 @@ impl App {
                     path,
                     revision: doc.editor.revision(),
                     text,
-                    caret: if self.focused_group.get() == 1 {
-                        rt.second_bindings
-                            .get(&doc.id)
+                    caret: if self.focused_group.get() != 0 {
+                        rt.pane_bindings
+                            .get(&(doc.id, self.focused_group.get()))
                             .unwrap_or(&doc.bindings)
                             .selection
                             .get()

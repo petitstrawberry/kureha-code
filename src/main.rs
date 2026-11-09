@@ -32,8 +32,10 @@ mod popup;
 mod preview;
 mod project_ui;
 mod tab_drag;
+mod terminal_ui;
 mod theme_settings;
 mod ui;
+mod window_chrome;
 
 #[derive(Clone, Copy)]
 enum DialogPurpose {
@@ -78,7 +80,7 @@ struct ClipboardTarget {
 enum ClipboardJob {
     TerminalPaste {
         handle: ClipboardHandle<Option<String>>,
-        generation: u64,
+        target: terminal_ui::PasteTarget,
     },
     Copy {
         handle: ClipboardHandle<()>,
@@ -92,6 +94,8 @@ enum ClipboardJob {
 }
 #[derive(Default)]
 struct Runtime {
+    window_drag_requested: bool,
+    panel_return_focus: bool,
     history: location_history::History,
     image_zoom: BTreeMap<(DocumentId, usize), f32>,
     workspace: Workspace,
@@ -108,8 +112,8 @@ struct Runtime {
     menu_actions: Vec<fn(&App)>,
     language: language::Service,
     minimap: kureha_code::minimap::MinimapCache,
-    second_bindings: BTreeMap<DocumentId, Bindings>,
-    group_tabs: [Vec<DocumentId>; 2],
+    pane_bindings: BTreeMap<(DocumentId, usize), Bindings>,
+    group_tabs: Vec<Vec<DocumentId>>,
     save_all: Vec<DocumentId>,
 }
 #[derive(Clone)]
@@ -121,13 +125,13 @@ struct App {
     theme: State<kureha_code::theme::Theme>,
     theme_settings: Arc<Mutex<Option<theme_settings::Watcher>>>,
     minimap_visible: State<bool>,
-    terminal_visible: State<bool>,
-    terminal: kureha_code::terminal::Terminal,
-    active: State<usize>,
-    second: State<Option<DocumentId>>,
+    panel_visible: State<bool>,
+    panel_position: State<terminal_ui::PanelPosition>,
+    panel_fractions: State<[f32; 2]>,
+    terminal: terminal_ui::Panel,
+    panes: State<Vec<Option<DocumentId>>>,
+    pane_layout: State<groups::PaneLayout>,
     focused_group: State<usize>,
-    split_down: State<bool>,
-    split_reversed: State<bool>,
     chrome: State<u64>,
     status: State<String>,
     position: State<String>,
@@ -149,12 +153,12 @@ struct App {
 impl App {
     fn new() -> Self {
         let mut runtime = Runtime::default();
-        runtime.group_tabs[0].push(runtime.workspace.documents[0].id);
-        let active = State::new(generate_state_id(), 0);
-        let second = State::new(generate_state_id(), None);
+        let first = runtime.workspace.documents[0].id;
+        runtime.group_tabs = vec![vec![first]];
+        let panes = State::new(generate_state_id(), vec![Some(first)]);
         let focused_group = State::new(generate_state_id(), 0);
         let navigation = Arc::new(AtomicU64::new(0));
-        for state in [&active as &dyn Listenable, &second, &focused_group] {
+        for state in [&panes as &dyn Listenable, &focused_group] {
             let changed = navigation.clone();
             state.subscribe_any(Arc::new(move || {
                 changed.fetch_add(1, Ordering::Relaxed);
@@ -171,17 +175,17 @@ impl App {
             ),
             theme_settings: Arc::new(Mutex::new(None)),
             minimap_visible: State::new(generate_state_id(), true),
-            terminal_visible: State::new(generate_state_id(), false),
-            terminal: kureha_code::terminal::Terminal::new(),
+            panel_visible: State::new(generate_state_id(), false),
+            panel_position: State::new(generate_state_id(), terminal_ui::PanelPosition::Bottom),
+            panel_fractions: State::new(generate_state_id(), [0.70, 0.67]),
+            terminal: terminal_ui::Panel::new(),
             language_status: State::new(generate_state_id(), "Plain text".into()),
             language_anchor: State::new(generate_state_id(), Point::new(60.0, 30.0)),
             caret_rect: State::new(generate_state_id(), Rect::from_xywh(60.0, 10.0, 1.0, 20.0)),
             inactive_caret_rect: State::new(generate_state_id(), Rect::zero()),
-            active,
-            second,
+            panes,
+            pane_layout: State::new(generate_state_id(), groups::PaneLayout::Leaf(0)),
             focused_group,
-            split_down: State::new(generate_state_id(), false),
-            split_reversed: State::new(generate_state_id(), false),
             navigation,
             chrome: State::new(generate_state_id(), 0),
             status: State::new(generate_state_id(), "Ready".into()),
@@ -218,35 +222,6 @@ impl App {
     fn toggle_minimap(&self) {
         self.minimap_visible.update(|shown| *shown = !*shown);
     }
-    fn show_terminal(&self) {
-        if !self.terminal.is_running() {
-            let id = self.active_id();
-            let root = {
-                let rt = self.runtime.lock().unwrap();
-                rt.explorer.root.clone().or_else(|| {
-                    rt.workspace.get(id).and_then(|doc| {
-                        doc.path
-                            .as_ref()
-                            .and_then(|p| p.parent().map(Path::to_path_buf))
-                    })
-                })
-            }
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("/"));
-            self.terminal.open(root);
-        }
-        self.terminal_visible.set(true);
-        self.terminal.focus();
-        self.dismiss_language_panel();
-    }
-    fn toggle_terminal(&self) {
-        if self.terminal_visible.get() {
-            self.terminal_visible.set(false);
-            self.terminal.blur();
-        } else {
-            self.show_terminal();
-        }
-    }
     fn changed(&self) {
         self.chrome.update(|value| *value = value.wrapping_add(1));
     }
@@ -254,17 +229,7 @@ impl App {
         self.navigation.fetch_add(1, Ordering::Relaxed);
     }
     fn active_id(&self) -> DocumentId {
-        let rt = self.runtime.lock().unwrap();
-        if self.focused_group.get() == 1 {
-            if let Some(id) = self
-                .second
-                .get()
-                .filter(|id| rt.workspace.get(*id).is_some())
-            {
-                return id;
-            }
-        }
-        rt.workspace.documents[self.active.get().min(rt.workspace.documents.len() - 1)].id
+        self.group_id(self.focused_group.get())
     }
     fn window_title(&self) -> String {
         let id = self.active_id();
@@ -304,8 +269,12 @@ impl App {
         };
         if let Some((document, selection, delta)) = snapshot {
             if let Some(delta) = delta {
-                if self.second.get().is_some() {
-                    if let Some(other) = self.bindings_for(id, 1 - self.focused_group.get()) {
+                for group in self
+                    .pane_order()
+                    .into_iter()
+                    .filter(|g| *g != self.focused_group.get())
+                {
+                    if let Some(other) = self.bindings_for(id, group) {
                         other
                             .selection
                             .set(kureha_code::editor::transform_selection(
@@ -384,21 +353,18 @@ impl App {
         self.activate_unchecked(id);
     }
     fn activate_unchecked(&self, id: DocumentId) {
-        let index = {
+        let group = self.focused_group.get();
+        let exists = {
             let mut rt = self.runtime.lock().unwrap();
-            let index = rt.workspace.index(id);
-            let tabs = &mut rt.group_tabs[self.focused_group.get()];
-            if index.is_some() && !tabs.contains(&id) {
-                tabs.push(id);
+            let exists = rt.workspace.get(id).is_some();
+            if exists && !rt.group_tabs[group].contains(&id) {
+                rt.group_tabs[group].push(id);
             }
-            index
+            exists
         };
-        if let Some(index) = index {
-            if self.focused_group.get() == 1 && self.second.get().is_some() {
-                self.second.set(Some(id));
-            } else {
-                self.active.set(index);
-            }
+        if exists {
+            self.set_group_id(group, id);
+            self.blur_terminals();
         }
     }
     fn next_tab(&self, backwards: bool) {
@@ -429,51 +395,34 @@ impl App {
         self.changed();
     }
     fn remove_document(&self, id: DocumentId) {
-        let first = self.group_id(0);
-        let second = self.second.get();
-        let (index, next_second) = {
+        let mut panes = self.panes.get();
+        {
             let mut rt = self.runtime.lock().unwrap();
-            let positions = rt
-                .group_tabs
-                .each_ref()
-                .map(|tabs| tabs.iter().position(|tab| *tab == id).unwrap_or(0));
             rt.workspace.remove(id);
             rt.history.remove(id);
             rt.image_zoom.retain(|(document, _), _| *document != id);
-            for tabs in &mut rt.group_tabs {
+            rt.pane_bindings.retain(|(document, _), _| *document != id);
+            for (group, tabs) in rt.group_tabs.iter_mut().enumerate() {
+                let index = tabs.iter().position(|tab| *tab == id).unwrap_or(0);
                 tabs.retain(|tab| *tab != id);
-            }
-            if rt.group_tabs[0].is_empty() {
-                let remaining = rt.workspace.documents[0].id;
-                let remaining = if rt.group_tabs[1].contains(&remaining) {
-                    rt.workspace.new_document()
-                } else {
-                    remaining
-                };
-                rt.group_tabs[0].push(remaining);
-            }
-            let first = if rt.group_tabs[0].contains(&first) {
-                first
-            } else {
-                rt.group_tabs[0][positions[0].min(rt.group_tabs[0].len() - 1)]
-            };
-            let next_second = second.and_then(|active| {
-                let tabs = &rt.group_tabs[1];
-                if tabs.contains(&active) {
-                    Some(active)
-                } else {
-                    tabs.get(positions[1].min(tabs.len().saturating_sub(1)))
-                        .copied()
+                if panes[group] == Some(id) {
+                    panes[group] = tabs.get(index.min(tabs.len().saturating_sub(1))).copied();
                 }
-            });
-            rt.second_bindings.remove(&id);
-            (rt.workspace.index(first).unwrap(), next_second)
-        };
-        self.active.set(index);
-        if second.is_some() && next_second.is_none() {
-            self.close_split();
-        } else if second != next_second {
-            self.second.set(next_second);
+            }
+            if panes.iter().all(Option::is_none) {
+                let group = self.focused_group.get();
+                let replacement = rt.workspace.documents[0].id;
+                rt.group_tabs[group].push(replacement);
+                panes[group] = Some(replacement);
+            }
+        }
+        self.panes.set(panes.clone());
+        let keep = |g: usize| panes[g].is_some();
+        if let Some(layout) = self.pane_layout.get().retain(&keep) {
+            self.pane_layout.set(layout);
+        }
+        if !self.group_exists(self.focused_group.get()) {
+            self.focus_group(self.pane_order()[0]);
         }
         self.changed();
     }
@@ -561,7 +510,8 @@ impl App {
     fn picker(&self, purpose: DialogPurpose) {
         if let DialogPurpose::Save(id) = purpose {
             if self.is_image(id) {
-                self.status.set("Image preview is read-only".into());
+                self.status
+                    .set("This tab does not contain an editable text file".into());
                 return;
             }
         }
@@ -643,6 +593,7 @@ impl App {
         }
         self.status.set("Opening…".into());
         let group = self.focused_group.get();
+        self.focus_group(group);
         self.worker(FileOperation::Open { group }, move || {
             let path = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
             if kureha_code::media::is_image(&path) {
@@ -714,7 +665,8 @@ impl App {
     }
     fn save_to(&self, id: DocumentId, path: PathBuf) {
         if self.is_image(id) {
-            self.status.set("Image preview is read-only".into());
+            self.status
+                .set("This tab does not contain an editable text file".into());
             return;
         }
         let (document, revision, crlf, original_path, disk_text) = {
@@ -1051,6 +1003,10 @@ impl App {
         self.status.set("Copying to desktop clipboard…".into());
     }
     fn paste(&self) {
+        if self.terminal_focused() {
+            self.paste_terminal();
+            return;
+        }
         let Some(service) = self.clipboard_service() else {
             return;
         };
@@ -1060,14 +1016,15 @@ impl App {
         self.status.set("Reading desktop clipboard…".into());
     }
     fn paste_terminal(&self) {
+        let Some(target) = self.terminal_paste_target() else {
+            return;
+        };
         let Some(service) = self.clipboard_service() else {
             return;
         };
         let handle = service.read_text();
-        self.runtime.lock().unwrap().clipboard_job = Some(ClipboardJob::TerminalPaste {
-            handle,
-            generation: self.terminal.generation(),
-        });
+        self.runtime.lock().unwrap().clipboard_job =
+            Some(ClipboardJob::TerminalPaste { handle, target });
     }
     fn apply_clipboard(&self, target: ClipboardTarget, text: &str) -> bool {
         if self.active_id() != target.id
@@ -1136,14 +1093,8 @@ impl App {
                 }
             }
             (ClipboardJob::Paste { .. }, Ok(_)) => "Desktop clipboard is empty",
-            (ClipboardJob::TerminalPaste { generation, .. }, Ok(Some(text)))
-                if !text.is_empty() =>
-            {
-                if self.terminal_visible.get()
-                    && self.terminal.focused()
-                    && self.terminal.generation() == generation
-                    && self.terminal.paste(&text)
-                {
+            (ClipboardJob::TerminalPaste { target, .. }, Ok(Some(text))) if !text.is_empty() => {
+                if self.apply_terminal_paste(target, &text) {
                     "Pasted into terminal"
                 } else {
                     "Terminal paste cancelled"
@@ -1310,13 +1261,17 @@ impl App {
         text: String,
         image: Option<kureha_code::media::ImageAsset>,
     ) {
-        let group_closed = group == 1 && self.second.get().is_none();
-        let destination = if group_closed { 0 } else { group };
+        let group_closed = !self.group_exists(group);
+        let destination = if group_closed {
+            self.pane_order()[0]
+        } else {
+            group
+        };
         let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
         if !group_closed && existing != Some(self.group_id(destination)) {
             self.remember_location_in(destination);
         }
-        let (id, index) = {
+        let id = {
             let mut rt = self.runtime.lock().unwrap();
             let id = if let Some(image) = image {
                 rt.workspace.open_image(path.clone(), image)
@@ -1326,16 +1281,15 @@ impl App {
             if !rt.group_tabs[destination].contains(&id) {
                 rt.group_tabs[destination].push(id);
             }
-            (id, rt.workspace.index(id).unwrap())
+            id
         };
         self.language_opened(&path, id);
         // Completing an open updates its originating pane, without
         // taking focus from another pane or reopening a closed split.
         if !group_closed {
-            if destination == 0 {
-                self.active.set(index);
-            } else {
-                self.second.set(Some(id));
+            self.set_group_id(destination, id);
+            if destination == self.focused_group.get() {
+                self.blur_terminals();
             }
         }
         self.status.set("Ready".into());
@@ -1401,16 +1355,17 @@ impl View for App {
     fn listenables(&self) -> Vec<&dyn Listenable> {
         let mut listenables: Vec<&dyn Listenable> = vec![
             &self.chrome,
-            &self.active,
-            &self.second,
+            &self.panes,
+            &self.pane_layout,
             &self.focused_group,
-            &self.split_down,
-            &self.split_reversed,
             &self.find_options,
             &self.find_open,
             &self.theme,
             &self.minimap_visible,
-            &self.terminal_visible,
+            &self.panel_visible,
+            &self.panel_position,
+            &self.panel_fractions,
+            &self.terminal.revision,
         ];
         listenables.extend(self.nav.listenables());
         listenables.extend(self.project.listenables());
@@ -1424,6 +1379,7 @@ impl Application for App {
     fn scenes(&self) -> impl Scene {
         scenes! {
             Window::new(self.window_title(), self.content()).scene_key("main")
+                .decoration(if cfg!(target_os = "macos") { scarlet_ui::platform::WindowDecoration::SYSTEM_OVERLAY } else { scarlet_ui::platform::WindowDecoration::DEFAULT })
                 .app_id(env!("APP_ID")).background_color(self.theme.get().workspace_background()).menu_bar(self.menu()).size(Size::new(1100.0, 760.0)).min_size(Size::new(720.0, 400.0)),
             Window::new("Unsaved Changes", self.confirmation_view()).scene_key("confirm")
                 .app_id(env!("APP_ID")).open_at_launch(false).size(Size::new(560.0, 240.0)),
@@ -1453,6 +1409,11 @@ impl Application for App {
             window.set_title(&title);
             rt.title = title;
         }
+        let move_requested = std::mem::take(&mut rt.window_drag_requested);
+        drop(rt);
+        if move_requested {
+            let _ = window.request_move();
+        }
     }
     fn on_window_close_requested(&mut self, ctx: &WindowContext) -> bool {
         match ctx.scene_key.as_str() {
@@ -1468,7 +1429,7 @@ impl Application for App {
         }
     }
     fn on_idle(&mut self) {
-        self.terminal.poll();
+        self.poll_terminals();
         self.poll_theme_settings();
         self.poll_menu();
         self.poll();

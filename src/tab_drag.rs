@@ -11,6 +11,9 @@ use std::any::Any;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum RegionId {
     Root,
+    EditorArea,
+    Panel,
+    Session(u64),
     Group(usize),
     Tab(usize, DocumentId),
 }
@@ -25,6 +28,7 @@ pub(super) enum Edge {
 enum Destination {
     Insert(usize, usize),
     Split(usize, Edge),
+    Outer(Edge),
 }
 #[derive(Clone, Copy)]
 struct Gesture {
@@ -34,16 +38,110 @@ struct Gesture {
     dragging: bool,
     target: Option<Destination>,
 }
+#[derive(Clone, Copy)]
+struct PanelGesture {
+    start: Point,
+    target: Option<terminal_ui::PanelPosition>,
+    session: u64,
+    dragging: bool,
+}
 #[derive(Default)]
 struct Model {
     geometry: BTreeMap<RegionId, Rect>,
     gesture: Option<Gesture>,
     press: Option<Point>,
+    panel_drag: Option<PanelGesture>,
 }
 #[derive(Clone, Default)]
 pub(super) struct DragState(Arc<Mutex<Model>>);
 
 impl App {
+    pub(super) fn remember_panel_size(&self) {
+        if !self.panel_visible.get() {
+            return;
+        }
+        let geometry = self.tab_drag.0.lock().unwrap().geometry.clone();
+        let Some(panel) = geometry.get(&RegionId::Panel) else {
+            return;
+        };
+        let side = self.panel_position.get() == terminal_ui::PanelPosition::Right;
+        let panes = self
+            .pane_order()
+            .iter()
+            .filter_map(|g| geometry.get(&RegionId::Group(*g)))
+            .collect::<Vec<_>>();
+        let start = panes
+            .iter()
+            .map(|r| if side { r.origin.x } else { r.origin.y })
+            .fold(f32::INFINITY, f32::min);
+        let end = panes
+            .iter()
+            .map(|r| {
+                if side {
+                    r.origin.x + r.size.width
+                } else {
+                    r.origin.y + r.size.height
+                }
+            })
+            .fold(0.0, f32::max);
+        let extent = if side {
+            panel.size.width
+        } else {
+            panel.size.height
+        };
+        if end > start && extent > 0.0 {
+            self.panel_fractions.update(|ratios| {
+                ratios[usize::from(side)] = (end - start) / (end - start + extent)
+            });
+        }
+    }
+    pub(super) fn remember_pane_sizes(&self) {
+        fn measure(
+            layout: &mut groups::PaneLayout,
+            geometry: &BTreeMap<RegionId, Rect>,
+        ) -> Option<Rect> {
+            match layout {
+                groups::PaneLayout::Leaf(group) => geometry.get(&RegionId::Group(*group)).copied(),
+                groups::PaneLayout::Split {
+                    down,
+                    fraction,
+                    first,
+                    second,
+                    ..
+                } => match (measure(first, geometry), measure(second, geometry)) {
+                    (Some(a), Some(b)) => {
+                        let (start, end) = if *down {
+                            (a.size.height, b.size.height)
+                        } else {
+                            (a.size.width, b.size.width)
+                        };
+                        if start + end > 0.0 {
+                            *fraction = start / (start + end);
+                        }
+                        let x = a.origin.x.min(b.origin.x);
+                        let y = a.origin.y.min(b.origin.y);
+                        Some(Rect::from_xywh(
+                            x,
+                            y,
+                            (a.origin.x + a.size.width).max(b.origin.x + b.size.width) - x,
+                            (a.origin.y + a.size.height).max(b.origin.y + b.size.height) - y,
+                        ))
+                    }
+                    (one, other) => one.or(other),
+                },
+            }
+        }
+        let mut geometry = self.tab_drag.0.lock().unwrap().geometry.clone();
+        geometry.retain(|id, _| match id {
+            RegionId::Group(g) => self.group_exists(*g),
+            _ => true,
+        });
+        let mut layout = self.pane_layout.get();
+        measure(&mut layout, &geometry);
+        if layout != self.pane_layout.get() {
+            self.pane_layout.set(layout);
+        }
+    }
     pub(super) fn tab_region<V: View + Clone>(
         &self,
         child: V,
@@ -57,8 +155,10 @@ impl App {
                 .unwrap()
                 .geometry
                 .retain(|key, _| match *key {
-                    RegionId::Tab(group, id) => tabs[group].contains(&id),
-                    RegionId::Group(1) => self.second.get().is_some(),
+                    RegionId::Tab(group, id) => {
+                        tabs.get(group).is_some_and(|tabs| tabs.contains(&id))
+                    }
+                    RegionId::Group(group) => self.group_exists(group),
                     _ => true,
                 });
         }
@@ -80,6 +180,64 @@ impl App {
             .copied()
             .unwrap_or(Rect::zero());
         let point = |x, y| Point::new(x as f32 + root.origin.x, y as f32 + root.origin.y);
+        let panel_drag = self.tab_drag.0.lock().unwrap().panel_drag;
+        if let Some(mut drag) = panel_drag {
+            let start = drag.start;
+            let previous = drag.target;
+            match event {
+                Event::Mouse(MouseEvent::Moved { x, y }) => {
+                    let p = point(*x, *y);
+                    let target = if (p.x - start.x).hypot(p.y - start.y) < 6.0 || !root.contains(p)
+                    {
+                        None
+                    } else if p.x > root.size.width * 0.80 {
+                        Some(terminal_ui::PanelPosition::Right)
+                    } else if p.y > root.size.height * 0.70 {
+                        Some(terminal_ui::PanelPosition::Bottom)
+                    } else {
+                        None
+                    };
+                    drag.dragging |= (p.x - start.x).hypot(p.y - start.y) >= 6.0;
+                    drag.target = target;
+                    self.tab_drag.0.lock().unwrap().panel_drag = Some(drag);
+                    if previous != target {
+                        self.changed();
+                    }
+                    return true;
+                }
+                Event::Mouse(MouseEvent::ButtonReleased {
+                    button: MouseButton::Left,
+                    x,
+                    y,
+                    ..
+                }) => {
+                    self.tab_drag.0.lock().unwrap().panel_drag = None;
+                    if !root.contains(point(*x, *y)) {
+                        self.changed();
+                        return true;
+                    }
+                    if !drag.dragging || previous.is_some() {
+                        self.terminal.select(drag.session);
+                    }
+                    if let Some(position) = previous {
+                        self.remember_panel_size();
+                        self.panel_position.set(position);
+                    }
+                    self.changed();
+                    return true;
+                }
+                Event::Mouse(MouseEvent::ButtonCancelled { .. })
+                | Event::Keyboard(KeyEvent::Pressed {
+                    keycode: KeyCode::Escape,
+                    ..
+                }) => {
+                    self.tab_drag.0.lock().unwrap().panel_drag = None;
+                    self.changed();
+                    return true;
+                }
+                _ => {}
+            }
+        }
         match event {
             Event::Mouse(MouseEvent::ButtonPressed {
                 button: MouseButton::Left,
@@ -102,8 +260,7 @@ impl App {
                 };
                 drag.dragging |= (p.x - drag.start.x).hypot(p.y - drag.start.y) >= 6.0;
                 if drag.dragging {
-                    drag.target =
-                        destination(&model.geometry, &tabs, self.second.get().is_some(), p);
+                    drag.target = destination(&model.geometry, &tabs, &self.pane_order(), p);
                 }
                 let changed = model.gesture.is_none_or(|previous| {
                     previous.dragging != drag.dragging || previous.target != drag.target
@@ -131,15 +288,18 @@ impl App {
                     let target = destination(
                         &self.tab_drag.0.lock().unwrap().geometry,
                         &tabs,
-                        self.second.get().is_some(),
+                        &self.pane_order(),
                         p,
                     );
                     match target {
                         Some(Destination::Insert(group, index)) => {
                             self.move_tab(drag.id, drag.group, group, index)
                         }
-                        Some(Destination::Split(_, edge)) => {
-                            self.split_tab(drag.id, drag.group, edge)
+                        Some(Destination::Split(target, edge)) => {
+                            self.split_tab_beside(drag.id, drag.group, target, edge)
+                        }
+                        Some(Destination::Outer(edge)) => {
+                            self.split_tab_outer(drag.id, drag.group, edge)
                         }
                         None => {}
                     }
@@ -168,9 +328,18 @@ impl App {
         }
     }
 
-    pub(super) fn move_tab(&self, id: DocumentId, source: usize, target: usize, mut index: usize) {
-        if self.blocked() || target > 1 || source > 1 || target == 1 && self.second.get().is_none()
-        {
+    pub(super) fn move_tab(&self, id: DocumentId, source: usize, target: usize, index: usize) {
+        self.move_tab_internal(id, source, target, index, true);
+    }
+    pub(super) fn move_tab_internal(
+        &self,
+        id: DocumentId,
+        source: usize,
+        target: usize,
+        mut index: usize,
+        remember: bool,
+    ) {
+        if self.blocked() || !self.group_exists(target) || !self.group_exists(source) {
             return;
         }
         let source_active = self.group_id(source);
@@ -181,7 +350,7 @@ impl App {
                 return;
             }
         }
-        if source != target {
+        if source != target && remember {
             self.remember_location_in(source);
         }
         let (next, empty) = {
@@ -230,77 +399,73 @@ impl App {
         self.focus_group(target);
         self.activate_unchecked(id);
         if empty && source != target {
-            if source == 1 {
-                self.close_split();
-            } else {
-                self.promote_second_group(id);
-            }
+            self.retire_empty_group(source);
         }
         self.dismiss_language_panel();
         self.changed();
     }
 
-    fn promote_second_group(&self, active: DocumentId) {
-        let index = {
-            let mut rt = self.runtime.lock().unwrap();
-            rt.group_tabs[0] = std::mem::take(&mut rt.group_tabs[1]);
-            let ids = rt.group_tabs[0].clone();
-            for id in ids {
-                if let Some(bindings) = rt.second_bindings.remove(&id) {
-                    rt.workspace.get_mut(id).unwrap().bindings = bindings;
-                }
-                if let Some(zoom) = rt.image_zoom.remove(&(id, 1)) {
-                    rt.image_zoom.insert((id, 0), zoom);
-                }
-            }
-            rt.workspace.index(active).unwrap()
-        };
-        self.active.set(index);
-        self.focus_group(0);
-        self.second.set(None);
-        self.split_reversed.set(false);
-    }
-
+    #[cfg(test)]
     pub(super) fn split_tab(&self, id: DocumentId, source: usize, edge: Edge) {
-        if self.blocked() {
+        self.split_tab_beside(id, source, source, edge);
+    }
+    pub(super) fn split_tab_beside(
+        &self,
+        id: DocumentId,
+        source: usize,
+        beside: usize,
+        edge: Edge,
+    ) {
+        self.split_tab_at(id, source, Some(beside), edge);
+    }
+    pub(super) fn split_tab_outer(&self, id: DocumentId, source: usize, edge: Edge) {
+        self.split_tab_at(id, source, None, edge);
+    }
+    fn split_tab_at(&self, id: DocumentId, source: usize, beside: Option<usize>, edge: Edge) {
+        if self.blocked()
+            || !self.group_exists(source)
+            || beside.is_some_and(|g| !self.group_exists(g))
+        {
             return;
         }
-        if self.second.get().is_some() {
-            self.move_tab(id, source, 1 - source, usize::MAX);
+        if !self.runtime.lock().unwrap().group_tabs[source].contains(&id) {
             return;
         }
-        if !self.runtime.lock().unwrap().group_tabs[0].contains(&id) {
-            return;
-        }
-        self.remember_location_in(0);
-        if let (Some(from), Some(to)) = (self.bindings_for(id, 0), self.bindings_for(id, 1)) {
-            to.selection.set(from.selection.get());
-            to.scroll.set(from.scroll.get());
-        }
-        let first = {
+        self.remember_location_in(source);
+        let from = self.bindings_for(id, source).unwrap();
+        let detach = beside.map_or(self.pane_order().len() > 1, |target| target != source);
+        let group = if let Some(beside) = beside {
+            self.add_group(id, beside, edge)
+        } else {
+            self.remember_pane_sizes();
+            let group = self.allocate_group(id);
+            self.pane_layout.update(|layout| layout.wrap(group, edge));
+            group
+        };
+        let to = self.bindings_for(id, group).unwrap();
+        to.selection.set(from.selection.get());
+        to.scroll.set(from.scroll.get());
+        let next = {
             let mut rt = self.runtime.lock().unwrap();
-            let active = rt.workspace.documents[self.active.get()].id;
-            if rt.group_tabs[0].len() > 1 {
-                rt.group_tabs[0].retain(|tab| *tab != id);
+            if rt.group_tabs[source].len() > 1 || detach {
+                rt.group_tabs[source].retain(|tab| *tab != id);
             }
-            rt.group_tabs[1] = vec![id];
-            if let Some(zoom) = rt.image_zoom.get(&(id, 0)).copied() {
-                rt.image_zoom.insert((id, 1), zoom);
+            if let Some(zoom) = rt.image_zoom.get(&(id, source)).copied() {
+                rt.image_zoom.insert((id, group), zoom);
             }
-            if rt.group_tabs[0].contains(&active) {
-                active
+            if rt.group_tabs[source].contains(&self.group_id(source)) {
+                Some(self.group_id(source))
             } else {
-                rt.group_tabs[0][0]
+                rt.group_tabs[source].first().copied()
             }
         };
-        self.focus_group(0);
-        self.activate_unchecked(first);
-        self.second.set(Some(id));
-        self.split_down
-            .set(matches!(edge, Edge::Top | Edge::Bottom));
-        self.split_reversed
-            .set(matches!(edge, Edge::Left | Edge::Top));
-        self.focus_group(1);
+        if let Some(next) = next {
+            self.set_group_id(source, next);
+        }
+        self.focus_group(group);
+        if next.is_none() {
+            self.retire_empty_group(source);
+        }
         self.dismiss_language_panel();
         self.changed();
     }
@@ -308,11 +473,31 @@ impl App {
 
 fn destination(
     geometry: &BTreeMap<RegionId, Rect>,
-    tabs: &[Vec<DocumentId>; 2],
-    split: bool,
+    tabs: &[Vec<DocumentId>],
+    order: &[usize],
     p: Point,
 ) -> Option<Destination> {
-    for group in 0..if split { 2 } else { 1 } {
+    // The outer band targets the whole editor tree, excluding sidebar/panel.
+    // Further inside, the same edge targets only the pane under the pointer.
+    if order.len() > 1 {
+        if let Some(area) = geometry
+            .get(&RegionId::EditorArea)
+            .filter(|area| area.contains(p))
+        {
+            let edges = [
+                (p.x - area.origin.x, Edge::Left),
+                (area.origin.x + area.size.width - p.x, Edge::Right),
+                (p.y - area.origin.y, Edge::Top),
+                (area.origin.y + area.size.height - p.y, Edge::Bottom),
+            ];
+            if let Some((distance, edge)) = edges.into_iter().min_by(|a, b| a.0.total_cmp(&b.0)) {
+                if distance < 16.0 {
+                    return Some(Destination::Outer(edge));
+                }
+            }
+        }
+    }
+    for &group in order {
         let pane = geometry.get(&RegionId::Group(group))?;
         if !pane.contains(p) {
             continue;
@@ -329,7 +514,7 @@ fn destination(
             }
             return Some(Destination::Insert(group, index));
         }
-        if !split {
+        {
             let x = (p.x - pane.origin.x) / pane.size.width;
             let y = (p.y - pane.origin.y) / pane.size.height;
             let edge = if x < 0.22 {
@@ -528,6 +713,33 @@ impl ElementRenderObject for RegionRenderer {
         ) {
             return false;
         }
+        if let RegionId::Session(session) = self.id {
+            if let Event::Mouse(MouseEvent::ButtonPressed {
+                button: MouseButton::Left,
+                x,
+                y,
+                ..
+            }) = event
+            {
+                if *x >= 0
+                    && (*x as f32) < self.size.width - 28.0
+                    && *y >= 0
+                    && (*y as f32) < self.size.height
+                {
+                    let mut model = self.state.0.lock().unwrap();
+                    if let Some(start) = model.press.take() {
+                        model.panel_drag = Some(PanelGesture {
+                            start,
+                            target: None,
+                            session,
+                            dragging: false,
+                        });
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
         let RegionId::Tab(group, id) = self.id else {
             return false;
         };
@@ -559,6 +771,61 @@ impl ElementRenderObject for RegionRenderer {
         false
     }
     fn paint_overlay(&self, ctx: &mut PaintContext<'_>, origin: Point) -> bool {
+        if self.id == RegionId::Root {
+            if let Some(PanelGesture {
+                target: Some(position),
+                ..
+            }) = self.state.0.lock().unwrap().panel_drag
+            {
+                let rect = match position {
+                    terminal_ui::PanelPosition::Right => Rect::from_xywh(
+                        origin.x + self.size.width * 0.8,
+                        origin.y,
+                        self.size.width * 0.2,
+                        self.size.height,
+                    ),
+                    terminal_ui::PanelPosition::Bottom => Rect::from_xywh(
+                        origin.x,
+                        origin.y + self.size.height * 0.7,
+                        self.size.width,
+                        self.size.height * 0.3,
+                    ),
+                };
+                ctx.fill_rect(rect, self.accent.with_opacity(0.16));
+                return true;
+            }
+        }
+        if self.id == RegionId::EditorArea {
+            let model = self.state.0.lock().unwrap();
+            if let Some(Gesture {
+                dragging: true,
+                target: Some(Destination::Outer(edge)),
+                ..
+            }) = model.gesture
+            {
+                let mut rect = Rect::new(origin, self.size);
+                match edge {
+                    Edge::Left => rect.size.width /= 2.0,
+                    Edge::Right => {
+                        rect.size.width /= 2.0;
+                        rect.origin.x += rect.size.width;
+                    }
+                    Edge::Top => rect.size.height /= 2.0,
+                    Edge::Bottom => {
+                        rect.size.height /= 2.0;
+                        rect.origin.y += rect.size.height;
+                    }
+                }
+                ctx.fill_rect(rect, self.accent.with_opacity(0.20));
+                ctx.draw_text(
+                    Point::new(rect.origin.x + 16.0, rect.origin.y + 32.0),
+                    "Entire editor area",
+                    self.accent,
+                    14.0,
+                );
+                return true;
+            }
+        }
         let RegionId::Group(group) = self.id else {
             return false;
         };
@@ -610,7 +877,7 @@ impl ElementRenderObject for RegionRenderer {
         ctx.fill_rect(rect, self.accent.with_opacity(0.20));
         ctx.draw_text(
             Point::new(rect.origin.x + 16.0, rect.origin.y + 58.0),
-            "Split editor",
+            "Split pane",
             self.accent,
             14.0,
         );
@@ -642,14 +909,14 @@ mod tests {
             .scroll
             .set(TextViewScroll { x: 11.0, y: 20.0 });
         app.split_tab(second, 0, Edge::Left);
-        assert!(app.split_reversed.get());
+        assert_eq!(app.pane_order(), vec![1, 0]);
         assert_eq!(
             app.runtime.lock().unwrap().group_tabs,
             [vec![first], vec![second]]
         );
         assert_eq!(app.bindings(second).unwrap().selection.get(), selection);
         app.move_tab(second, 1, 0, 0);
-        assert!(app.second.get().is_none());
+        assert!(app.panes.get().get(1).copied().flatten().is_none());
         assert_eq!(
             app.runtime.lock().unwrap().group_tabs[0],
             vec![second, first]
@@ -667,14 +934,256 @@ mod tests {
         app.undo(false);
         assert_eq!(app.bindings(second).unwrap().document.get().as_str(), "");
         app.split_tab(second, 0, Edge::Bottom);
-        app.move_tab(first, 0, 1, usize::MAX);
-        assert!(app.second.get().is_none());
-        assert_eq!(app.focused_group.get(), 0);
+        app.move_tab(first, 0, 2, usize::MAX);
+        assert_eq!(app.pane_order(), vec![2]);
+        assert_eq!(app.focused_group.get(), 2);
         assert_eq!(app.active_id(), first);
         assert_eq!(
-            app.runtime.lock().unwrap().group_tabs[0],
+            app.runtime.lock().unwrap().group_tabs[2],
             vec![second, first]
         );
+    }
+
+    #[test]
+    fn outer_edge_drop_spans_entire_editor_and_keeps_existing_stack_on_every_side() {
+        for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
+            let app = App::new();
+            app.split_editor(true);
+            app.new_document();
+            let id = app.active_id();
+            let before = app.pane_layout.get();
+            let selection = TextSelection::collapsed(0);
+            app.bindings(id).unwrap().selection.set(selection);
+            let window = || {
+                Window::new("Outer", app.content())
+                    .decorated(false)
+                    .size(Size::new(1200.0, 800.0))
+            };
+            let mut pipeline = RenderingPipeline::new();
+            pipeline.set_paint_enabled(false);
+            pipeline.set_root(window().create_element());
+            pipeline.layout_initial();
+            pipeline.render();
+            let mut geometry = BTreeMap::new();
+            collect_geometry(
+                pipeline.element_tree().root().unwrap(),
+                Point::ZERO,
+                &mut geometry,
+            );
+            let area = geometry[&RegionId::EditorArea];
+            let point = match edge {
+                Edge::Left => {
+                    Point::new(area.origin.x + 5.0, area.origin.y + area.size.height * 0.75)
+                }
+                Edge::Right => Point::new(
+                    area.origin.x + area.size.width - 5.0,
+                    area.origin.y + area.size.height * 0.75,
+                ),
+                Edge::Top => Point::new(area.origin.x + area.size.width * 0.5, area.origin.y + 5.0),
+                Edge::Bottom => Point::new(
+                    area.origin.x + area.size.width * 0.5,
+                    area.origin.y + area.size.height - 5.0,
+                ),
+            };
+            assert_eq!(
+                destination(
+                    &geometry,
+                    &app.runtime.lock().unwrap().group_tabs,
+                    &app.pane_order(),
+                    point
+                ),
+                Some(Destination::Outer(edge))
+            );
+            let pane = geometry[&RegionId::Group(1)];
+            let inner = Point::new(
+                pane.origin.x + pane.size.width - 30.0,
+                pane.origin.y + pane.size.height * 0.5,
+            );
+            assert_eq!(
+                destination(
+                    &geometry,
+                    &app.runtime.lock().unwrap().group_tabs,
+                    &app.pane_order(),
+                    inner
+                ),
+                Some(Destination::Split(1, Edge::Right))
+            );
+            let tab = geometry[&RegionId::Tab(1, id)];
+            pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+                button: MouseButton::Left,
+                x: (tab.origin.x + 25.0) as i32,
+                y: (tab.origin.y + 15.0) as i32,
+                click_count: 1,
+            }));
+            pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
+                x: point.x as i32,
+                y: point.y as i32,
+            }));
+            pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+                button: MouseButton::Left,
+                x: point.x as i32,
+                y: point.y as i32,
+                click_count: 1,
+            }));
+            assert_eq!(app.active_id(), id);
+            let groups::PaneLayout::Split {
+                first,
+                second,
+                down,
+                ..
+            } = app.pane_layout.get()
+            else {
+                panic!("outer split missing");
+            };
+            assert_eq!(down, matches!(edge, Edge::Top | Edge::Bottom));
+            let old = if matches!(edge, Edge::Left | Edge::Top) {
+                second
+            } else {
+                first
+            };
+            assert_eq!(*old, before);
+            pipeline
+                .element_tree_mut()
+                .root_mut()
+                .unwrap()
+                .update(&window());
+            pipeline.render();
+            geometry.clear();
+            collect_geometry(
+                pipeline.element_tree().root().unwrap(),
+                Point::ZERO,
+                &mut geometry,
+            );
+            let outer = geometry[&RegionId::Group(2)];
+            if down {
+                assert!((outer.size.width - area.size.width).abs() < 1.0);
+            } else {
+                assert!((outer.size.height - area.size.height).abs() < 1.0);
+            }
+            assert_eq!(app.bindings(id).unwrap().selection.get(), selection);
+            pipeline.teardown();
+        }
+    }
+
+    #[test]
+    fn panel_drag_docks_independently_of_nested_editors_and_toggle_preserves_sessions() {
+        let app = App::new();
+        app.split_editor(true);
+        app.focus_group(0);
+        app.split_editor(false);
+        let layout = app.pane_layout.get();
+        app.new_terminal();
+        let session = app.terminal.active().unwrap();
+        let generation = session.terminal.generation();
+        let window = || {
+            Window::new("Panel", app.content())
+                .decorated(false)
+                .size(Size::new(1100.0, 760.0))
+        };
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_paint_enabled(false);
+        pipeline.set_root(window().create_element());
+        pipeline.layout_initial();
+        pipeline.render();
+        let mut geometry = BTreeMap::new();
+        collect_geometry(
+            pipeline.element_tree().root().unwrap(),
+            Point::ZERO,
+            &mut geometry,
+        );
+        let tab = geometry[&RegionId::Session(session.id)];
+        pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+            button: MouseButton::Left,
+            x: (tab.origin.x + 25.0) as i32,
+            y: (tab.origin.y + 15.0) as i32,
+            click_count: 1,
+        }));
+        assert!(app.tab_drag.0.lock().unwrap().panel_drag.is_some());
+        pipeline.handle_event(&Event::Mouse(MouseEvent::Moved { x: 1050, y: 350 }));
+        pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+            button: MouseButton::Left,
+            x: 1050,
+            y: 350,
+            click_count: 1,
+        }));
+        assert_eq!(app.panel_position.get(), terminal_ui::PanelPosition::Right);
+        assert_eq!(app.pane_layout.get(), layout);
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.render();
+        let mut geometry = BTreeMap::new();
+        collect_geometry(
+            pipeline.element_tree().root().unwrap(),
+            Point::ZERO,
+            &mut geometry,
+        );
+        assert!(geometry[&RegionId::Panel].origin.x > geometry[&RegionId::Group(2)].origin.x);
+        app.focus_group(0);
+        app.toggle_panel();
+        assert!(!app.panel_visible.get());
+        app.toggle_panel();
+        assert!(app.panel_visible.get());
+        assert_eq!(app.terminal.active().unwrap().id, session.id);
+        assert_eq!(session.terminal.generation(), generation);
+        assert_eq!(app.pane_layout.get(), layout);
+        session.terminal.close();
+        pipeline.teardown();
+    }
+
+    #[test]
+    fn nested_splits_keep_bottom_full_width_and_can_become_three_columns() {
+        let app = App::new();
+        app.split_editor(true); // bottom 1
+        app.focus_group(0);
+        app.split_editor(false); // upper right 2
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_paint_enabled(false);
+        for size in [Size::new(1400.0, 900.0), Size::new(720.0, 400.0)] {
+            pipeline.set_root(
+                Window::new("Nested", app.content())
+                    .decorated(false)
+                    .size(size)
+                    .create_element(),
+            );
+            pipeline.layout_initial();
+            pipeline.render();
+            let mut geometry = BTreeMap::new();
+            collect_geometry(
+                pipeline.element_tree().root().unwrap(),
+                Point::ZERO,
+                &mut geometry,
+            );
+            let left = geometry[&RegionId::Group(0)];
+            let right = geometry[&RegionId::Group(2)];
+            let bottom = geometry[&RegionId::Group(1)];
+            assert!((left.origin.y - right.origin.y).abs() < 1.0);
+            assert!(right.origin.x >= left.origin.x + left.size.width);
+            assert!(bottom.origin.y >= left.origin.y + left.size.height);
+            assert!((bottom.origin.x - left.origin.x).abs() < 1.0);
+            assert!((bottom.size.width - left.size.width - right.size.width - 10.0).abs() < 1.0);
+            for pane in [left, right, bottom] {
+                assert!(pane.size.width > 0.0 && pane.size.height > 0.0);
+                assert!(pane.origin.x + pane.size.width <= size.width + 1.0);
+                assert!(pane.origin.y + pane.size.height <= size.height + 1.0);
+            }
+        }
+        pipeline.teardown();
+        // A unique tab dragged out of the bottom pane removes that old pane.
+        app.focus_group(1);
+        app.new_document();
+        let moved = app.active_id();
+        let shared = app.group_id(0);
+        app.request_close(Some(shared));
+        app.split_tab_beside(moved, 1, 2, Edge::Right);
+        assert_eq!(app.pane_order(), vec![0, 2, 3]);
+        assert!(!app.group_exists(1));
+        assert!(matches!(
+            app.pane_layout.get(),
+            groups::PaneLayout::Split { down: false, .. }
+        ));
     }
 
     #[test]
@@ -754,7 +1263,7 @@ mod tests {
             .update(&window());
         pipeline.render();
         assert!(pipeline.handle_event(&mouse(false, drop)));
-        assert_eq!(app.second.get(), Some(second));
+        assert_eq!(app.panes.get().get(1).copied().flatten(), Some(second));
         assert_eq!(
             app.runtime.lock().unwrap().group_tabs,
             [vec![first], vec![second]]
@@ -771,13 +1280,16 @@ mod tests {
             Point::new(tab.origin.x + 30.0, tab.origin.y + 15.0)
         )));
         let group = rect(&pipeline, RegionId::Group(0));
-        let drop = Point::new(group.origin.x + 80.0, group.origin.y + 160.0);
+        let drop = Point::new(
+            group.origin.x + group.size.width / 2.0,
+            group.origin.y + 160.0,
+        );
         pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
             x: drop.x as i32,
             y: drop.y as i32,
         }));
         assert!(pipeline.handle_event(&mouse(false, drop)));
-        assert!(app.second.get().is_none());
+        assert!(app.panes.get().get(1).copied().flatten().is_none());
         assert_eq!(
             app.runtime.lock().unwrap().group_tabs[0],
             vec![first, second]
