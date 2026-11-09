@@ -267,3 +267,25 @@ KUREHA_WORKBENCH_PREVIEW=artifacts/bubble-glass cargo test --bin kureha-code wor
 ```
 
 The manual test writes PPM images to that directory; it does not launch a window.
+
+## Image previews and tab dragging
+
+PNG, JPEG, GIF, WebP, BMP and ICO files open as read-only image tabs. The preview
+has a transparency checkerboard, Fit, 100% and zoom controls; enlarged images
+scroll in both directions. GIF previews show the first frame. Decoding runs on
+the file worker, with a 32 MiB input and 16 megapixel output limit. SVG remains a
+text document. Save and text-edit commands cannot overwrite an image preview.
+
+Drag a tab to another position in its tab strip to reorder it, or to the
+left/right/top/bottom edge of a single editor pane to split. A highlighted area
+shows the destination. With two panes open, drop into the other pane or its tab
+strip to move the tab. Selection, scroll position, unsaved edits and Undo history
+are preserved. Empty panes collapse; splitting the only tab keeps a view in
+both panes. Escape or dropping outside the editor cancels the gesture. The
+existing two-pane limit remains.
+
+HTML/Markdown previews are at the WebView design stage, not enabled yet.
+[The WebView design](docs/webview.md) reuses Myrica's engine/worker boundary and
+allows platform-native WebViews through separate presentation adapters. It
+covers in-memory documents, relative resources, native-view composition and the
+handoff between Myrica, ScarletUI and Kureha.

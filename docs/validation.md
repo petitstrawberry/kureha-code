@@ -369,3 +369,40 @@ The minimap source marks subsequently changed from 80% to 40% opacity (also
 respecting any alpha in the syntax color). The viewport indicator remains at
 15% neutral fill. All 12 minimap tests and all 18 rendered fixtures passed again;
 Light/Monokai screenshots were refreshed after visual review.
+
+
+## Image previews, tab dragging and WebView design — 2026-11-09
+
+Raster images open in read-only tabs using bounded worker decoding. Fit and zoom
+share an inset, clipped surface; a compact toolbar remains inside a 180px pane.
+The checkerboard and enlarged image cannot paint across the pane rim. Image tabs
+keep dimensions, format and size in the status line and cannot be saved as text.
+
+Tab dragging reorders the strip, splits an unsplit editor at any edge, and moves
+between the existing two panes. Empty panes collapse. Document identity, dirty
+buffers and Undo remain shared; selection, scroll and image zoom follow a move.
+Hit regions are collected from the live element tree before pointer dispatch,
+including incrementally laid-out and scrolled children. They do not depend on
+paint origins: native retained GPU layers can paint in local coordinates.
+
+Validation on macOS AArch64 with the published ScarletUI pin:
+
+- Locked/offline full suite: 108 library and 80 application tests passed;
+  five optional/manual tests ignored. Release build passed.
+- Mounted pointer tests cover splitting, moving, rebuilding during a gesture,
+  outside release and Escape. A local-origin paint regression protects native
+  GPU hit regions. Model tests cover dirty buffers, Undo, selection, scroll and
+  empty-pane promotion.
+- Worker tests verify image alpha, read-only editing/saving, file byte retention,
+  pane moves and zoom cleanup. Pixel tests at 180px and 260px widths cover Fit,
+  100% and 800% zoom, toolbar bounds and the unpainted outer inset.
+- The refreshed CPU fixture was inspected and saved as
+  `screenshots/image-preview.png`.
+- Native winit/WGPU interaction confirmed image Fit/100%, dragging the image tab
+  to the bottom edge to split, moving it back to the upper pane, and automatic
+  collapse of the empty lower pane. The clipped preview was visually inspected.
+  Scarlet-native and other desktop backends remain untested.
+
+`webview.md` is a design, not an implemented HTML/Markdown preview. It describes
+extracting Myrica's reusable session/engine layer and supporting both frame and
+platform-native child-view presentation. No Myrica working files were changed.

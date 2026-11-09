@@ -70,6 +70,7 @@ pub struct Document {
     pub disk_text: Option<Arc<str>>,
     pub editor: Editor,
     pub bindings: Bindings,
+    pub image: Option<Arc<crate::media::ImageAsset>>,
 }
 
 impl Document {
@@ -83,6 +84,7 @@ impl Document {
             crlf: text.contains("\r\n"),
             editor,
             bindings,
+            image: None,
         }
     }
     pub fn name(&self) -> String {
@@ -134,6 +136,16 @@ impl Workspace {
             return id;
         }
         self.add(Some(path), text)
+    }
+    pub fn open_image(&mut self, path: PathBuf, image: crate::media::ImageAsset) -> DocumentId {
+        if let Some(id) = self.find_path(&path) {
+            return id;
+        }
+        let id = self.add(Some(path), "");
+        let doc = self.get_mut(id).unwrap();
+        doc.image = Some(Arc::new(image));
+        doc.disk_text = None;
+        id
     }
     fn add(&mut self, path: Option<PathBuf>, text: &str) -> DocumentId {
         let id = self.next_id;
