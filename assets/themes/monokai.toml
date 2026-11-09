@@ -1,0 +1,36 @@
+name = "Monokai"
+base = "dark"
+
+[colors]
+background = "#272822"
+foreground = "#f8f8f2"
+surface = "#1e1f1c"
+elevated = "#34352f"
+workspace = "#1e1f1c"
+muted = "#90908a"
+border = "#414339"
+accent = "#a6e22e"
+selection = "#414339"
+current_line = "#3e3d32"
+minimap_viewport = "#a6e22e25"
+minimap_border = "#a6e22e80"
+error = "#f92672"
+warning = "#e6db74"
+
+[syntax]
+comment = "#88846f"
+string = "#e6db74"
+constant = "#ae81ff"
+number = "#ae81ff"
+keyword = "#f92672"
+function = "#a6e22e"
+type = "#a6e22e"
+tag = "#f92672"
+
+[[syntax_rules]]
+scope = "storage.type, support.type, support.class, support.function, support.constant"
+color = "#66d9ef"
+
+[[syntax_rules]]
+scope = "variable.parameter"
+color = "#fd971f"

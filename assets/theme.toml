@@ -1,6 +1,6 @@
 # Save to apply. Invalid edits keep the last working theme.
 name = "My Theme"
-base = "dark" # light, dark, dracula, nord, solarized-dark/light, gruvbox-dark, tokyo-night
+base = "dark" # light, dark, dracula, monokai, nord, solarized-dark/light, gruvbox-dark, tokyo-night
 
 [colors]
 workspace = "#131924"

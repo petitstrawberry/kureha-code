@@ -30,7 +30,7 @@ files and Replace All results are limited to 16 MiB. The editor provides syntax 
 
 View → Color Theme selects the workbench palette. View → Editor Color Theme
 changes only the document area and its syntax colors. Bundled choices are Light,
-Dark, Dracula, Nord, Solarized Dark/Light, Gruvbox Dark and Tokyo Night.
+Dark, Dracula, Monokai, Nord, Solarized Dark/Light, Gruvbox Dark and Tokyo Night.
 Menu choices apply for the current session.
 
 For persistent settings, choose View → Customize Theme… and save the generated

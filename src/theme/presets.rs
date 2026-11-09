@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 
 pub const PRESETS: &[(&str, &str)] = &[
     ("dracula", "Dracula"),
+    ("monokai", "Monokai"),
     ("nord", "Nord"),
     ("solarized-dark", "Solarized Dark"),
     ("solarized-light", "Solarized Light"),
@@ -15,6 +16,7 @@ pub fn preset(name: &str) -> Option<Theme> {
     let themes = THEMES.get_or_init(|| {
         [
             include_str!("../../assets/themes/dracula.toml"),
+            include_str!("../../assets/themes/monokai.toml"),
             include_str!("../../assets/themes/nord.toml"),
             include_str!("../../assets/themes/solarized-dark.toml"),
             include_str!("../../assets/themes/solarized-light.toml"),
