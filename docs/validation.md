@@ -495,3 +495,40 @@ ScarletUI is pinned to published commit 1e0c15585dda178b8e70594ed850d9148da2918d
 SYSTEM_OVERLAY mode preserves native macOS controls over full-size content;
 20 core window tests and 38 winit tests passed. Other hosts use normal decoration.
 The separately reported VT100 panic was explicitly excluded from this task.
+
+## Built-in Markdown preview — 2026-11-09
+
+Markdown now has a native ScarletUI preview alongside the existing image viewer.
+Toggle Markdown Preview (Primary+Shift+V), Open Markdown Preview to Side, and
+Markdown: Refresh Preview are available through the menu or command palette.
+Source and preview share a document, with mode owned by the pane. Markdown
+parsing/highlighting and image I/O run on separate workers; stale text revisions
+and image results from a previous file path are rejected. Layout is retained for
+unchanged content/theme/font/width. Hidden previews stop scheduling work.
+
+Images are embedded with preserved aspect ratio and alpha. Relative local paths,
+URI-escaped Unicode names, cache reuse/invalidation, HTTP image responses, and
+failure placeholders are covered. PNG/JPEG/GIF-first-frame/WebP/BMP/ICO are
+supported; SVG and HTML/CSS layout remain outside this implementation. HTTP/HTTPS
+images are supported on the desktop host builds; Scarlet currently uses local
+images. Inline emphasis uses the theme accent; preview text selection is not yet
+implemented. Limits and refresh behavior are documented in README.md.
+
+Validation on macOS through the locked Nix development environment:
+
+- `cargo test --locked --offline -- --test-threads=1`: 113 library and 98 binary
+  tests passed; eight optional/manual tests were ignored.
+- `cargo build --release --locked --offline`: passed.
+- A deliberately blocked local HTTP image response did not prevent a newer
+  unsaved text revision from reaching the preview before the response was released.
+- Source/preview separation, image reuse after edits, Undo, theme changes, pane
+  moves, closing documents, rapid revisions, and hidden/reopened views passed.
+- Actual renderer tests covered Unicode, long unbroken text, tables and embedded
+  images at 180/320/840px widths, retained geometry, wheel scrolling and heading
+  link targets. An initially quadratic long-word wrapping path was replaced with
+  bounded glyph-advance measurement; the 20,000-character regression passed.
+- The manual `markdown_preview_screenshot` fixture rendered source and preview at
+  1440×1060. The resulting [screenshot](screenshots/markdown-preview.png) was
+  visually reviewed for headings, nested content, code colors, tables and the
+  embedded image. This was a ScarletUI CPU renderer review, not a native window
+  interaction pass.

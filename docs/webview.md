@@ -1,7 +1,8 @@
 # 共通WebViewとKurehaプレビューの設計
 
-2026-11-09。設計案。今回の画像プレビュー／タブ操作とは別の実装段階であり、
-HTML/Markdownプレビューが実装済みという意味ではない。
+2026-11-09。WebView部分の設計案。Markdownは先に内蔵レンダラーを実装し、
+CommonMarkをScarletUIで直接描画する。未保存編集、コードの色分け、表、埋め込み画像に
+対応し、ブラウザの起動を必要としない。HTML/CSS表示は引き続きこのWebView設計で扱う。
 
 ## 結論と所有範囲
 
@@ -12,7 +13,8 @@ ScarletUI本体はブラウザエンジンに依存させない。必要な表�
 ```mermaid
 flowchart TD
   M[Myrica: アドレスバー・履歴・設定] --> W[myrica-webview: セッション・読み込み・通知]
-  K[Kureha: Markdown→HTML・テーマCSS・未保存文書] --> W
+  K[Kureha: HTML/CSSプレビュー] --> W
+  MD[Kureha: Markdown] --> R[内蔵Markdownレンダラー → ScarletUI]
   W --> E[Myrica engine adapter: Blitz / Scarlet WebKit]
   W --> N[Native adapter: WKWebView / WebView2 / WebKitGTK]
   E --> F[Frame presentation: SGFX / shared GPU image]
@@ -59,7 +61,8 @@ GPU画像のleaseを返すことを維持して公開部品に抽出する。
 `ResourceProvider` は単なる `file://` への書き換えにしない。Kurehaは指定した文書・
 ワークスペースの実体パスと未保存バッファから解決し、パーセントエンコード・`..`・
 symlinkを含めた解決後の範囲を確認する。CSS中のURLも同じ経路を通す。
-初期MarkdownプレビューはJavaScriptとリモート読み込みを無効にする。HTMLプレビューで
+WebView側の初期プレビューはJavaScriptとリモート読み込みを無効にする。内蔵Markdownの
+HTTP/HTTPS画像は独立した制限付きワーカーで読み込む。HTMLプレビューで
 許可する機能は個別の設定とし、Myricaの通常閲覧用cookie/storage profileを共有しない。
 プレビューにターミナルや任意ファイル操作のIPCを公開する必要はない。
 
@@ -98,7 +101,8 @@ window相対の矩形・clip・DPI・visibility・focus通知。HTMLの解釈や
 
 ## Kurehaでの利用
 
-MarkdownはKurehaでHTMLに変換し、テーマCSS、コードブロックの色、source位置の目印を添える。
+Markdownの標準表示は内蔵レンダラーとする。将来WebView表示を追加する場合には、
+KurehaでHTMLに変換し、テーマCSS、コードブロックの色、source位置の目印を添える。
 HTMLファイルは同じセッションAPIに直接渡す。編集更新はrevision付きでまとめ、古い更新が
 新しい文書を上書きしないようにする。テーマ変更だけでOS WebViewを作り直さない。
 
@@ -118,7 +122,7 @@ HTMLファイルは同じセッションAPIに直接渡す。編集更新はrevi
    遅延応答を検証する。ブラウザアプリの終了方針をセッション終了から分離する。
 3. **macOS native adapterの小さい実証**：native childをScarletUIの分割ペインに置き、
    Retina/DPI、スクロール、IME、フォーカス復帰、メニューとパレットの重なり、移動／閉鎖を確認する。
-4. **KurehaでMarkdown/HTMLプレビューを接続**：ライブ更新、相対resource、テーマ反映、
+4. **KurehaでHTMLと追加のWebViewプレビューを接続**：ライブ更新、相対resource、テーマ反映、
    コード／プレビュー並列、タブ移動、無効なHTMLでもエディタが操作できることを確認する。
 5. **Scarletと他のhost**：同じ契約テストを実エンジンで実行してから既定選択へ加える。
 

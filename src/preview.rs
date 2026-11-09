@@ -1,4 +1,4 @@
-//! Native image previews. HTML/Markdown embedding is designed in docs/webview.md.
+//! Native image previews and per-pane Markdown preview routing.
 use super::*;
 use scarlet_ui::{
     element::{ElementRenderObject, LayoutConstraints, RenderElement, UpdateResult},
@@ -27,7 +27,11 @@ impl App {
         if let Some(image) = image {
             Either::A(self.image_view(id, group, image))
         } else {
-            Either::B(self.editor_view(id, group))
+            Either::B(if self.markdown_previewing(id, group) {
+                Either::A(self.markdown_view(id, group))
+            } else {
+                Either::B(self.editor_view(id, group))
+            })
         }
     }
     fn set_image_zoom(&self, id: DocumentId, group: usize, zoom: f32) {

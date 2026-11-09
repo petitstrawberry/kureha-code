@@ -378,6 +378,7 @@ impl App {
             index = index.min(rt.group_tabs[target].len());
             rt.group_tabs[target].insert(index, id);
             if source != target {
+                rt.markdown.move_pane(id, source, target, false);
                 if let Some(zoom) = rt.image_zoom.remove(&(id, source)) {
                     rt.image_zoom.insert((id, target), zoom);
                 }
@@ -449,6 +450,10 @@ impl App {
             let mut rt = self.runtime.lock().unwrap();
             if rt.group_tabs[source].len() > 1 || detach {
                 rt.group_tabs[source].retain(|tab| *tab != id);
+            }
+            rt.markdown.move_pane(id, source, group, true);
+            if !rt.group_tabs[source].contains(&id) {
+                rt.markdown.modes.remove(&(id, source));
             }
             if let Some(zoom) = rt.image_zoom.get(&(id, source)).copied() {
                 rt.image_zoom.insert((id, group), zoom);

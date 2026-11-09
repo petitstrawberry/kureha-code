@@ -187,6 +187,24 @@ macro_rules! command {
 }
 const COMMANDS: &[CommandDescriptor] = &[
     command!(
+        "markdown-refresh",
+        "Markdown: Refresh Preview",
+        "reload images",
+        ""
+    ),
+    command!(
+        "markdown-preview",
+        "Markdown: Toggle Preview",
+        "source render",
+        "Primary+Shift+V"
+    ),
+    command!(
+        "markdown-preview-side",
+        "Markdown: Open Preview to Side",
+        "source render split",
+        ""
+    ),
+    command!(
         "save-all",
         "File: Save All",
         "save all files changed",
@@ -998,6 +1016,9 @@ impl App {
             "move-down" => self.edit_command(super::editing_ui::Command::MoveDown),
             "duplicate-up" => self.edit_command(super::editing_ui::Command::DuplicateUp),
             "duplicate-down" => self.edit_command(super::editing_ui::Command::DuplicateDown),
+            "markdown-refresh" => self.refresh_markdown_preview(),
+            "markdown-preview" => self.toggle_markdown_preview(),
+            "markdown-preview-side" => self.markdown_preview_to_side(),
             "split-right" => self.split_editor(false),
             "split-down" => self.split_editor(true),
             "focus-other" => self.focus_other_group(),

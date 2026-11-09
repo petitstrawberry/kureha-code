@@ -27,6 +27,8 @@ mod groups;
 mod hover;
 mod language;
 mod location_history;
+mod markdown_ui;
+mod markdown_view;
 mod navigation_ui;
 mod popup;
 mod preview;
@@ -97,6 +99,7 @@ struct Runtime {
     window_drag_requested: bool,
     panel_return_focus: bool,
     history: location_history::History,
+    markdown: markdown_ui::Previews,
     image_zoom: BTreeMap<(DocumentId, usize), f32>,
     workspace: Workspace,
     explorer: Explorer,
@@ -254,6 +257,7 @@ impl App {
         rt.dialog.is_none()
             && rt.close.is_none()
             && rt.workspace.get(id).is_some_and(|doc| doc.image.is_none())
+            && !rt.markdown.modes.contains(&(id, self.focused_group.get()))
             && !matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id: saving, .. }) if *saving == id)
     }
     fn sync_editor(&self, id: DocumentId) {
@@ -401,6 +405,7 @@ impl App {
             rt.workspace.remove(id);
             rt.history.remove(id);
             rt.image_zoom.retain(|(document, _), _| *document != id);
+            rt.markdown.remove(id);
             rt.pane_bindings.retain(|(document, _), _| *document != id);
             for (group, tabs) in rt.group_tabs.iter_mut().enumerate() {
                 let index = tabs.iter().position(|tab| *tab == id).unwrap_or(0);
@@ -1115,6 +1120,7 @@ impl App {
         }
     }
     fn poll(&self) {
+        self.poll_markdown();
         let dialog = {
             let mut rt = self.runtime.lock().unwrap();
             let result = rt

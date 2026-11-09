@@ -157,6 +157,11 @@ impl App {
             to.selection.set(from.selection.get());
             to.scroll.set(from.scroll.get());
         }
+        self.runtime
+            .lock()
+            .unwrap()
+            .markdown
+            .move_pane(id, source, group, true);
         self.focus_group(group);
         self.status.set(
             if down {
@@ -206,6 +211,7 @@ impl App {
         let mut rt = self.runtime.lock().unwrap();
         rt.pane_bindings.retain(|(_, g), _| *g != group);
         rt.image_zoom.retain(|(_, g), _| *g != group);
+        rt.markdown.retire_pane(group);
         drop(rt);
         if self.focused_group.get() == group {
             self.focus_group(self.pane_order()[0]);
