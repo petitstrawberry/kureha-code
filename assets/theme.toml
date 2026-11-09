@@ -1,14 +1,14 @@
 # Save to apply. Invalid edits keep the last working theme.
 name = "My Theme"
-base = "dark" # light, dark, dracula, monokai, nord, solarized-dark/light, gruvbox-dark, tokyo-night
+base = "kureha" # kureha, light, dark, dracula, monokai, nord, solarized-dark/light, gruvbox-dark, tokyo-night
 
 [colors]
-workspace = "#131924"
-background = "#191c22"
-foreground = "#c8ccd3"
-elevated = "#282e38"
-accent = "#bc87e8"
-selection = "#554878b3"
+workspace = "#f5e3eb"
+background = "#fffbfd"
+foreground = "#463641"
+elevated = "#fff7fb"
+accent = "#c84c79"
+selection = "#e8aec7b0"
 # Also: surface, muted, border, current_line, error, warning,
 # minimap_viewport, minimap_border. Colors accept #RRGGBB or #RRGGBBAA.
 
@@ -20,9 +20,9 @@ input_opacity = 0.78
 blur_radius = 18.0
 
 [syntax]
-comment = "#87a17d"
-keyword = "#cf97dc"
-string = "#e1a485"
+comment = "#877281"
+keyword = "#aa3e78"
+string = "#8b6243"
 # Also: constant, number, function, type, tag.
 
 # Optional TextMate scope overrides:
@@ -32,7 +32,7 @@ string = "#e1a485"
 
 [editor]
 # Independent from the sidebar, tabs and other application controls.
-theme = "tokyo-night"
+# theme = "tokyo-night"
 font_size = 14.0
 # font_family = "Menlo" # an installed family; default is bundled JetBrains Mono
 # font_file = "/path/to/YourFont.ttf" # alternative to font_family, TTF or OTF

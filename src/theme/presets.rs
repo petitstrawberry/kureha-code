@@ -2,6 +2,7 @@ use super::Theme;
 use std::sync::OnceLock;
 
 pub const PRESETS: &[(&str, &str)] = &[
+    ("kureha", "Kureha"),
     ("dracula", "Dracula"),
     ("monokai", "Monokai"),
     ("nord", "Nord"),
@@ -15,6 +16,7 @@ pub fn preset(name: &str) -> Option<Theme> {
     static THEMES: OnceLock<Vec<Theme>> = OnceLock::new();
     let themes = THEMES.get_or_init(|| {
         [
+            include_str!("../../assets/themes/kureha.toml"),
             include_str!("../../assets/themes/dracula.toml"),
             include_str!("../../assets/themes/monokai.toml"),
             include_str!("../../assets/themes/nord.toml"),

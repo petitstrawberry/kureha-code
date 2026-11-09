@@ -1694,7 +1694,7 @@ impl App {
             .is_some_and(|at| at.elapsed() < Duration::from_secs(2));
         drop(rt);
         if chord && modifiers.primary() && matches!(key, KeyCode::Char('t' | 'T')) {
-            self.set_theme(self.theme.get().toggle());
+            self.show_theme_picker(false);
             return true;
         }
         if chord && modifiers.primary() && matches!(key, KeyCode::Char('m' | 'M')) {

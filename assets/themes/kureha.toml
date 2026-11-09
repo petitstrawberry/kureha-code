@@ -1,0 +1,35 @@
+name = "Kureha"
+base = "light"
+
+[colors]
+workspace = "#f5e3eb"
+background = "#fffbfd"
+surface = "#f8eaf0"
+elevated = "#fff7fb"
+foreground = "#463641"
+muted = "#806574"
+border = "#d8b9c8"
+accent = "#c84c79"
+selection = "#e8aec7b0"
+current_line = "#f9edf3"
+minimap_viewport = "#a9617b25"
+minimap_border = "#a9617b80"
+error = "#b63b5e"
+warning = "#8a6327"
+
+[glass]
+pane_opacity = 0.58
+tab_opacity = 0.78
+popup_opacity = 0.94
+input_opacity = 0.82
+blur_radius = 18.0
+
+[syntax]
+comment = "#877281"
+string = "#8b6243"
+constant = "#8756a4"
+number = "#8756a4"
+keyword = "#aa3e78"
+function = "#95622f"
+type = "#316f7b"
+tag = "#aa3e78"

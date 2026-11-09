@@ -236,13 +236,15 @@ args = []
 
 ## Themes, minimap and terminal
 
-View offers Light/Dark, minimap visibility and the integrated terminal. The editor
+The default Kureha theme pairs pale pink Bubble Glass with rose accents and a
+near-white editor. The previous blue-tinted Light theme remains available.
+View offers Select Color Theme, minimap visibility and the integrated terminal. The editor
 surface is flat and borderless inside an inset, rounded glass pane. The sidebar
 and editor groups share Bubble Glass rims and elevation above a tinted workspace;
 active tabs keep their glass material. The status line sits directly on the
 workspace. Search, completion, rename and hover use denser floating glass to keep
 text readable over source. Themes include syntax colors and subdued selection
-and separators. Primary K then primary T switches theme; primary K then primary M
+and separators. Primary K then primary T opens the theme picker; primary K then primary M
 toggles the minimap (empty documents reserve no minimap space). The overview has
 fixed two-pixel row spacing, clips and scrolls
 with the document, and uses a translucent neutral viewport. Source and paint work
@@ -267,6 +269,17 @@ KUREHA_WORKBENCH_PREVIEW=artifacts/bubble-glass cargo test --bin kureha-code wor
 ```
 
 The manual test writes PPM images to that directory; it does not launch a window.
+
+In the command palette, **Preferences: Select Color Theme** opens a separate,
+searchable theme list. Arrow keys and hovering preview each candidate across the
+workbench; Enter or clicking keeps it, while Escape or returning to Commands
+restores the previous theme. **Select Editor Color Theme** changes only the
+editor palette, preserving workbench colors and editor fonts. Existing custom
+settings still override the startup default; previewing does not write the file.
+
+Quick Open keeps its previous results visible while the next search runs, so
+its panel does not collapse between keystrokes. Pending results cannot be opened
+until they belong to the current query.
 
 ## Image previews and tab dragging
 
