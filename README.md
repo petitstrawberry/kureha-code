@@ -28,6 +28,24 @@ files and Replace All results are limited to 16 MiB. The editor provides syntax 
 
 ## Desktop development
 
+Enter the Nix development shell before building:
+
+```sh
+nix develop
+```
+
+The flake pins the same Nixpkgs and Scarlet Rust toolchain as Resonara. It
+provides Rust, rustfmt, Git, Python, pkg-config and fonts, plus the Linux
+Wayland/X11 and graphics libraries needed by ScarletUI. Supported hosts are
+Linux (x86_64/AArch64) and macOS (Apple Silicon). `flake.lock` fixes the inputs
+for reproducible environments. The Scarlet toolchain cache is configured in the
+flake; accept its Nix configuration when prompted to use the published binaries.
+
+With direnv and its shell hook installed, run `direnv allow` once in this
+directory to load the shell automatically through `.envrc`.
+
+Inside the shell:
+
 ```sh
 cargo run -- path/to/source.rs
 cargo run -- path/to/project-folder
