@@ -1590,3 +1590,255 @@ fn empty_workspace_stays_empty_until_a_document_is_explicitly_created_or_opened(
     assert_eq!(rt.workspace.documents.len(), 1);
     assert!(rt.workspace.documents[0].path.is_none());
 }
+
+fn context_pipeline(app: &App) -> scarlet_ui::pipeline::RenderingPipeline {
+    let mut pipeline = scarlet_ui::pipeline::RenderingPipeline::new();
+    pipeline.set_paint_enabled(false);
+    pipeline.set_text_clipboard(app.runtime.lock().unwrap().clipboard.clone());
+    pipeline.set_root(
+        Window::new("Context menus", app.content())
+            .decorated(false)
+            .size(Size::new(1100.0, 760.0))
+            .create_element(),
+    );
+    pipeline.layout_initial();
+    pipeline.render();
+    pipeline
+}
+fn widget_rects(element: &dyn Element, parent: Point, kind: &str, result: &mut Vec<Rect>) {
+    let origin = Point::new(
+        parent.x + element.position().x,
+        parent.y + element.position().y,
+    );
+    if element.type_name_debug().contains(kind) {
+        result.push(Rect::new(origin, element.bounds().size));
+    }
+    for child in element.children() {
+        widget_rects(child.as_ref(), origin, kind, result);
+    }
+}
+fn choose_context_row(
+    pipeline: &mut scarlet_ui::pipeline::RenderingPipeline,
+    point: Point,
+    down: usize,
+) {
+    use scarlet_ui::event::{KeyModifiers, MouseButton, MouseEvent};
+    assert!(
+        pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+            button: MouseButton::Right,
+            x: point.x as i32,
+            y: point.y as i32,
+            click_count: 1,
+        }))
+    );
+    assert!(pipeline.context_menu_is_open());
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+        button: MouseButton::Right,
+        x: point.x as i32,
+        y: point.y as i32,
+        click_count: 1,
+    }));
+    for keycode in std::iter::repeat_n(KeyCode::Down, down).chain([KeyCode::Enter]) {
+        assert!(pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+            keycode,
+            modifiers: KeyModifiers::empty()
+        })));
+    }
+    assert!(!pipeline.context_menu_is_open());
+    pipeline.poll_text_clipboard();
+}
+
+#[test]
+fn code_context_cut_targets_clicked_split_preserves_selection_and_waits_for_write() {
+    for fail in [false, true] {
+        let app = test_app("left", None, fail);
+        let left = app.document_id();
+        app.split_editor(false);
+        let right = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .open("right.txt".into(), "a猫🍁z");
+        app.activate(right);
+        let bindings = app.bindings(right).unwrap();
+        let selected = TextSelection {
+            anchor: TextPosition::new(1),
+            caret: TextPosition::new(8),
+        };
+        bindings.selection.set(selected);
+        app.focus_group(0);
+        let mut pipeline = context_pipeline(&app);
+        let mut rects = vec![];
+        widget_rects(
+            pipeline.element_tree().root().unwrap(),
+            Point::ZERO,
+            "TextViewRenderObject",
+            &mut rects,
+        );
+        let right_rect = rects
+            .into_iter()
+            .max_by(|a, b| a.origin.x.total_cmp(&b.origin.x))
+            .unwrap();
+        choose_context_row(
+            &mut pipeline,
+            Point::new(right_rect.origin.x + 50.0, right_rect.origin.y + 55.0),
+            1,
+        );
+        assert_eq!(app.focused_group.get(), 1);
+        assert_eq!(
+            bindings.selection.get(),
+            selected,
+            "right click must preserve selection"
+        );
+        assert_eq!(
+            bindings.document.get().as_str(),
+            "a猫🍁z",
+            "cut must wait for the write"
+        );
+        finish_clipboard(&app);
+        assert_eq!(
+            app.bindings_for(left, 0).unwrap().document.get().as_str(),
+            "left"
+        );
+        assert_eq!(
+            bindings.document.get().as_str(),
+            if fail { "a猫🍁z" } else { "az" }
+        );
+        if !fail {
+            app.undo(false);
+            assert_eq!(bindings.document.get().as_str(), "a猫🍁z");
+            assert_eq!(bindings.selection.get(), selected);
+        }
+        pipeline.teardown();
+    }
+}
+
+#[test]
+fn standard_search_field_context_paste_uses_native_widget_path_without_editing_code() {
+    let app = test_app("untouched", Some("日本語"), false);
+    app.show_commands();
+    let mut pipeline = context_pipeline(&app);
+    let mut rects = vec![];
+    widget_rects(
+        pipeline.element_tree().root().unwrap(),
+        Point::ZERO,
+        "TextFieldRenderObject",
+        &mut rects,
+    );
+    let field = rects[0];
+    // Empty fields skip disabled Cut and Copy, making Paste the first action.
+    choose_context_row(
+        &mut pipeline,
+        Point::new(field.origin.x + 15.0, field.origin.y + 12.0),
+        1,
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !pipeline
+        .focused_text_input_state()
+        .is_some_and(|state| state.surrounding_text == "日本語")
+    {
+        pipeline.poll_text_clipboard();
+        pipeline.render();
+        assert!(Instant::now() < deadline, "field paste timed out");
+        thread::yield_now();
+    }
+    assert!(app.runtime.lock().unwrap().clipboard_job.is_none());
+    assert_eq!(
+        app.bindings(app.document_id())
+            .unwrap()
+            .document
+            .get()
+            .as_str(),
+        "untouched"
+    );
+    pipeline.teardown();
+}
+
+#[test]
+fn terminal_context_copy_uses_clicked_session_instead_of_active_editor() {
+    let app = test_app("do not copy this editor", None, false);
+    let copied = Arc::new(Mutex::new(None));
+    app.runtime.lock().unwrap().clipboard = Some(TextClipboard::new(TestClipboard {
+        text: copied.clone(),
+        fail_write: false,
+    }));
+    app.new_terminal();
+    let session = app.terminal.active().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while !matches!(
+        session.terminal.status(),
+        kureha_code::terminal::TerminalStatus::Running
+    ) {
+        app.poll_terminals();
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    session
+        .terminal
+        .send_input("stty -echo; printf '\\033[2J\\033[H日本語 é\\nREADY_MARK\\n'\r".as_bytes());
+    while !session.terminal.visible_text().contains("READY_MARK") {
+        app.poll_terminals();
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    app.attach_terminal(session.id, 0, 0);
+    // Keep another terminal in the panel; its context menu must target that
+    // exact session, not the one that happens to own editor focus.
+    app.new_terminal();
+    let other = app.terminal.active().unwrap();
+    app.focus_group(0);
+    let mut pipeline = context_pipeline(&app);
+    let mut rects = vec![];
+    widget_rects(
+        pipeline.element_tree().root().unwrap(),
+        Point::ZERO,
+        "TextGridRenderObject",
+        &mut rects,
+    );
+    let panel = *rects
+        .iter()
+        .max_by(|a, b| a.origin.y.total_cmp(&b.origin.y))
+        .unwrap();
+    let editor = rects
+        .into_iter()
+        .min_by(|a, b| a.origin.y.total_cmp(&b.origin.y))
+        .unwrap();
+    app.terminal.select(other.id);
+    choose_context_row(
+        &mut pipeline,
+        Point::new(editor.origin.x + 20.0, editor.origin.y + 20.0),
+        1,
+    );
+    finish_clipboard(&app);
+    let text = copied.lock().unwrap().clone().unwrap();
+    assert!(
+        text.contains("日本語 é"),
+        "clipboard lost UTF-8 or combining text: {text}"
+    );
+    assert!(text.contains("READY_MARK"));
+    assert!(!text.contains("do not copy this editor"));
+    assert_eq!(app.terminal.focused_session().unwrap().id, session.id);
+    *copied.lock().unwrap() = Some("printf 'PASTED_MARK\\n'\r".into());
+    choose_context_row(
+        &mut pipeline,
+        Point::new(panel.origin.x + 20.0, panel.origin.y + 20.0),
+        2,
+    );
+    finish_clipboard(&app);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !other.terminal.visible_text().contains("PASTED_MARK") {
+        app.poll_terminals();
+        assert!(
+            Instant::now() < deadline,
+            "context paste missed the panel session"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!session.terminal.visible_text().contains("PASTED_MARK"));
+    assert_eq!(app.terminal.focused_session().unwrap().id, other.id);
+    for session in app.terminal.sessions() {
+        session.terminal.close();
+    }
+    pipeline.teardown();
+}

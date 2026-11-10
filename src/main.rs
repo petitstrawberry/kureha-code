@@ -80,6 +80,9 @@ struct ClipboardTarget {
     selection: TextSelection,
 }
 enum ClipboardJob {
+    TerminalCopy {
+        handle: ClipboardHandle<()>,
+    },
     TerminalPaste {
         handle: ClipboardHandle<Option<String>>,
         target: terminal_ui::PasteTarget,
@@ -360,6 +363,9 @@ impl App {
         self.changed();
     }
     fn select_all(&self) {
+        if self.terminal_focused() {
+            return;
+        }
         let Some(id) = self.active_id() else {
             return;
         };
@@ -1057,6 +1063,9 @@ impl App {
         })
     }
     fn copy(&self, cut: bool) {
+        if self.terminal_focused() {
+            return;
+        }
         let Some(target) = self.clipboard_target() else {
             return;
         };
@@ -1144,7 +1153,7 @@ impl App {
         let completion = {
             let mut rt = self.runtime.lock().unwrap();
             let result = match rt.clipboard_job.as_ref() {
-                Some(ClipboardJob::Copy { handle, .. }) => {
+                Some(ClipboardJob::Copy { handle, .. } | ClipboardJob::TerminalCopy { handle }) => {
                     handle.try_take().map(|r| r.map(|()| None))
                 }
                 Some(ClipboardJob::Paste { handle, .. })
@@ -1157,6 +1166,7 @@ impl App {
             return;
         };
         let message = match (job, result) {
+            (ClipboardJob::TerminalCopy { .. }, Ok(_)) => "Copied terminal output",
             (ClipboardJob::Copy { cut: false, .. }, Ok(_)) => "Copied to desktop clipboard",
             (ClipboardJob::Copy { target, .. }, Ok(_)) => {
                 if self.apply_clipboard(target, "") {
@@ -1515,6 +1525,13 @@ impl Application for App {
             }
             _ => true,
         }
+    }
+    fn on_clipboard_error(
+        &mut self,
+        _ctx: &WindowContext,
+        error: scarlet_ui::clipboard::ClipboardError,
+    ) {
+        self.status.set(error.to_string());
     }
     fn on_idle(&mut self) {
         self.poll_terminals();

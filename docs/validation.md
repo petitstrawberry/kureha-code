@@ -711,3 +711,22 @@ clear the composition without sending it to the shell.
   changes, viewport clamping and absence of idle frame invalidation.
 - The locked, offline macOS release build passed.
 - The user confirmed that terminal IME works with the updated build.
+
+
+## Clipboard and context menus — 2026-11-10
+
+Kureha uses ScarletUI's native clipboard providers and standard text-widget
+context menus. Code-view commands delegate to the existing application edit
+transactions through `TextView::on_edit_action`, preserving Undo and delayed-cut
+validation. Search fields use ScarletUI's standard editing path. Terminal views
+in either location expose Paste and Copy Visible Output through the shared menu
+API; copied text comes from the parser so wide and combining characters survive.
+
+- Kureha: 120 library + 109 application tests passed; 10 optional/manual tests ignored.
+- ScarletUI at `2b5d33ad`: 724 core tests passed; five ignored.
+- Mounted right-click tests cover the clicked split, selection preservation,
+  delayed cuts, failed writes, Undo, and search-field pastes leaving code untouched.
+- Real PTY tests copy Japanese and combining text from the clicked terminal
+  and paste into a different panel session while the editor terminal has focus.
+- No new native OS clipboard or Linux/Windows runtime validation was performed.
+- The locked, offline macOS release build passed.
