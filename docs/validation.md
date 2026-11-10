@@ -977,3 +977,7 @@ without inserting text were exercised. Unwrapped code was visible beneath the
 translucent minimap; wrapped code and overview rows changed together. The signed
 release package passed `codesign --verify --deep --strict`; six Python catalogue
 and packaging tests passed. Linux and Scarlet runtimes were not exercised.
+
+The final shortcut regression also sends the separate printable `Char` event
+after Alt+Z and verifies that source text is unchanged. This covers backends that
+emit both events; the following key press clears shortcut-text suppression.

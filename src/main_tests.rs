@@ -46,6 +46,11 @@ fn word_wrap_toggle_preserves_document_and_expands_under_minimap() {
             keycode: KeyCode::Char('z'),
             modifiers,
         }));
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c: 'z' }));
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Released {
+            keycode: KeyCode::Char('z'),
+            modifiers,
+        }));
         assert_eq!(app.preferences.get().word_wrap, wrapped);
         pipeline
             .element_tree_mut()

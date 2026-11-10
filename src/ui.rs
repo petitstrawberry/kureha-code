@@ -354,6 +354,7 @@ impl App {
         .focusable(self.workbench_focus.clone())
         .on_event_capture(move |event| {
             if keys.tab_drag_event(event) { return true; }
+            if keys.nav.capture_shortcut_text(event) { return true; }
             let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event else {
                 return false;
             };
