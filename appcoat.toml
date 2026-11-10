@@ -1,0 +1,45 @@
+[app]
+id = "org.scarlet-os.kureha-code"
+slug = "kureha-code"
+name = "Kureha Code"
+version = "0.1.0"
+executable = "kureha-code"
+
+[macos]
+bundle-libraries = true
+
+# The Darwin toolchain links Apple's ABI-compatible libiconv from Nix. Use the
+# OS copy, which also resolves its conversion tables through the OS installation.
+[macos.system-libraries]
+"libiconv.2.dylib" = "/usr/lib/libiconv.2.dylib"
+
+[icons]
+macos = "assets/kureha.icns"
+linux = "assets/kureha.png"
+scarlet = "assets/kureha.png"
+
+[desktop]
+open-file = true
+new-instance = true
+mime-types = ["text/plain", "text/markdown", "text/x-rust", "text/x-c", "text/x-python", "application/json"]
+categories = ["Development", "TextEditor"]
+
+[[resources]]
+source = "LICENSE"
+to = "licenses/Kureha-Code.txt"
+
+[[resources]]
+source = "assets/fonts/NOTO_SANS_CJK_OFL.txt"
+to = "licenses/NOTO_SANS_CJK_OFL.txt"
+
+[[resources]]
+source = "assets/fonts/MPLUS_FONTS_OFL.txt"
+to = "licenses/MPLUS_FONTS_OFL.txt"
+
+[[resources]]
+source = "assets/fonts/JETBRAINS_MONO_NERD_FONT_LICENSE.txt"
+to = "licenses/JETBRAINS_MONO_NERD_FONT_LICENSE.txt"
+
+[[resources]]
+source = "assets/themes"
+to = "themes"

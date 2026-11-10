@@ -1,5 +1,26 @@
 {
   "nodes": {
+    "appcoat": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1794284041,
+        "narHash": "sha256-Y8oa8NbczjCGOwVFUTTvszsXJTBYYGVAMjyhq5LMHKU=",
+        "owner": "petitstrawberry",
+        "repo": "appcoat",
+        "rev": "3ddff8882449d82ce4c8829d538b0157b5ff0096",
+        "type": "github"
+      },
+      "original": {
+        "owner": "petitstrawberry",
+        "repo": "appcoat",
+        "rev": "3ddff8882449d82ce4c8829d538b0157b5ff0096",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1781607440,
@@ -34,6 +55,7 @@
     },
     "root": {
       "inputs": {
+        "appcoat": "appcoat",
         "nixpkgs": "nixpkgs",
         "scarlet-rust-toolchain": "scarlet-rust-toolchain"
       }

@@ -776,3 +776,29 @@ API; copied text comes from the parser so wide and combining characters survive.
   The selection-highlight preview also passed when run explicitly.
 
 The locked, offline macOS release build passed.
+
+
+## Appcoat packaging (2026-11-10)
+
+- Appcoat is pinned at `3ddff8882449d82ce4c8829d538b0157b5ff0096` in the development
+  flake. App identity now comes from `appcoat.toml`; mismatched Cargo/package
+  versions fail the build. The Scarlet bundle consumes a prebuilt native app.
+- `python3 scripts/package.py` built the release executable and packaged an
+  icon-bearing macOS app. `plutil -lint` and `codesign --verify --deep --strict`
+  passed. Native application launch displayed the Kureha workbench.
+- The Nix toolchain's Apple libiconv reference is explicitly mapped to
+  `/usr/lib/libiconv.2.dylib`. Both declare ABI compatibility version 7, and the
+  host SDK provides its symbols. This avoids bundling a library whose conversion
+  tables and plugins still refer to its Nix prefix. Final Mach-O dependencies
+  contain only OS paths, with no Nix store load commands.
+- All 230 editor tests passed (11 intentionally ignored), plus 4 packaging tests
+  covering Cargo JSON discovery, failed builds, paths with spaces, Unicode argv,
+  metadata/icons, existing-output protection and target validation.
+- Appcoat's own checks passed 15 Rust tests and 7 integration tests, including
+  transitive dylib relocation after deleting original inputs and signature checks.
+- Linux runtime and Scarlet boot were not exercised on this Mac. An attempted
+  AArch64 Scarlet build reached linking but the existing sgfx loader dependencies
+  require unresolved `dlopen`/`dlsym`/`dlerror` symbols. No broken package was
+  published; the documented Scarlet path accepts a separately built artifact.
+- Developer ID signing, notarization and macOS document-open event handling are
+  outside this integration. The generated app uses local ad-hoc signing.
