@@ -1,6 +1,8 @@
 /target/
 /dist/
 /artifacts/
+/result
+/result-*
 /.scarlet/
 .DS_Store
 /.direnv/

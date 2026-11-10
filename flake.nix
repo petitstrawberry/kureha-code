@@ -1,5 +1,5 @@
 {
-  description = "Kureha Code development shell";
+  description = "Kureha Code packages and development shell";
 
   nixConfig = {
     extra-substituters = [ "https://scarlet-rust-toolchain.cachix.org" ];
@@ -21,25 +21,109 @@
     let
       # These are the host platforms provided by the pinned Scarlet toolchain.
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
+      runtimeLibraries = pkgs: with pkgs; lib.optionals stdenv.isLinux [
+        fontconfig
+        freetype
+        vulkan-loader
+        mesa
+        libxkbcommon
+        wayland
+        libGL
+        libx11
+        libxcursor
+        libxi
+        libxrandr
+        libxcb
+        stdenv.cc.cc.lib
+      ];
+      package = system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          rust = scarlet-rust-toolchain.packages.${system}.scarlet-rust-toolchain;
+          rustPlatform = pkgs.makeRustPlatform { cargo = rust; rustc = rust; };
+          upstreamAppcoat = appcoat.packages.${system}.appcoat;
+          packager = if pkgs.stdenv.isDarwin then upstreamAppcoat.overrideAttrs (old: {
+            postPatch = (old.postPatch or "") + ''
+              substituteInPlace crates/appcoat_build/src/macos.rs \
+                --replace-fail /usr/bin/otool ${pkgs.darwin.cctools}/bin/otool \
+                --replace-fail /usr/bin/install_name_tool ${pkgs.darwin.cctools}/bin/install_name_tool
+              # Defer signing to rcodesign below; Apple's host codesign is not
+              # available in the Nix sandbox. Keep Appcoat's dylib relocation.
+              ${pkgs.python3}/bin/python3 ${pkgs.writeText "appcoat-nix-signing.py" ''
+                from pathlib import Path
+                path = Path("crates/appcoat_build/src/macos.rs")
+                source = path.read_text()
+                start = source.index("    // Changes to load commands invalidate existing signatures.")
+                end = source.index("    Ok(())", start)
+                path.write_text(source[:start] + source[end:])
+              ''}
+            '';
+          }) else upstreamAppcoat;
+          manifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+          app = (builtins.fromTOML (builtins.readFile ./appcoat.toml)).app;
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./Cargo.toml ./Cargo.lock ./build.rs ./src ./assets ./tests
+              ./appcoat.toml ./LICENSE
+              # Existing editor tests open these repository fixtures.
+              ./README.md ./docs/screenshots/panel-bottom.png
+            ];
+          };
+          fontConfig = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
+          binary = rustPlatform.buildRustPackage {
+            pname = "kureha-code-unwrapped";
+            version = manifest.package.version;
+            inherit src;
+            cargoHash = "sha256-wx5M+eoggcb1ZrrtIb8bERD/LsTmlFDL2rXxITEszQw=";
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            nativeCheckInputs = [ pkgs.python3 ];
+            # Transport and Markdown tests use local loopback servers.
+            __darwinAllowLocalNetworking = true;
+            buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.fontconfig ];
+            postPatch = ''
+              # The Linux sandbox has no host /bin/kill.
+              substituteInPlace src/lsp_tests.rs \
+                --replace-fail 'Command::new("/bin/kill")' 'Command::new("${pkgs.coreutils}/bin/kill")'
+            '';
+            cargoBuildFlags = [ "--bin" "kureha-code" ];
+            cargoTestFlags = [ "--lib" "--bin" "kureha-code" ];
+            FONTCONFIG_FILE = fontConfig;
+          };
+          platform = if pkgs.stdenv.isDarwin then "macos" else "linux";
+          bundleName = if pkgs.stdenv.isDarwin then "${app.name}.app" else app.slug;
+        in
+        pkgs.runCommand "kureha-code-${manifest.package.version}" {
+          nativeBuildInputs = [ packager ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.rcodesign ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.makeWrapper ];
+          meta = {
+            inherit (manifest.package) description;
+            license = pkgs.lib.licenses.mit;
+            platforms = systems;
+            mainProgram = "kureha-code";
+          };
+        } (''
+          appcoat package --manifest ${src}/appcoat.toml \
+            --platform ${platform} --artifact ${binary}/bin/kureha-code \
+            --output "$TMPDIR/"${pkgs.lib.escapeShellArg bundleName}
+          mkdir -p "$out/bin"
+        '' + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+          rcodesign -C /dev/null sign "$TMPDIR/"${pkgs.lib.escapeShellArg bundleName}
+          mkdir -p "$out/Applications"
+          cp -R "$TMPDIR/"${pkgs.lib.escapeShellArg bundleName} "$out/Applications/"
+          ln -s "../Applications/"${pkgs.lib.escapeShellArg "${app.name}.app/Contents/MacOS/${app.executable}"} "$out/bin/kureha-code"
+        '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+          cp -R "$TMPDIR/"${pkgs.lib.escapeShellArg bundleName}"/." "$out/"
+          wrapProgram "$out/bin/kureha-code" \
+            --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (runtimeLibraries pkgs)} \
+            --set-default FONTCONFIG_FILE ${fontConfig}
+        '');
       shell = system:
         let
           pkgs = import nixpkgs { inherit system; };
           rust = scarlet-rust-toolchain.packages.${system}.scarlet-rust-toolchain;
-          runtime = with pkgs; lib.optionals stdenv.isLinux [
-            fontconfig
-            freetype
-            vulkan-loader
-            mesa
-            libxkbcommon
-            wayland
-            libGL
-            libx11
-            libxcursor
-            libxi
-            libxrandr
-            libxcb
-            stdenv.cc.cc.lib
-          ];
+          runtime = runtimeLibraries pkgs;
         in
         pkgs.mkShell ({
           packages = [
@@ -80,6 +164,9 @@
         });
     in
     {
+      packages = nixpkgs.lib.genAttrs systems (system:
+        let kureha-code = package system;
+        in { default = kureha-code; inherit kureha-code; });
       devShells = nixpkgs.lib.genAttrs systems (system: { default = shell system; });
     };
 }

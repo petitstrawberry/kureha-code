@@ -18,21 +18,48 @@ With direnv, run `direnv allow` to load it automatically.
 
 ## Package
 
-Inside `nix develop`, build a release package with [Appcoat](https://github.com/petitstrawberry/appcoat):
+Build a release package with Nix (no development shell required):
 
 ```sh
+nix build
+```
+
+On macOS, open `result/Applications/Kureha Code.app` or copy it to Applications.
+On Linux, run `result/bin/kureha-code`; its wrapper supplies the Nix runtime
+libraries and a default font configuration. For desktop launchers, install the
+flake with `nix profile add .#kureha-code`, or add `result/bin` to `PATH` and
+`result/share` to `XDG_DATA_DIRS`. The build uses the pinned Rust toolchain,
+vendors the locked Cargo dependencies and packages the executable, icons and
+resources with [Appcoat](https://github.com/petitstrawberry/appcoat).
+macOS packages are not distribution-signed or notarized.
+
+The packaging helper also works without Nix. Install Rust/Cargo, Python 3.11 or
+newer, and [Appcoat](https://github.com/petitstrawberry/appcoat), with `cargo` and
+`appcoat` on `PATH`. To install the same Appcoat revision used by the flake:
+
+```sh
+cargo install --git https://github.com/petitstrawberry/appcoat \
+  --rev 3ddff8882449d82ce4c8829d538b0157b5ff0096 --locked appcoat_cli
 python3 scripts/package.py
 ```
 
-On macOS, open `dist/macos/Kureha Code.app` or copy it to Applications.
-On Linux, the result is `dist/linux/kureha-code`; run `bin/kureha-code` inside it.
-For desktop launchers, add that directory's `bin` to `PATH` and `share` to
-`XDG_DATA_DIRS`. Linux runtime libraries are provided by the development shell;
-the package does not bundle them. macOS packages are not distribution-signed or notarized.
+The script builds a release executable with Cargo and packages it with Appcoat.
+macOS packaging requires Apple's command-line tools. On Linux, install
+`pkg-config`, Fontconfig development files, native runtime libraries and graphics
+drivers separately; the helper does not bundle runtime libraries.
+The Nix development shell provides the tools and Linux runtime libraries
+as another way to run the same helper:
+
+```sh
+nix develop --command python3 scripts/package.py
+```
 
 Use `--artifact /path/to/kureha-code` to package an existing binary, or
 `--output /path/to/new-package` to choose another destination. Existing packages
-are never overwritten.
+are never overwritten. This helper writes to `dist/macos/Kureha Code.app` or
+`dist/linux/kureha-code` by default. On macOS, open the generated `.app` or copy it
+to Applications. On Linux, run `bin/kureha-code` inside the generated directory;
+desktop launchers need its `bin` on `PATH` and `share` on `XDG_DATA_DIRS`.
 
 For Scarlet, package an executable built for your image
 before using the [Scarlet bundle](platforms/scarlet/bundle.toml):

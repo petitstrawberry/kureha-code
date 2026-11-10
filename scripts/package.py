@@ -57,7 +57,7 @@ def main(argv=None):
             parser.error("unset CARGO_BUILD_TARGET when building a host application")
     appcoat = shutil.which("appcoat")
     if appcoat is None:
-        parser.error("appcoat was not found; run this command inside `nix develop`")
+        parser.error("appcoat was not found; install Appcoat and add it to PATH, or run inside `nix develop`")
     with (ROOT / "appcoat.toml").open("rb") as stream:
         app = tomllib.load(stream)["app"]
     with (ROOT / "Cargo.toml").open("rb") as stream:
