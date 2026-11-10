@@ -1899,3 +1899,86 @@ fn terminal_context_copy_uses_clicked_session_instead_of_active_editor() {
     }
     pipeline.teardown();
 }
+
+#[test]
+fn code_selection_drag_keeps_its_split_outside_the_view_and_autoscrolls() {
+    use scarlet_ui::event::{MouseButton, MouseEvent};
+    let text = "hello 猫 e\u{301} text to select\n\n".repeat(160);
+    let app = test_app(&text, None, false);
+    let left_id = app.document_id();
+    app.split_editor(false);
+    let right_id = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .open("right.txt".into(), "untouched");
+    app.activate(right_id);
+    app.focus_group(0);
+    let left = app.bindings(left_id).unwrap();
+    let right = app.bindings(right_id).unwrap();
+    let right_selection = right.selection.get();
+    let mut pipeline = context_pipeline(&app);
+    let mut rects = vec![];
+    widget_rects(
+        pipeline.element_tree().root().unwrap(),
+        Point::ZERO,
+        "TextViewRenderObject",
+        &mut rects,
+    );
+    rects.sort_by(|a, b| a.origin.x.total_cmp(&b.origin.x));
+    assert_eq!(rects.len(), 2);
+    let view = rects[0];
+    let start = (view.origin.x as i32 + 120, view.origin.y as i32 + 55);
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+        button: MouseButton::Left,
+        x: start.0,
+        y: start.1,
+        click_count: 1,
+    }));
+    pipeline.render();
+    let anchor = left.selection.get().anchor;
+    assert!(anchor.byte > 0);
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
+        x: view.origin.x as i32 - 35,
+        y: start.1,
+    }));
+    pipeline.render();
+    assert_eq!(left.selection.get().anchor, anchor);
+    assert!(left.selection.get().caret.byte < anchor.byte);
+    let outside = (
+        rects[1].origin.x as i32 + 100,
+        (view.origin.y + view.size.height + 40.) as i32,
+    );
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
+        x: outside.0,
+        y: outside.1,
+    }));
+    pipeline.render();
+    assert!(pipeline.has_active_animation());
+    for _ in 0..8 {
+        pipeline.advance_animations(Duration::from_millis(16));
+        pipeline.render();
+    }
+    assert!(left.scroll.get().y > 0.);
+    assert!(left.selection.get().caret.byte > anchor.byte);
+    assert_eq!(right.selection.get(), right_selection);
+    assert_eq!(app.focused_group.get(), 0);
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+        button: MouseButton::Left,
+        x: outside.0,
+        y: outside.1,
+        click_count: 1,
+    }));
+    pipeline.render();
+    assert!(!pipeline.has_active_animation());
+    let released = left.selection.get();
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
+        x: start.0,
+        y: start.1,
+    }));
+    pipeline.render();
+    assert_eq!(left.selection.get(), released);
+    assert_eq!(left.document.get().as_str().as_ref(), text);
+    pipeline.teardown();
+}

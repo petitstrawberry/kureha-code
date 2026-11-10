@@ -751,3 +751,28 @@ API; copied text comes from the parser so wide and combining characters survive.
   after adding the horizontal-layout/real-resize regression (728 unique passing tests).
 - These are mounted pipeline tests. Native macOS trackpad replay was not verified.
 - The locked, offline macOS release build passed.
+
+
+## Captured text selection and newline highlights — 2026-11-10
+
+- Both platform pins use ScarletUI `dd466ced` (PR #97). Selection drags keep
+  their original TextView outside the viewport and use time-based edge scrolling
+  while the pointer is held still. Release, cancellation, blur and document edges
+  stop motion. No text-layout recomputation or extra rendering backend is added.
+- The mounted Kureha regression crosses the sidebar and neighboring editor,
+  extends the original selection, autoscrolls and releases outside. The other
+  document and focused group remain unchanged. It fails on the previous pin at
+  the left-edge selection assertion and passes with the new dependency.
+- ScarletUI's full core suite passed: 730 tests, five ignored. All three focused
+  selection tests passed after adding EOF/cancellation coverage (731 unique
+  passing tests), including soft wrap, grapheme boundaries and layout reuse.
+- Selected LF/CRLF endings receive a space-width highlight, including blank
+  lines. Soft-wrap boundaries and EOF do not receive newline markers.
+- [Kureha selection](screenshots/selection-kureha.png) and
+  [Monokai selection](screenshots/selection-monokai.png) were rendered with the
+  mounted CPU pipeline and visually reviewed. These are not native GPU captures;
+  native OS pointer capture was not re-verified.
+- Kureha: 120 library + 110 application tests passed; 11 optional/manual tests ignored.
+  The selection-highlight preview also passed when run explicitly.
+
+The locked, offline macOS release build passed.
