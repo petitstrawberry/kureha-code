@@ -87,6 +87,17 @@ impl Settings {
 fn state<T: Clone + Send + Sync + 'static>(value: T) -> State<T> {
     State::new(generate_state_id(), value)
 }
+
+fn license_row_label(text: String, color: Color) -> impl View + Clone {
+    Text::new(text)
+        .font_size(13.0)
+        .color(color)
+        .alignment(Alignment::Leading)
+        .padding_insets(EdgeInsets::new(6.0, 0.0, 6.0, 0.0))
+        .frame(f32::INFINITY, 32.0)
+        .clip()
+}
+
 pub(super) fn acknowledgements() -> &'static Vec<(String, String)> {
     static ENTRIES: OnceLock<Vec<(String, String)>> = OnceLock::new();
     ENTRIES.get_or_init(|| {
@@ -314,12 +325,7 @@ impl App {
             move |index, id, selected| {
                 let select = rows.clone();
                 ui::list_row(
-                    Text::new(acknowledgements()[id].0.clone())
-                        .font_size(13.0)
-                        .color(colors.foreground)
-                        .padding(6.0)
-                        .frame(f32::INFINITY, 32.0)
-                        .clip(),
+                    license_row_label(acknowledgements()[id].0.clone(), colors.foreground),
                     rows.row_inputs.get(format!("license:{id}")),
                     selected == Some(index),
                     true,
@@ -380,8 +386,161 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scarlet_ui::element::LayoutConstraints;
     use scarlet_ui::event::KeyEvent;
     use scarlet_ui::pipeline::RenderingPipeline;
+    use scarlet_ui::renderer::{CpuPaintRenderer, PaintContext};
+
+    fn label_bounds(element: &dyn Element, parent: Point) -> Rect {
+        let origin = Point::new(
+            parent.x + element.position().x,
+            parent.y + element.position().y,
+        );
+        if let Some(render) = element.render_object() {
+            if render.as_any().is::<scarlet_ui::views::TextRenderObject>() {
+                return Rect::new(origin, render.size());
+            }
+        }
+        for child in element.children() {
+            let bounds = label_bounds(child.as_ref(), origin);
+            if bounds.size.height > 0.0 {
+                return bounds;
+            }
+        }
+        Rect::from_xywh(0.0, 0.0, 0.0, 0.0)
+    }
+
+    fn paint_label<'a>(element: &'a dyn Element, parent: Point, ctx: &mut PaintContext<'a>) {
+        let origin = Point::new(
+            parent.x + element.position().x,
+            parent.y + element.position().y,
+        );
+        if let Some(render) = element.render_object() {
+            if render.as_any().is::<scarlet_ui::views::TextRenderObject>() {
+                render.paint(ctx, origin);
+            }
+        }
+        for child in element.children() {
+            paint_label(child.as_ref(), origin, ctx);
+        }
+    }
+
+    #[test]
+    fn license_labels_center_the_measured_line_including_mixed_japanese() {
+        for label in [
+            "ab_glyph 0.2.32",
+            "日本語のライセンス",
+            "ab_glyph 日本語 0.2.32",
+            "Agjpqy É e\u{301}",
+        ] {
+            let mut element = license_row_label(label.into(), Color::BLACK).create_element();
+            element.layout(LayoutConstraints::tight(300.0, 32.0));
+            let bounds = label_bounds(element.as_ref(), Point::ZERO);
+            assert!(bounds.size.height > 0.0);
+            assert_eq!(bounds.origin.x, 6.0, "{label}");
+            assert!(
+                (bounds.origin.y + bounds.size.height * 0.5 - 16.0).abs() < 0.01,
+                "{label}: {bounds:?}"
+            );
+        }
+    }
+
+    /// Actual Text render objects, with guides derived from their layout.
+    /// Set KUREHA_SETTINGS_PREVIEW to retain the before/after images and measurements.
+    #[test]
+    #[ignore = "manual baseline and mixed-script visual inspection"]
+    fn license_alignment_guides() {
+        use scarlet_ui::graphics::font_metrics_sized;
+        let dir = PathBuf::from(std::env::var_os("KUREHA_SETTINGS_PREVIEW").unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut measurements =
+            String::from("version,label,row_center,text_top,text_bottom,baseline\n");
+        for fixed in [false, true] {
+            let version = if fixed { "after" } else { "before" };
+            let mut elements = Vec::new();
+            for (index, label) in [
+                "ab_glyph 0.2.32",
+                "日本語のライセンス",
+                "ab_glyph 日本語 0.2.32",
+                "Agjpqy É e\u{301}",
+            ]
+            .iter()
+            .enumerate()
+            {
+                let mut element = if fixed {
+                    license_row_label((*label).into(), Color::rgb(80, 60, 74)).create_element()
+                } else {
+                    Text::new(*label)
+                        .font_size(13.0)
+                        .color(Color::rgb(80, 60, 74))
+                        .padding(6.0)
+                        .frame(f32::INFINITY, 32.0)
+                        .clip()
+                        .create_element()
+                };
+                element.layout(LayoutConstraints::tight(300.0, 32.0));
+                let origin = Point::new(16.0, 24.0 + index as f32 * 48.0);
+                let bounds = label_bounds(element.as_ref(), origin);
+                measurements.push_str(&format!(
+                    "{version},{label},{},{},{},{}\n",
+                    origin.y + 16.0,
+                    bounds.origin.y,
+                    bounds.origin.y + bounds.size.height,
+                    bounds.origin.y + font_metrics_sized(13.0).ascent
+                ));
+                elements.push((element, origin, bounds));
+            }
+            for guides in [false, true] {
+                let mut ctx = PaintContext::new();
+                for (element, origin, bounds) in &elements {
+                    let row = Rect::new(*origin, Size::new(300.0, 32.0));
+                    ctx.fill_rounded_rect(row, 7.0, Color::rgb(238, 196, 217));
+                    paint_label(element.as_ref(), *origin, &mut ctx);
+                    if guides {
+                        // Green: typographic layout box. Blue: row center. Red: baseline.
+                        ctx.stroke_rect(*bounds, 0.5, Color::rgb(30, 150, 70));
+                        for (y, color) in [
+                            (origin.y + 16.0, Color::rgb(0, 100, 220)),
+                            (
+                                bounds.origin.y + font_metrics_sized(13.0).ascent,
+                                Color::rgb(210, 45, 35),
+                            ),
+                        ] {
+                            ctx.draw_line(
+                                Point::new(origin.x, y),
+                                Point::new(origin.x + 300.0, y),
+                                0.5,
+                                color,
+                            );
+                        }
+                    }
+                }
+                for scale in [1000, 2000] {
+                    let mut renderer =
+                        CpuPaintRenderer::new(Size::new(332.0, 224.0), scale, Color::WHITE);
+                    renderer.execute(&ctx);
+                    let buffer = renderer.buffer();
+                    let rgb: Vec<u8> = buffer
+                        .data()
+                        .chunks_exact(4)
+                        .flat_map(|p| [p[2], p[1], p[0]])
+                        .collect();
+                    image::save_buffer(
+                        dir.join(format!(
+                            "alignment-{version}-{}-{scale}.png",
+                            if guides { "guides" } else { "plain" }
+                        )),
+                        &rgb,
+                        buffer.width(),
+                        buffer.height(),
+                        image::ColorType::Rgb8,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        std::fs::write(dir.join("alignment.csv"), measurements).unwrap();
+    }
     #[test]
     fn settings_menu_uses_the_existing_application_menu_contract() {
         let app = App::new();

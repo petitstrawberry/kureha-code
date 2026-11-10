@@ -900,3 +900,35 @@ preview fixture) passed against the final revision. Preview images are in
 The final native macOS SGFX/WGPU package was inspected on Appearance and
 Acknowledgements, including notice scrolling and repaint. All six Python checks
 and package signature verification passed. The test app used a disposable config.
+
+## Acknowledgements row alignment — 2026-11-10
+
+The row's `Text.padding(6).frame(INFINITY, 32)` placed a 16px measured line at
+y=6; `frame` constrains size but does not align its child. Its line center was
+y=14 inside a row centered at y=16. The label now uses leading horizontal and
+center vertical alignment, with horizontal padding only. No font-specific or
+glyph-ink offset is used, and the row height and font size remain unchanged.
+
+`license_labels_center_the_measured_line_including_mixed_japanese` checks the
+actual element layout for Latin, Japanese, mixed text, accents and descenders.
+`license_alignment_guides` renders those same Text objects before/after at 1x
+and 2x. Blue marks the row center, green the measured Text box, and red the
+logical baseline (the renderer snaps it to the physical pixel grid). Coordinates
+are saved alongside the PNGs in `artifacts/settings-alignment/alignment.csv`.
+The corrected first row has top/bottom y=8/24 and baseline y=20.568 within the
+32px row; the previous values were y=6/22 and y=18.568. All eight settings tests,
+including mixed-text guides and light/dark page renders, passed.
+The release build `dist/alignment/Kureha Code.app` passed signature verification;
+the corrected list placement was also inspected in the native macOS SGFX/WGPU
+window. Mixed-script guide images use the CPU backend with the same Text layout.
+
+The ScarletUI pin also includes cached Rustybuzz shaping and fractional glyph
+placement from petitstrawberry/scarlet-ui#99. That revision passed 740 core and
+136 SGFX tests; Kureha passed 122 binary and 120 library tests before the row
+alignment change. The typography work does not resolve the remaining difference
+between the glass rim behind the tab strip and behind opaque pane content.
+
+```sh
+KUREHA_SETTINGS_PREVIEW=artifacts/settings-alignment \
+  cargo test --bin kureha-code settings_ui::tests -- --include-ignored
+```
