@@ -66,6 +66,7 @@ struct Inbox {
     scroll: isize,
 }
 struct Snapshot {
+    text: String,
     grid: TextGridBuffer,
     colors: Vec<(vt100::Color, vt100::Color)>,
     cursor: TextGridCursor,
@@ -88,6 +89,7 @@ struct Shared {
     session: Mutex<Option<Session>>,
     size: Mutex<(u16, u16)>,
     grid: State<TextGridBuffer>,
+    text: Mutex<String>,
     colors: Mutex<Vec<(vt100::Color, vt100::Color)>>,
     palette: State<TerminalPalette>,
     cursor: State<TextGridCursor>,
@@ -118,6 +120,7 @@ impl Terminal {
                 session: Mutex::new(None),
                 size: Mutex::new(DEFAULT_SIZE),
                 grid: State::new(generate_state_id(), screen::blank(DEFAULT_SIZE)),
+                text: Mutex::new(String::new()),
                 colors: Mutex::new(Vec::new()),
                 palette: State::new(generate_state_id(), TerminalPalette::default()),
                 cursor: State::new(generate_state_id(), TextGridCursor::new(0, 0)),
@@ -138,6 +141,7 @@ impl Terminal {
         self.close();
         let size = *self.shared.size.lock().unwrap();
         self.shared.colors.lock().unwrap().clear();
+        self.shared.text.lock().unwrap().clear();
         self.shared
             .grid
             .set(self.shared.palette.get().recolor(screen::blank(size), &[]));
@@ -187,6 +191,7 @@ impl Terminal {
         true
     }
     fn apply_snapshot(&self, snapshot: Snapshot) {
+        *self.shared.text.lock().unwrap() = snapshot.text;
         let grid = self
             .shared
             .palette
@@ -222,6 +227,11 @@ impl Terminal {
             self.status(),
             TerminalStatus::Starting | TerminalStatus::Running
         )
+    }
+    /// Plain text in the currently displayed viewport, including combining
+    /// characters and soft-wrapped lines retained by the terminal parser.
+    pub fn visible_text(&self) -> String {
+        self.shared.text.lock().unwrap().clone()
     }
     pub fn grid(&self) -> TextGridBuffer {
         self.shared.grid.get()

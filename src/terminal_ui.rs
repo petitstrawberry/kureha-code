@@ -365,6 +365,65 @@ impl App {
         self.changed();
         true
     }
+    fn focus_terminal_session(&self, id: u64) -> bool {
+        if self.blocked() {
+            return false;
+        }
+        let Some(session) = self.terminal.session(id) else {
+            return false;
+        };
+        if let Some(tab) = session.tab {
+            let Some(group) = self
+                .pane_order()
+                .into_iter()
+                .find(|g| self.group_id(*g) == Some(tab))
+            else {
+                return false;
+            };
+            self.focus_group(group);
+        } else if !self.panel_visible.get() {
+            return false;
+        }
+        self.project.blur();
+        self.terminal.select(id);
+        true
+    }
+    fn terminal_context_menu(&self, id: u64) -> scarlet_ui::views::Menu {
+        use scarlet_ui::views::{Menu, MenuItemContent};
+        let copy = self.clone();
+        let paste = self.clone();
+        Menu::new(vec![
+            MenuItemContent::new("Copy Visible Output").callback(move || {
+                if !copy.focus_terminal_session(id) {
+                    return;
+                }
+                let Some(session) = copy.terminal.session(id) else {
+                    return;
+                };
+                let text = session.terminal.visible_text();
+                if text.is_empty() {
+                    return;
+                }
+                let Some(service) = copy.clipboard_service() else {
+                    return;
+                };
+                let handle = service.write_text(text);
+                copy.runtime.lock().unwrap().clipboard_job =
+                    Some(ClipboardJob::TerminalCopy { handle });
+            }),
+            MenuItemContent::new("Paste")
+                .shortcut(if cfg!(target_os = "macos") {
+                    "Cmd+V"
+                } else {
+                    "Ctrl+Shift+V"
+                })
+                .callback(move || {
+                    if paste.focus_terminal_session(id) {
+                        paste.paste_terminal();
+                    }
+                }),
+        ])
+    }
     pub(super) fn terminal_tab_view(&self, tab: TabId, group: usize) -> impl View + Clone + use<> {
         let session = self.terminal.for_tab(tab).unwrap();
         let palette = self.theme.get().terminal_palette();
@@ -374,6 +433,7 @@ impl App {
             session
                 .terminal
                 .view_with_font(self.document_font())
+                .context_menu(self.terminal_context_menu(session.id))
                 .padding(10.0)
                 .background(palette.background),
         )
@@ -484,6 +544,7 @@ impl App {
                 session
                     .terminal
                     .view_with_font(self.document_font())
+                    .context_menu(self.terminal_context_menu(session.id))
                     .key(session.id),
             )
         } else {

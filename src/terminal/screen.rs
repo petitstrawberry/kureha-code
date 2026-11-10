@@ -65,6 +65,7 @@ pub(super) fn snapshot(screen: &vt100::Screen, status: TerminalStatus) -> Snapsh
     let mut cursor = TextGridCursor::new(col as usize, row as usize);
     cursor.visible = !screen.hide_cursor() && screen.scrollback() == 0;
     Snapshot {
+        text: screen.contents(),
         grid,
         colors,
         cursor,

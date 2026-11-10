@@ -711,3 +711,68 @@ clear the composition without sending it to the shell.
   changes, viewport clamping and absence of idle frame invalidation.
 - The locked, offline macOS release build passed.
 - The user confirmed that terminal IME works with the updated build.
+
+
+## Clipboard and context menus — 2026-11-10
+
+Kureha uses ScarletUI's native clipboard providers and standard text-widget
+context menus. Code-view commands delegate to the existing application edit
+transactions through `TextView::on_edit_action`, preserving Undo and delayed-cut
+validation. Search fields use ScarletUI's standard editing path. Terminal views
+in either location expose Paste and Copy Visible Output through the shared menu
+API; copied text comes from the parser so wide and combining characters survive.
+
+- Kureha: 120 library + 109 application tests passed; 10 optional/manual tests ignored.
+- ScarletUI at `2b5d33ad`: 724 core tests passed; five ignored.
+- Mounted right-click tests cover the clicked split, selection preservation,
+  delayed cuts, failed writes, Undo, and search-field pastes leaving code untouched.
+- Real PTY tests copy Japanese and combining text from the clicked terminal
+  and paste into a different panel session while the editor terminal has focus.
+- No new native OS clipboard or Linux/Windows runtime validation was performed.
+- The locked, offline macOS release build passed.
+
+
+## Explorer scroll and context-menu stability — 2026-11-10
+
+- Updated both platform pins to ScarletUI `0419dbec` (PR #96, based on #95).
+  Bounded HStack/VStack layout defers explicit fill children until sibling space
+  has been allocated, preventing provisional viewport sizes from clamping scroll.
+- The mounted Explorer regression now resizes the window, scrolls near the end
+  of a shorter listing, rebuilds the workbench, clicks a visible row, and waits
+  for the file to open. It checks row hit coordinates, stable scroll position,
+  retained sidebar width and divider release/blur behavior. The previous pin
+  failed with an offset change from -245 to -225; the new pin passes.
+- Context menus consume wheel packets without closing, and survive repeated
+  notifications of the same window size. Changed size, focus loss, Escape and
+  outside clicks still dismiss them. Core tests cover zero/nonzero wheel packets,
+  all trackpad phases, resize, redraw and existing menu activation behavior.
+- Kureha: 120 library + 109 application tests passed; 10 optional/manual tests ignored.
+- ScarletUI: 727 core tests passed, five ignored; all eight list tests passed
+  after adding the horizontal-layout/real-resize regression (728 unique passing tests).
+- These are mounted pipeline tests. Native macOS trackpad replay was not verified.
+- The locked, offline macOS release build passed.
+
+
+## Captured text selection and newline highlights — 2026-11-10
+
+- Both platform pins use ScarletUI `dd466ced` (PR #97). Selection drags keep
+  their original TextView outside the viewport and use time-based edge scrolling
+  while the pointer is held still. Release, cancellation, blur and document edges
+  stop motion. No text-layout recomputation or extra rendering backend is added.
+- The mounted Kureha regression crosses the sidebar and neighboring editor,
+  extends the original selection, autoscrolls and releases outside. The other
+  document and focused group remain unchanged. It fails on the previous pin at
+  the left-edge selection assertion and passes with the new dependency.
+- ScarletUI's full core suite passed: 730 tests, five ignored. All three focused
+  selection tests passed after adding EOF/cancellation coverage (731 unique
+  passing tests), including soft wrap, grapheme boundaries and layout reuse.
+- Selected LF/CRLF endings receive a space-width highlight, including blank
+  lines. Soft-wrap boundaries and EOF do not receive newline markers.
+- [Kureha selection](screenshots/selection-kureha.png) and
+  [Monokai selection](screenshots/selection-monokai.png) were rendered with the
+  mounted CPU pipeline and visually reviewed. These are not native GPU captures;
+  native OS pointer capture was not re-verified.
+- Kureha: 120 library + 110 application tests passed; 11 optional/manual tests ignored.
+  The selection-highlight preview also passed when run explicitly.
+
+The locked, offline macOS release build passed.

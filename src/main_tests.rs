@@ -945,13 +945,13 @@ fn workbench_lays_out_without_a_window_at_normal_and_minimum_sizes() {
 fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
     use scarlet_ui::event::{MouseButton, MouseEvent, ScrollSource, WheelPhase};
     use scarlet_ui::pipeline::RenderingPipeline;
-    let app = App::with_document();
+    let app = App::new();
     app.runtime.lock().unwrap().explorer.root = Some(PathBuf::from("/project"));
     app.tree_rows.set(
-        (0..100)
+        (0..45)
             .map(|i| Row {
                 key: format!("file-{i}"),
-                path: Some(PathBuf::from(format!("/project/sample-{i:03}.rs"))),
+                path: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("README.md")),
                 label: format!("sample-{i:03}.rs"),
                 depth: 0,
                 directory: false,
@@ -968,17 +968,23 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
     pipeline.set_paint_enabled(false);
     pipeline.set_root(window().create_element());
     pipeline.layout_initial();
+    pipeline.resize(Size::new(1100.0, 1000.0));
     pipeline.render();
     fn sidebar(
         e: &dyn Element,
         origin: Point,
-    ) -> Option<(scarlet_ui::element::ElementId, f32, f32)> {
+    ) -> Option<(scarlet_ui::element::ElementId, f32, f32, f32)> {
         let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
         if e.type_name_debug().contains("ScrollViewRenderObject")
             && p.x < 100.0
             && e.bounds().size.height > 200.0
         {
-            return Some((e.id(), e.bounds().size.width, e.children()[0].position().y));
+            return Some((
+                e.id(),
+                e.bounds().size.width,
+                e.children()[0].position().y,
+                p.y,
+            ));
         }
         e.children()
             .iter()
@@ -1026,7 +1032,6 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
                 .root_mut()
                 .unwrap()
                 .update(&window());
-            pipeline.layout_initial();
             pipeline.render();
         }
     }
@@ -1041,7 +1046,7 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
     );
     pipeline.handle_event(&Event::Mouse(MouseEvent::Wheel {
         delta_x: 0,
-        delta_y: -243,
+        delta_y: -980,
         x: 100,
         y: 300,
         phase: WheelPhase::Moved,
@@ -1057,7 +1062,6 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
             .root_mut()
             .unwrap()
             .update(&window());
-        pipeline.layout_initial();
         pipeline.render();
         assert_eq!(
             state(&pipeline),
@@ -1065,6 +1069,59 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
             "workbench rebuild reset user state"
         );
     }
+    // Selecting a visible file must not move the list beneath the pointer.
+    for event in [
+        MouseEvent::ButtonPressed {
+            button: MouseButton::Left,
+            x: 100,
+            y: 800,
+            click_count: 1,
+        },
+        MouseEvent::ButtonReleased {
+            button: MouseButton::Left,
+            x: 100,
+            y: 800,
+            click_count: 1,
+        },
+    ] {
+        pipeline.handle_event(&Event::Mouse(event));
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.render();
+        assert_eq!(
+            state(&pipeline),
+            scrolled,
+            "clicking a visible row moved the viewport"
+        );
+    }
+    let clicked_index = ((800.0 - scrolled.3 - scrolled.2) / 27.0).floor() as usize;
+    assert_eq!(
+        app.tree_selected.get(),
+        Some(clicked_index),
+        "painted row and hit target must agree"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while app.runtime.lock().unwrap().job.is_some() {
+        app.poll();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(app.active_id().is_some());
+    pipeline
+        .element_tree_mut()
+        .root_mut()
+        .unwrap()
+        .update(&window());
+    pipeline.render();
+    assert_eq!(
+        state(&pipeline),
+        scrolled,
+        "opening the file moved the viewport"
+    );
+
     let x = scrolled.1 as i32 + 3;
     pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
         button: MouseButton::Left,
@@ -1589,4 +1646,339 @@ fn empty_workspace_stays_empty_until_a_document_is_explicitly_created_or_opened(
     let rt = app.runtime.lock().unwrap();
     assert_eq!(rt.workspace.documents.len(), 1);
     assert!(rt.workspace.documents[0].path.is_none());
+}
+
+fn context_pipeline(app: &App) -> scarlet_ui::pipeline::RenderingPipeline {
+    let mut pipeline = scarlet_ui::pipeline::RenderingPipeline::new();
+    pipeline.set_paint_enabled(false);
+    pipeline.set_text_clipboard(app.runtime.lock().unwrap().clipboard.clone());
+    pipeline.set_root(
+        Window::new("Context menus", app.content())
+            .decorated(false)
+            .size(Size::new(1100.0, 760.0))
+            .create_element(),
+    );
+    pipeline.layout_initial();
+    pipeline.render();
+    pipeline
+}
+fn widget_rects(element: &dyn Element, parent: Point, kind: &str, result: &mut Vec<Rect>) {
+    let origin = Point::new(
+        parent.x + element.position().x,
+        parent.y + element.position().y,
+    );
+    if element.type_name_debug().contains(kind) {
+        result.push(Rect::new(origin, element.bounds().size));
+    }
+    for child in element.children() {
+        widget_rects(child.as_ref(), origin, kind, result);
+    }
+}
+fn choose_context_row(
+    pipeline: &mut scarlet_ui::pipeline::RenderingPipeline,
+    point: Point,
+    down: usize,
+) {
+    use scarlet_ui::event::{KeyModifiers, MouseButton, MouseEvent};
+    assert!(
+        pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+            button: MouseButton::Right,
+            x: point.x as i32,
+            y: point.y as i32,
+            click_count: 1,
+        }))
+    );
+    assert!(pipeline.context_menu_is_open());
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+        button: MouseButton::Right,
+        x: point.x as i32,
+        y: point.y as i32,
+        click_count: 1,
+    }));
+    for keycode in std::iter::repeat_n(KeyCode::Down, down).chain([KeyCode::Enter]) {
+        assert!(pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+            keycode,
+            modifiers: KeyModifiers::empty()
+        })));
+    }
+    assert!(!pipeline.context_menu_is_open());
+    pipeline.poll_text_clipboard();
+}
+
+#[test]
+fn code_context_cut_targets_clicked_split_preserves_selection_and_waits_for_write() {
+    for fail in [false, true] {
+        let app = test_app("left", None, fail);
+        let left = app.document_id();
+        app.split_editor(false);
+        let right = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .open("right.txt".into(), "a猫🍁z");
+        app.activate(right);
+        let bindings = app.bindings(right).unwrap();
+        let selected = TextSelection {
+            anchor: TextPosition::new(1),
+            caret: TextPosition::new(8),
+        };
+        bindings.selection.set(selected);
+        app.focus_group(0);
+        let mut pipeline = context_pipeline(&app);
+        let mut rects = vec![];
+        widget_rects(
+            pipeline.element_tree().root().unwrap(),
+            Point::ZERO,
+            "TextViewRenderObject",
+            &mut rects,
+        );
+        let right_rect = rects
+            .into_iter()
+            .max_by(|a, b| a.origin.x.total_cmp(&b.origin.x))
+            .unwrap();
+        choose_context_row(
+            &mut pipeline,
+            Point::new(right_rect.origin.x + 50.0, right_rect.origin.y + 55.0),
+            1,
+        );
+        assert_eq!(app.focused_group.get(), 1);
+        assert_eq!(
+            bindings.selection.get(),
+            selected,
+            "right click must preserve selection"
+        );
+        assert_eq!(
+            bindings.document.get().as_str(),
+            "a猫🍁z",
+            "cut must wait for the write"
+        );
+        finish_clipboard(&app);
+        assert_eq!(
+            app.bindings_for(left, 0).unwrap().document.get().as_str(),
+            "left"
+        );
+        assert_eq!(
+            bindings.document.get().as_str(),
+            if fail { "a猫🍁z" } else { "az" }
+        );
+        if !fail {
+            app.undo(false);
+            assert_eq!(bindings.document.get().as_str(), "a猫🍁z");
+            assert_eq!(bindings.selection.get(), selected);
+        }
+        pipeline.teardown();
+    }
+}
+
+#[test]
+fn standard_search_field_context_paste_uses_native_widget_path_without_editing_code() {
+    let app = test_app("untouched", Some("日本語"), false);
+    app.show_commands();
+    let mut pipeline = context_pipeline(&app);
+    let mut rects = vec![];
+    widget_rects(
+        pipeline.element_tree().root().unwrap(),
+        Point::ZERO,
+        "TextFieldRenderObject",
+        &mut rects,
+    );
+    let field = rects[0];
+    // Empty fields skip disabled Cut and Copy, making Paste the first action.
+    choose_context_row(
+        &mut pipeline,
+        Point::new(field.origin.x + 15.0, field.origin.y + 12.0),
+        1,
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !pipeline
+        .focused_text_input_state()
+        .is_some_and(|state| state.surrounding_text == "日本語")
+    {
+        pipeline.poll_text_clipboard();
+        pipeline.render();
+        assert!(Instant::now() < deadline, "field paste timed out");
+        thread::yield_now();
+    }
+    assert!(app.runtime.lock().unwrap().clipboard_job.is_none());
+    assert_eq!(
+        app.bindings(app.document_id())
+            .unwrap()
+            .document
+            .get()
+            .as_str(),
+        "untouched"
+    );
+    pipeline.teardown();
+}
+
+#[test]
+fn terminal_context_copy_uses_clicked_session_instead_of_active_editor() {
+    let app = test_app("do not copy this editor", None, false);
+    let copied = Arc::new(Mutex::new(None));
+    app.runtime.lock().unwrap().clipboard = Some(TextClipboard::new(TestClipboard {
+        text: copied.clone(),
+        fail_write: false,
+    }));
+    app.new_terminal();
+    let session = app.terminal.active().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while !matches!(
+        session.terminal.status(),
+        kureha_code::terminal::TerminalStatus::Running
+    ) {
+        app.poll_terminals();
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    session
+        .terminal
+        .send_input("stty -echo; printf '\\033[2J\\033[H日本語 é\\nREADY_MARK\\n'\r".as_bytes());
+    while !session.terminal.visible_text().contains("READY_MARK") {
+        app.poll_terminals();
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    app.attach_terminal(session.id, 0, 0);
+    // Keep another terminal in the panel; its context menu must target that
+    // exact session, not the one that happens to own editor focus.
+    app.new_terminal();
+    let other = app.terminal.active().unwrap();
+    app.focus_group(0);
+    let mut pipeline = context_pipeline(&app);
+    let mut rects = vec![];
+    widget_rects(
+        pipeline.element_tree().root().unwrap(),
+        Point::ZERO,
+        "TextGridRenderObject",
+        &mut rects,
+    );
+    let panel = *rects
+        .iter()
+        .max_by(|a, b| a.origin.y.total_cmp(&b.origin.y))
+        .unwrap();
+    let editor = rects
+        .into_iter()
+        .min_by(|a, b| a.origin.y.total_cmp(&b.origin.y))
+        .unwrap();
+    app.terminal.select(other.id);
+    choose_context_row(
+        &mut pipeline,
+        Point::new(editor.origin.x + 20.0, editor.origin.y + 20.0),
+        1,
+    );
+    finish_clipboard(&app);
+    let text = copied.lock().unwrap().clone().unwrap();
+    assert!(
+        text.contains("日本語 é"),
+        "clipboard lost UTF-8 or combining text: {text}"
+    );
+    assert!(text.contains("READY_MARK"));
+    assert!(!text.contains("do not copy this editor"));
+    assert_eq!(app.terminal.focused_session().unwrap().id, session.id);
+    *copied.lock().unwrap() = Some("printf 'PASTED_MARK\\n'\r".into());
+    choose_context_row(
+        &mut pipeline,
+        Point::new(panel.origin.x + 20.0, panel.origin.y + 20.0),
+        2,
+    );
+    finish_clipboard(&app);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !other.terminal.visible_text().contains("PASTED_MARK") {
+        app.poll_terminals();
+        assert!(
+            Instant::now() < deadline,
+            "context paste missed the panel session"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!session.terminal.visible_text().contains("PASTED_MARK"));
+    assert_eq!(app.terminal.focused_session().unwrap().id, other.id);
+    for session in app.terminal.sessions() {
+        session.terminal.close();
+    }
+    pipeline.teardown();
+}
+
+#[test]
+fn code_selection_drag_keeps_its_split_outside_the_view_and_autoscrolls() {
+    use scarlet_ui::event::{MouseButton, MouseEvent};
+    let text = "hello 猫 e\u{301} text to select\n\n".repeat(160);
+    let app = test_app(&text, None, false);
+    let left_id = app.document_id();
+    app.split_editor(false);
+    let right_id = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .open("right.txt".into(), "untouched");
+    app.activate(right_id);
+    app.focus_group(0);
+    let left = app.bindings(left_id).unwrap();
+    let right = app.bindings(right_id).unwrap();
+    let right_selection = right.selection.get();
+    let mut pipeline = context_pipeline(&app);
+    let mut rects = vec![];
+    widget_rects(
+        pipeline.element_tree().root().unwrap(),
+        Point::ZERO,
+        "TextViewRenderObject",
+        &mut rects,
+    );
+    rects.sort_by(|a, b| a.origin.x.total_cmp(&b.origin.x));
+    assert_eq!(rects.len(), 2);
+    let view = rects[0];
+    let start = (view.origin.x as i32 + 120, view.origin.y as i32 + 55);
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+        button: MouseButton::Left,
+        x: start.0,
+        y: start.1,
+        click_count: 1,
+    }));
+    pipeline.render();
+    let anchor = left.selection.get().anchor;
+    assert!(anchor.byte > 0);
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
+        x: view.origin.x as i32 - 35,
+        y: start.1,
+    }));
+    pipeline.render();
+    assert_eq!(left.selection.get().anchor, anchor);
+    assert!(left.selection.get().caret.byte < anchor.byte);
+    let outside = (
+        rects[1].origin.x as i32 + 100,
+        (view.origin.y + view.size.height + 40.) as i32,
+    );
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
+        x: outside.0,
+        y: outside.1,
+    }));
+    pipeline.render();
+    assert!(pipeline.has_active_animation());
+    for _ in 0..8 {
+        pipeline.advance_animations(Duration::from_millis(16));
+        pipeline.render();
+    }
+    assert!(left.scroll.get().y > 0.);
+    assert!(left.selection.get().caret.byte > anchor.byte);
+    assert_eq!(right.selection.get(), right_selection);
+    assert_eq!(app.focused_group.get(), 0);
+    pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+        button: MouseButton::Left,
+        x: outside.0,
+        y: outside.1,
+        click_count: 1,
+    }));
+    pipeline.render();
+    assert!(!pipeline.has_active_animation());
+    let released = left.selection.get();
+    pipeline.handle_event(&Event::Mouse(MouseEvent::Moved {
+        x: start.0,
+        y: start.1,
+    }));
+    pipeline.render();
+    assert_eq!(left.selection.get(), released);
+    assert_eq!(left.document.get().as_str().as_ref(), text);
+    pipeline.teardown();
 }

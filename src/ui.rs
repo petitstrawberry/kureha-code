@@ -540,6 +540,7 @@ impl App {
     fn editor_content(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         let bindings = self.bindings_for(id, group).unwrap();
         let edited = self.clone();
+        let edit_actions = self.clone();
         let keys = self.clone();
         let selection = bindings.selection.clone();
         let hovering = self.clone();
@@ -573,6 +574,19 @@ impl App {
         let show_minimap = self.minimap_visible.get() && snapshot.source_len > 0;
         let minimap_scroll = bindings.scroll.clone();
         let editor = TextView::with_document(bindings.document, bindings.selection)
+            .on_edit_action(move |action| {
+                if edit_actions.group_id(group) != Some(id) || edit_actions.blocked() {
+                    return;
+                }
+                edit_actions.focus_group(group);
+                use scarlet_ui::clipboard::TextEditAction;
+                match action {
+                    TextEditAction::Copy => edit_actions.copy(false),
+                    TextEditAction::Cut => edit_actions.copy(true),
+                    TextEditAction::Paste => edit_actions.paste(),
+                    TextEditAction::SelectAll => edit_actions.select_all(),
+                }
+            })
             .text_spans(styles)
             .diagnostic_spans(self.language_diagnostics(id))
             .caret_rect_state(if self.focused_group.get() == group {
