@@ -254,3 +254,44 @@ fn outer_layout_preview() {
     }
     pipeline.teardown();
 }
+
+#[test]
+#[ignore = "manual selection highlight review; writes PPM files"]
+fn selection_highlight_preview() {
+    let directory =
+        PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
+    std::fs::create_dir_all(&directory).unwrap();
+    for preset in ["kureha", "monokai"] {
+        let app = App::new();
+        app.apply_theme(kureha_code::theme::preset(preset).unwrap());
+        let text = "First selected line\n\n\nLast selected line\nUnselected line\n";
+        let id = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .open("selection.txt".into(), text);
+        app.activate(id);
+        app.bindings(id).unwrap().selection.set(TextSelection {
+            anchor: TextPosition::new(6),
+            caret: TextPosition::new(text.find("Unselected").unwrap()),
+        });
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new("Selection", app.content())
+                .decorated(false)
+                .size(Size::new(920., 400.))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        let buffer = pipeline.render().unwrap();
+        let mut file = std::io::BufWriter::new(
+            std::fs::File::create(directory.join(format!("selection-{preset}.ppm"))).unwrap(),
+        );
+        write!(file, "P6\n{} {}\n255\n", buffer.width(), buffer.height()).unwrap();
+        for pixel in buffer.data().chunks_exact(4) {
+            file.write_all(&[pixel[2], pixel[1], pixel[0]]).unwrap();
+        }
+        pipeline.teardown();
+    }
+}
