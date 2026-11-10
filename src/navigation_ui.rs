@@ -79,9 +79,22 @@ pub(crate) struct Navigation {
     hint: State<String>,
     service: Arc<Mutex<Service>>,
     preview_original: Arc<Mutex<Option<kureha_code::theme::Theme>>>,
+    shortcut_text: Arc<AtomicBool>,
     pub(super) row_inputs: super::ui::RowInputs,
 }
 impl Navigation {
+    /// Some backends emit printable text after an Alt shortcut key press.
+    /// Consume only that press's text, never the next ordinary key press.
+    pub(super) fn capture_shortcut_text(&self, event: &Event) -> bool {
+        match event {
+            Event::Keyboard(KeyEvent::Char { .. }) => self.shortcut_text.swap(false, Ordering::Relaxed),
+            Event::Keyboard(KeyEvent::Pressed { .. } | KeyEvent::Released { .. }) => {
+                self.shortcut_text.store(false, Ordering::Relaxed);
+                false
+            }
+            _ => false,
+        }
+    }
     /// The old editor can receive another queued event before the overlay is
     /// mounted. Route text to the query instead of modifying source code.
     pub(super) fn capture_editor_input(&self, event: &Event) -> bool {
@@ -124,6 +137,7 @@ impl Navigation {
             hint: State::new(generate_state_id(), String::new()),
             service: Arc::new(Mutex::new(Service::default())),
             preview_original: Default::default(),
+            shortcut_text: Default::default(),
             row_inputs: Default::default(),
         }
     }
@@ -392,6 +406,7 @@ const COMMANDS: &[CommandDescriptor] = &[
         "entire editor area layout",
         ""
     ),
+    command!("word-wrap", "View: Toggle Word Wrap", "code wrapping lines", "Alt+Z"),
     command!("minimap", "View: Toggle Minimap", "overview", ""),
     command!(
         "restart-terminal",
@@ -615,6 +630,11 @@ impl App {
     /// Call before workbench shortcuts. While open, other shortcut handlers
     /// should stop dispatching and return false to the focused TextField.
     pub(crate) fn navigation_key(&self, key: KeyCode, modifiers: KeyModifiers) -> bool {
+        if !self.nav.is_open() && modifiers.alt && !modifiers.primary() && !modifiers.control && !modifiers.shift && matches!(key, KeyCode::Char('z' | 'Z')) {
+            self.nav.shortcut_text.store(true, Ordering::Relaxed);
+            self.toggle_word_wrap();
+            return true;
+        }
         if !self.nav.is_open()
             && cfg!(target_os = "macos")
             && modifiers.control
@@ -1088,6 +1108,7 @@ impl App {
             "acknowledgements" => self.open_acknowledgements(),
             "theme-edit" => self.open_theme_settings(),
             "theme-reload" => self.reload_theme_settings(),
+            "word-wrap" => self.toggle_word_wrap(),
             "minimap" => self.toggle_minimap(),
             "tab-outer-left" => {
                 if let Some(id) = self.group_id(self.focused_group.get()) {

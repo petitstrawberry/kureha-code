@@ -2240,7 +2240,7 @@ dependencies = [
 [[package]]
 name = "scarlet-scroll-motion"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=4732d20f64c404c860681a118e616e28aa954b3f#4732d20f64c404c860681a118e616e28aa954b3f"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=20ee64c5a8422a4615098271c6431cffdaa2b2a1#20ee64c5a8422a4615098271c6431cffdaa2b2a1"
 dependencies = [
  "libm",
 ]
@@ -2264,7 +2264,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=4732d20f64c404c860681a118e616e28aa954b3f#4732d20f64c404c860681a118e616e28aa954b3f"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=20ee64c5a8422a4615098271c6431cffdaa2b2a1#20ee64c5a8422a4615098271c6431cffdaa2b2a1"
 dependencies = [
  "scarlet-ui-core",
  "scarlet-ui-platform-sws",
@@ -2274,7 +2274,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-core"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=4732d20f64c404c860681a118e616e28aa954b3f#4732d20f64c404c860681a118e616e28aa954b3f"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=20ee64c5a8422a4615098271c6431cffdaa2b2a1#20ee64c5a8422a4615098271c6431cffdaa2b2a1"
 dependencies = [
  "ab_glyph",
  "bitflags 2.13.2",
@@ -2286,6 +2286,7 @@ dependencies = [
  "scarlet-scroll-motion",
  "scarlet-ui-icons-tabler",
  "scarlet-ui-macros",
+ "unicode-linebreak",
  "unicode-script",
  "unicode-segmentation",
  "wasm-bindgen-futures",
@@ -2296,7 +2297,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-icons-tabler"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=4732d20f64c404c860681a118e616e28aa954b3f#4732d20f64c404c860681a118e616e28aa954b3f"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=20ee64c5a8422a4615098271c6431cffdaa2b2a1#20ee64c5a8422a4615098271c6431cffdaa2b2a1"
 dependencies = [
  "svgtypes",
 ]
@@ -2304,7 +2305,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-macros"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=4732d20f64c404c860681a118e616e28aa954b3f#4732d20f64c404c860681a118e616e28aa954b3f"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=20ee64c5a8422a4615098271c6431cffdaa2b2a1#20ee64c5a8422a4615098271c6431cffdaa2b2a1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2314,7 +2315,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-platform-sws"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=4732d20f64c404c860681a118e616e28aa954b3f#4732d20f64c404c860681a118e616e28aa954b3f"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=20ee64c5a8422a4615098271c6431cffdaa2b2a1#20ee64c5a8422a4615098271c6431cffdaa2b2a1"
 dependencies = [
  "sbus-client",
  "scarlet-desktop-config",
@@ -2328,7 +2329,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-platform-winit"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=4732d20f64c404c860681a118e616e28aa954b3f#4732d20f64c404c860681a118e616e28aa954b3f"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=20ee64c5a8422a4615098271c6431cffdaa2b2a1#20ee64c5a8422a4615098271c6431cffdaa2b2a1"
 dependencies = [
  "arboard",
  "block2",
@@ -2349,7 +2350,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-renderer-sgfx"
 version = "1.0.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=4732d20f64c404c860681a118e616e28aa954b3f#4732d20f64c404c860681a118e616e28aa954b3f"
+source = "git+https://github.com/petitstrawberry/scarlet-ui?rev=20ee64c5a8422a4615098271c6431cffdaa2b2a1#20ee64c5a8422a4615098271c6431cffdaa2b2a1"
 dependencies = [
  "libm",
  "scarlet-ui-core",
@@ -3042,6 +3043,12 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "unicode-linebreak"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
 
 [[package]]
 name = "unicode-properties"

@@ -1,11 +1,11 @@
 //! Theme I/O and parsing stay off the event loop. Invalid saves retain the last palette.
 use super::preferences::{Change, Preferences};
-use kureha_code::theme::{parse_theme, Theme, THEME_TEMPLATE};
+use kureha_code::theme::{THEME_TEMPLATE, Theme, parse_theme};
 use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::PathBuf,
-    sync::{mpsc, Mutex},
+    sync::{Mutex, mpsc},
     thread,
     time::Duration,
 };
@@ -171,7 +171,7 @@ fn create(path: &std::path::Path) -> std::io::Result<()> {
     }
 }
 
-const SETTINGS_TEMPLATE: &str = "# Theme selections and editor preferences. Changes apply automatically.\n# Omit color_theme to use theme.toml; omit code_theme to follow it.\n# color_theme = \"kureha\"\n# code_theme = \"monokai\"\n# font_size = 14\nhide_minimap = false\n";
+const SETTINGS_TEMPLATE: &str = "# Theme selections and editor preferences. Changes apply automatically.\n# Omit color_theme to use theme.toml; omit code_theme to follow it.\n# color_theme = \"kureha\"\n# code_theme = \"monokai\"\n# font_size = 14\nhide_minimap = false\nword_wrap = true\nwrap_at_words = true\n";
 fn create_settings(path: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -217,6 +217,8 @@ fn save(path: &std::path::Path, change: &Change) -> Result<(), String> {
             }
         }
         Change::Minimap(visible) => document["hide_minimap"] = toml_edit::value(!visible),
+        Change::WordWrap(enabled) => document["word_wrap"] = toml_edit::value(*enabled),
+        Change::WrapAtWords(enabled) => document["wrap_at_words"] = toml_edit::value(*enabled),
     }
     let updated = document.to_string();
     Preferences::parse(&updated)?;
@@ -283,6 +285,11 @@ impl super::App {
     }
     pub(super) fn change_preferences(&self, change: Change) {
         self.preferences.update(|p| p.change(&change));
+        let preferences = self.preferences.get();
+        self.settings_ui.sync_preferences(&preferences);
+        if self.minimap_visible.get() == preferences.hide_minimap {
+            self.minimap_visible.set(!preferences.hide_minimap);
+        }
         // Production starts the worker before its event loop. Tests without a
         // worker must never write into the developer's real configuration.
         if let Some(watcher) = self.theme_settings.lock().unwrap().as_ref() {
@@ -338,6 +345,7 @@ impl super::App {
         }
         self.runtime.lock().unwrap().deferred_preferences = None;
         self.minimap_visible.set(!preferences.hide_minimap);
+        self.settings_ui.sync_preferences(&preferences);
         self.preferences.set(preferences);
         self.set_theme(theme);
     }
@@ -437,15 +445,21 @@ mod persistence_tests {
         assert!(matches!(next(&watcher),Update::Loaded(t,_) if t.editor_font_size()==19.0));
         watcher.save(Change::Minimap(false));
         assert!(matches!(next(&watcher),Update::Loaded(_,p) if p.hide_minimap));
+        watcher.save(Change::WrapAtWords(false));
+        assert!(matches!(next(&watcher),Update::Loaded(_,p) if !p.wrap_at_words));
+        watcher.save(Change::WordWrap(false));
+        assert!(matches!(next(&watcher),Update::Loaded(_,p) if !p.word_wrap));
         drop(watcher);
         let restored = Watcher::start(f.theme()).unwrap();
         assert!(
-            matches!(next(&restored),Update::Loaded(t,p) if t.editor_font_size()==19.0 && p.hide_minimap && p.code_theme.as_deref()==Some("Nord"))
+            matches!(next(&restored),Update::Loaded(t,p) if t.editor_font_size()==19.0 && p.hide_minimap && !p.word_wrap && !p.wrap_at_words && p.code_theme.as_deref()==Some("Nord"))
         );
         assert_eq!(fs::read_to_string(f.theme()).unwrap(), custom);
-        assert!(fs::read_to_string(f.settings())
-            .unwrap()
-            .contains("# keep my explanation"));
+        assert!(
+            fs::read_to_string(f.settings())
+                .unwrap()
+                .contains("# keep my explanation")
+        );
         drop(restored);
     }
     #[test]

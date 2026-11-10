@@ -3,8 +3,8 @@
 //! Keep one `MinimapCache` in app runtime. After requesting `syntax::spans`, call
 //! `cache.snapshot(id, revision, path, &document)`. Refresh on `syntax::poll()`;
 //! unchanged snapshots are shared without rescanning source or copying spans.
-//! Mount `Minimap::new(snapshot, editor_scroll, theme).view()` beside an unwrapped
-//! TextView at the same height. Set `line_height` from the editor font metrics
+//! Use `Minimap::with_editor` to reuse the TextView visual rows, including wrapping
+//! and continuation indentation. Standalone `view()` uses logical source rows. Set `line_height` from the editor font metrics
 //! and `editor_padding` to its padding. Visibility can follow a menu toggle via
 //! `enabled`, or the parent can omit the view. No header or text layout is used.
 //! Rows keep a two-pixel pitch and scroll with the editor. Files exceeding the
@@ -15,10 +15,11 @@ use scarlet_ui::{
     event::Phase,
     prelude::*,
     renderer::PaintContext,
+    view::ViewClone,
 };
 use std::{
     any::Any,
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::VecDeque,
     ops::Range,
     path::{Path, PathBuf},
@@ -53,7 +54,7 @@ pub struct Row {
     pub marks: Vec<Mark>,
 }
 
-/// Holds only sampled geometry/colors, never a document or full source copy.
+/// Holds sampled geometry and syntax spans, never a document or full source copy.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     pub rows: Vec<Row>,
@@ -63,6 +64,7 @@ pub struct Snapshot {
     /// True if lines, columns, or pathological lines were omitted.
     pub sampled: bool,
     pub source_bytes_read: usize,
+    styles: Arc<[TextStyleSpan]>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -145,6 +147,7 @@ impl Snapshot {
             theme,
             sampled: line_count > count,
             source_bytes_read: 0,
+            styles: spans.into(),
         };
         for index in 0..count {
             // Include both ends, including a final empty line after a newline.
@@ -253,9 +256,32 @@ pub struct Minimap {
     editor_padding: f32,
     viewport_height: Option<f32>,
     on_navigate: Option<Rc<dyn Fn(Navigation)>>,
+    measured: Rc<RefCell<Option<MeasuredOverview>>>,
+    overlay_editor: bool,
+}
+
+struct MeasuredOverview {
+    // Only sampled minimap rows, not a second copy of the text layout.
+    row_tops: Vec<f32>,
+    rows: Vec<Row>,
+    content_height: f32,
 }
 
 impl Minimap {
+    fn row_count(&self) -> usize {
+        self.measured
+            .borrow()
+            .as_ref()
+            .map_or(self.snapshot.rows.len(), |layout| layout.rows.len())
+    }
+    fn navigation_row(&self, index: usize) -> (usize, usize) {
+        let measured = self.measured.borrow();
+        let rows = measured
+            .as_ref()
+            .map_or(&self.snapshot.rows, |layout| &layout.rows);
+        rows.get(index.min(rows.len().saturating_sub(1)))
+            .map_or((0, 0), |row| (row.line, row.byte))
+    }
     pub fn new(snapshot: Arc<Snapshot>, scroll: State<TextViewScroll>, theme: Theme) -> Self {
         Self {
             snapshot,
@@ -267,6 +293,8 @@ impl Minimap {
             editor_padding: 10.0,
             viewport_height: None,
             on_navigate: None,
+            measured: Default::default(),
+            overlay_editor: false,
         }
     }
 
@@ -299,13 +327,54 @@ impl Minimap {
     }
 
     fn content_height(&self) -> f32 {
-        self.snapshot.line_count as f32 * self.line_height
+        self.measured.borrow().as_ref().map_or(
+            self.snapshot.line_count as f32 * self.line_height,
+            |layout| layout.content_height,
+        )
+    }
+    fn row_top(&self, index: usize) -> f32 {
+        self.measured
+            .borrow()
+            .as_ref()
+            .and_then(|layout| layout.row_tops.get(index).copied())
+            .unwrap_or_else(|| {
+                self.snapshot
+                    .rows
+                    .get(index)
+                    .map_or(self.content_height(), |row| {
+                        row.line as f32 * self.line_height
+                    })
+            })
+    }
+    fn map_position(&self, y: f32) -> f32 {
+        let Some(ref layout) = *self.measured.borrow() else {
+            return y / self.content_height().max(1.0) * self.map_height();
+        };
+        let next = layout.row_tops.partition_point(|top| *top <= y);
+        if next == 0 {
+            return 0.0;
+        }
+        let index = next - 1;
+        let start = layout.row_tops[index];
+        let end = layout
+            .row_tops
+            .get(next)
+            .copied()
+            .unwrap_or(layout.content_height);
+        (index as f32 + ((y - start) / (end - start).max(1.0)).clamp(0.0, 1.0)) * ROW_PITCH
+    }
+    fn editor_position(&self, map_y: f32) -> f32 {
+        let row = (map_y / ROW_PITCH).max(0.0);
+        let index = (row.floor() as usize).min(self.row_count());
+        let top = self.row_top(index);
+        let end = self.row_top(index + 1);
+        top + (end - top) * row.fract()
     }
     fn viewport(&self, height: f32) -> f32 {
         (self.viewport_height.unwrap_or(height) - self.editor_padding * 2.0).max(1.0)
     }
     fn map_height(&self) -> f32 {
-        self.snapshot.rows.len() as f32 * ROW_PITCH
+        self.row_count() as f32 * ROW_PITCH
     }
     fn scroll_progress(&self, height: f32) -> f32 {
         let max_scroll = (self.content_height() - self.viewport(height)).max(0.0);
@@ -323,6 +392,17 @@ impl Minimap {
         let visible_height = map_height.min(finite_nonnegative(height));
         let content = self.content_height().max(1.0);
         let viewport = self.viewport(height);
+        if self.measured.borrow().is_some() {
+            let scroll = self
+                .scroll
+                .get()
+                .y
+                .clamp(0.0, (content - viewport).max(0.0));
+            let top = self.map_position(scroll) - self.map_offset(height);
+            let end = self.map_position((scroll + viewport).min(content)) - self.map_offset(height);
+            let extent = (end - top).clamp(visible_height.min(8.0), visible_height);
+            return (top.clamp(0.0, (visible_height - extent).max(0.0)), extent);
+        }
         let extent =
             (map_height * viewport / content).clamp(visible_height.min(8.0), visible_height);
         (
@@ -339,14 +419,10 @@ impl Minimap {
         }
         let y = finite_nonnegative(y).min(height);
         let index = (((y + map_offset) / ROW_PITCH).floor() as usize)
-            .min(self.snapshot.rows.len().saturating_sub(1));
-        let (line, byte) = self
-            .snapshot
-            .rows
-            .get(index)
-            .map_or((0, 0), |row| (row.line, row.byte));
+            .min(self.row_count().saturating_sub(1));
+        let (line, byte) = self.navigation_row(index);
         let mut scroll = self.scroll.get();
-        scroll.y = (line as f32 * self.line_height - self.viewport(height) / 2.0).clamp(
+        scroll.y = (self.row_top(index) - self.viewport(height) / 2.0).clamp(
             0.0,
             (self.content_height() - self.viewport(height)).max(0.0),
         );
@@ -363,6 +439,188 @@ impl Minimap {
             size: Rc::new(Cell::new(Size::ZERO)),
         };
         surface.frame(width, f32::INFINITY)
+    }
+
+    /// Lay out the editor first and reuse its exact wrapped visual rows.
+    /// Unwrapped code fills the entire viewport beneath the right-hand overview.
+    pub fn with_editor<E: View + Clone>(mut self, editor: E, wrapped: bool) -> impl View + Clone {
+        self.overlay_editor = !wrapped;
+        EditorOverview {
+            editor,
+            minimap: self,
+            wrapped,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct EditorOverview<E: View + Clone> {
+    editor: E,
+    minimap: Minimap,
+    wrapped: bool,
+}
+impl<E: View + Clone> View for EditorOverview<E> {
+    fn create_element(&self) -> Box<dyn Element> {
+        Box::new(RenderElement::with_view_children_and_updater(
+            self.clone(),
+            |view| OverviewLayout {
+                minimap: view.minimap.clone(),
+                wrapped: view.wrapped,
+                size: Size::ZERO,
+            },
+            |render, view| {
+                render.minimap = view.minimap.clone();
+                render.wrapped = view.wrapped;
+                UpdateResult::Updated
+            },
+            |view| {
+                vec![
+                    view.editor.clone_view(),
+                    view.minimap.clone().view().clone_view(),
+                ]
+            },
+        ))
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+struct OverviewLayout {
+    minimap: Minimap,
+    wrapped: bool,
+    size: Size,
+}
+impl ElementRenderObject for OverviewLayout {
+    fn layout(&mut self, constraints: LayoutConstraints) -> Size {
+        self.size = Size::new(constraints.max_width, constraints.max_height);
+        self.size
+    }
+    fn layout_with_children(
+        &mut self,
+        constraints: LayoutConstraints,
+        children: &mut [Box<dyn Element>],
+    ) -> Size {
+        self.layout(constraints);
+        let width = if self.minimap.enabled {
+            self.minimap.width.min(self.size.width)
+        } else {
+            0.0
+        };
+        if let Some(editor) = children.first_mut() {
+            editor.layout(LayoutConstraints::tight(
+                (self.size.width - if self.wrapped { width } else { 0.0 }).max(1.0),
+                self.size.height,
+            ));
+            editor.set_position(Point::ZERO);
+            fn text_layout(
+                element: &dyn Element,
+            ) -> Option<&scarlet_ui::views::text_view::TextViewLayout> {
+                if let Some(text) = element.render_object().and_then(|r| {
+                    r.as_any()
+                        .downcast_ref::<scarlet_ui::views::TextViewRenderObject>()
+                }) {
+                    return Some(text.text_layout());
+                }
+                element
+                    .children()
+                    .iter()
+                    .find_map(|child| text_layout(child.as_ref()))
+            }
+            if let Some(layout) = text_layout(editor.as_ref()).filter(|_| self.minimap.enabled) {
+                self.minimap.line_height = layout.line_height;
+                let count = layout.visual_lines.len().min(MAX_ROWS);
+                let mut rows = Vec::with_capacity(count);
+                let mut row_tops = Vec::with_capacity(count);
+                let base_x = layout.visual_lines.first().map_or(0.0, |line| line.x);
+                // Fit the visible text width into the overview without laying out
+                // or shaping it a second time. The original layout supplies advances.
+                let text_width = layout.viewport_size().width.max(1.0);
+                let styles = &self.minimap.snapshot.styles;
+                let mut remaining = MAX_SOURCE_BYTES;
+                for sample in 0..count {
+                    let index = if count <= 1 {
+                        0
+                    } else {
+                        sample * (layout.visual_lines.len() - 1) / (count - 1)
+                    };
+                    let line = &layout.visual_lines[index];
+                    let mut row = Row {
+                        line: line.logical_line,
+                        byte: line.text_range.start,
+                        marks: Vec::new(),
+                    };
+                    let mut style =
+                        styles.partition_point(|span| span.range.end <= line.text_range.start);
+                    for (byte, ch) in line
+                        .display_text()
+                        .char_indices()
+                        .take(remaining.min(MAX_LINE_BYTES))
+                    {
+                        remaining = remaining.saturating_sub(ch.len_utf8());
+                        if ch.is_whitespace() {
+                            continue;
+                        }
+                        let source_byte = line.source_byte_at_display_byte(byte);
+                        while style < styles.len() && styles[style].range.end <= source_byte {
+                            style += 1;
+                        }
+                        let color = styles
+                            .get(style)
+                            .filter(|span| span.range.contains(&source_byte))
+                            .map(|span| span.color);
+                        let left = (line.x - base_x + line.display_advance(byte)) / text_width
+                            * MAX_COLUMNS as f32;
+                        if left >= MAX_COLUMNS as f32 {
+                            break;
+                        }
+                        let right = (line.x - base_x + line.display_advance(byte + ch.len_utf8()))
+                            / text_width
+                            * MAX_COLUMNS as f32;
+                        let start = left.max(0.0).floor() as u16;
+                        let end = right.ceil().clamp(start as f32 + 1.0, MAX_COLUMNS as f32) as u16;
+                        if let Some(last) = row
+                            .marks
+                            .last_mut()
+                            .filter(|last| last.columns.end >= start && last.color == color)
+                        {
+                            last.columns.end = last.columns.end.max(end);
+                        } else if row.marks.len() < MAX_MARKS_PER_ROW {
+                            row.marks.push(Mark {
+                                columns: start..end,
+                                color,
+                            });
+                        } else {
+                            break;
+                        }
+                    }
+                    rows.push(row);
+                    row_tops.push(index as f32 * layout.line_height);
+                }
+                *self.minimap.measured.borrow_mut() = Some(MeasuredOverview {
+                    row_tops,
+                    rows,
+                    content_height: layout.content_height,
+                });
+            }
+        }
+        if let Some(map) = children.get_mut(1) {
+            map.layout(LayoutConstraints::tight(width, self.size.height));
+            map.set_position(Point::new(self.size.width - width, 0.0));
+        }
+        self.size
+    }
+    fn size(&self) -> Size {
+        self.size
+    }
+    fn update_needs_layout(&self) -> bool {
+        true
+    }
+    fn render(&mut self) {}
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -401,6 +659,8 @@ struct Drag {
     pointer_y: f32,
     scroll_y: f32,
     scroll_per_pixel: f32,
+    map_y: Option<f32>,
+    map_per_pixel: f32,
 }
 
 struct SurfaceRenderer {
@@ -464,20 +724,35 @@ impl ElementRenderObject for SurfaceRenderer {
                     } else {
                         0.0
                     },
+                    map_y: m
+                        .measured
+                        .borrow()
+                        .as_ref()
+                        .map(|_| m.map_position(m.scroll.get().y)),
+                    map_per_pixel: if travel > 0.0 {
+                        m.map_position(max_scroll) / travel
+                    } else {
+                        0.0
+                    },
                 });
                 true
             }
             Event::Mouse(MouseEvent::Moved { y, .. }) if self.drag.is_some() => {
                 let drag = self.drag.unwrap();
                 let mut scroll = m.scroll.get();
-                scroll.y = (drag.scroll_y + (*y as f32 - drag.pointer_y) * drag.scroll_per_pixel)
+                let delta = *y as f32 - drag.pointer_y;
+                scroll.y = drag
+                    .map_y
+                    .map_or_else(
+                        || drag.scroll_y + delta * drag.scroll_per_pixel,
+                        |map_y| m.editor_position(map_y + delta * drag.map_per_pixel),
+                    )
                     .clamp(0.0, (m.content_height() - m.viewport(height)).max(0.0));
                 m.scroll.set(scroll);
                 if let Some(callback) = &m.on_navigate {
-                    let line = ((scroll.y + m.viewport(height) / 2.0) / m.line_height) as usize;
-                    let (line, byte) = m.snapshot.navigation_at(
-                        line as f32 / m.snapshot.line_count.saturating_sub(1).max(1) as f32,
-                    );
+                    let index = (m.map_position(scroll.y + m.viewport(height) / 2.0) / ROW_PITCH)
+                        .floor() as usize;
+                    let (line, byte) = m.navigation_row(index);
                     callback(Navigation { line, byte, scroll });
                 }
                 true
@@ -519,7 +794,14 @@ impl ElementRenderObject for SurfaceRenderer {
             return true;
         }
         let colors = m.theme.editor_colors();
-        ctx.fill_rect(Rect::new(origin, size), colors.background);
+        ctx.fill_rect(
+            Rect::new(origin, size),
+            if m.overlay_editor {
+                colors.background.with_opacity(0.85)
+            } else {
+                colors.background
+            },
+        );
         ctx.fill_rect(
             Rect::from_xywh(origin.x, origin.y, 1.0, size.height),
             colors.border,
@@ -528,7 +810,11 @@ impl ElementRenderObject for SurfaceRenderer {
         let offset = m.map_offset(size.height);
         let first = (offset / ROW_PITCH).floor() as usize;
         // Skip invisible rows. Both source work and paint work remain bounded.
-        for (index, row) in m.snapshot.rows.iter().enumerate().skip(first) {
+        let measured = m.measured.borrow();
+        let rows = measured
+            .as_ref()
+            .map_or(&m.snapshot.rows, |layout| &layout.rows);
+        for (index, row) in rows.iter().enumerate().skip(first) {
             let y = index as f32 * ROW_PITCH - offset;
             if y >= size.height {
                 break;
@@ -553,7 +839,10 @@ impl ElementRenderObject for SurfaceRenderer {
                         (mark.columns.len() as f32 * column_width).max(0.5),
                         bottom - top,
                     ),
-                    Color { a: color.a * 0.40, ..color },
+                    Color {
+                        a: color.a * 0.40,
+                        ..color
+                    },
                 );
             }
         }
@@ -569,6 +858,167 @@ impl ElementRenderObject for SurfaceRenderer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn editor_width_and_minimap_navigation_use_actual_wrapped_lines() {
+        use super::*;
+        let text = format!(
+            "{}\nshort\n{}\nlast",
+            "日本語 long_line ".repeat(40),
+            "abcdef ".repeat(30)
+        );
+        let map = Arc::new(snapshot(&text, &[]));
+        for mode in [WrapMode::Code, WrapMode::CodeAnywhere, WrapMode::None] {
+            let wrapped = mode != WrapMode::None;
+            for width in [400.0, 600.0] {
+                let state = scroll(0.0);
+                let minimap = Minimap::new(map.clone(), state.clone(), Theme::Light).width(80.0);
+                let measured = minimap.measured.clone();
+                let editor = TextView::new(
+                    State::new(scarlet_ui::generate_state_id(), text.clone()),
+                    State::new(scarlet_ui::generate_state_id(), TextSelection::default()),
+                )
+                .wrap_mode(mode)
+                .font_size(14.0)
+                .padding(10.0)
+                .line_numbers(true)
+                .scroll_state(state.clone());
+                let mut element = minimap
+                    .clone()
+                    .with_editor(editor, wrapped)
+                    .create_element();
+                element.layout(LayoutConstraints::tight(width, 200.0));
+                let children = element.children();
+                let text_render = children[0]
+                    .render_object()
+                    .unwrap()
+                    .as_any()
+                    .downcast_ref::<scarlet_ui::views::TextViewRenderObject>()
+                    .unwrap();
+                assert_eq!(
+                    text_render.size().width,
+                    width - if wrapped { 80.0 } else { 0.0 }
+                );
+                assert_eq!(children[1].position().x, width - 80.0);
+                let layout = text_render.text_layout();
+                assert_eq!(layout.visual_lines.len() > 4, wrapped);
+                assert_eq!(
+                    measured.borrow().as_ref().unwrap().content_height,
+                    layout.content_height
+                );
+                let row = 2;
+                let expected_y = layout
+                    .visual_lines
+                    .partition_point(|line| line.logical_line < row)
+                    as f32
+                    * layout.line_height;
+                let map_index = measured
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .position(|item| item.line == row)
+                    .unwrap();
+                assert_eq!(minimap.row_count(), layout.visual_lines.len().min(MAX_ROWS));
+                assert_eq!(minimap.row_top(map_index), expected_y);
+                assert_eq!(
+                    minimap.navigation_row(map_index).1,
+                    layout.visual_lines[map_index].text_range.start
+                );
+                minimap.navigate_at(map_index as f32 * ROW_PITCH, 200.0, 0.0);
+                assert!(
+                    (state.get().y
+                        - (expected_y - 90.0).clamp(0.0, (layout.content_height - 180.0).max(0.0)))
+                    .abs()
+                        < 0.01
+                );
+                for y in [0.0, expected_y, layout.content_height * 0.6] {
+                    assert!((minimap.editor_position(minimap.map_position(y)) - y).abs() < 0.1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wrapped_overview_has_continuation_rows_and_drag_reaches_both_ends() {
+        let source = format!("    {}\n", "日本語 long_identifier ".repeat(30)).repeat(50);
+        let state = scroll(0.0);
+        let minimap = Minimap::new(
+            Arc::new(snapshot(&source, &[])),
+            state.clone(),
+            Theme::Light,
+        );
+        let editor = TextView::new(
+            State::new(scarlet_ui::generate_state_id(), source),
+            State::new(scarlet_ui::generate_state_id(), TextSelection::default()),
+        )
+        .wrap_mode(WrapMode::Code)
+        .padding(10.0)
+        .scroll_state(state.clone());
+        let mut element = minimap.clone().with_editor(editor, true).create_element();
+        element.layout(LayoutConstraints::tight(500.0, 300.0));
+        {
+            let measured = minimap.measured.borrow();
+            let measured = measured.as_ref().unwrap();
+            assert!(measured.rows.len() <= MAX_ROWS);
+            assert!(
+                measured
+                    .rows
+                    .windows(2)
+                    .any(|rows| rows[0].line == rows[1].line && rows[0].byte < rows[1].byte)
+            );
+            assert!(
+                measured
+                    .rows
+                    .iter()
+                    .filter(|row| !row.marks.is_empty())
+                    .count()
+                    > 50
+            );
+        }
+        let mut render = SurfaceRenderer {
+            surface: Surface {
+                minimap: minimap.clone(),
+                size: Rc::new(Cell::new(Size::new(100.0, 300.0))),
+            },
+            drag: None,
+        };
+        let x_before = state.get().x;
+        render.handle_event(
+            &Event::Mouse(MouseEvent::ButtonPressed {
+                button: MouseButton::Left,
+                click_count: 1,
+                x: 50,
+                y: 2,
+            }),
+            Phase::Target,
+        );
+        render.handle_event(
+            &Event::Mouse(MouseEvent::Moved { x: -200, y: 2000 }),
+            Phase::Target,
+        );
+        assert_eq!(
+            state.get().y,
+            minimap.content_height() - minimap.viewport(300.0)
+        );
+        render.handle_event(
+            &Event::Mouse(MouseEvent::Moved { x: 300, y: -2000 }),
+            Phase::Target,
+        );
+        assert_eq!(state.get().y, 0.0);
+        assert_eq!(state.get().x, x_before);
+        render.handle_event(
+            &Event::Mouse(MouseEvent::ButtonReleased {
+                button: MouseButton::Left,
+                click_count: 1,
+                x: 300,
+                y: -2000,
+            }),
+            Phase::Target,
+        );
+        assert!(render.drag.is_none());
+    }
+
     use super::*;
 
     fn snapshot(text: &str, spans: &[TextStyleSpan]) -> Snapshot {

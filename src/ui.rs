@@ -354,6 +354,7 @@ impl App {
         .focusable(self.workbench_focus.clone())
         .on_event_capture(move |event| {
             if keys.tab_drag_event(event) { return true; }
+            if keys.nav.capture_shortcut_text(event) { return true; }
             let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event else {
                 return false;
             };
@@ -620,7 +621,7 @@ impl App {
                     && !self.language_rename_open(),
             )
             .scroll_state(bindings.scroll)
-            .wrap_mode(WrapMode::None)
+            .wrap_mode(self.preferences.get().wrap_mode())
             .line_numbers(true)
             .current_line_highlight(true)
             .tab_mode(TabMode::Spaces(4))
@@ -704,11 +705,14 @@ impl App {
                 Text::new(fallback.unwrap_or("")).font_size(11.0)
                     .color(theme.colors().muted).padding(6.0),
                 VStack::new(())),
-            hstack! {
-                ZStack::new((editor,if_view!(self.focused_group.get()==group,self.language_popup(),VStack::new(())),if_view!(self.find_open.get() && self.focused_group.get()==group,super::popup::Anchored::top_right(self.find_view()),VStack::new(())))).alignment(Alignment::TopLeading)
-                    .frame(f32::INFINITY,f32::INFINITY),
-                kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme.clone()).width(if self.pane_order().len() > 1 {54.0} else {100.0}).enabled(show_minimap).line_height(font.as_ref().map_or_else(||scarlet_ui::graphics::line_height_sized(theme.editor_font_size()),|font|scarlet_ui::graphics::line_height_sized_with_font_stack(theme.editor_font_size(),font)) as f32).view(),
-            }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY),
+            kureha_code::minimap::Minimap::new(snapshot,minimap_scroll,theme.clone())
+                .width(if self.pane_order().len() > 1 {54.0} else {100.0})
+                .enabled(show_minimap)
+                .with_editor(
+                    ZStack::new((editor,if_view!(self.focused_group.get()==group,self.language_popup(),VStack::new(())),if_view!(self.find_open.get() && self.focused_group.get()==group,super::popup::Anchored::top_right(self.find_view()),VStack::new(())))).alignment(Alignment::TopLeading)
+                        .frame(f32::INFINITY,f32::INFINITY),
+                    self.preferences.get().word_wrap,
+                ).frame(f32::INFINITY,f32::INFINITY),
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY))
@@ -1025,6 +1029,7 @@ impl App {
                     a.show_theme_picker(true)
                 }),
                 MenuEntry::Separator,
+                self.item("word-wrap", "Toggle Word Wrap", "Alt+Z", App::toggle_word_wrap),
                 self.item(
                     "minimap",
                     if self.minimap_visible.get() {
@@ -1100,7 +1105,7 @@ impl View for LiveEditor {
         }))
     }
     fn listenables(&self) -> Vec<&dyn Listenable> {
-        vec![&self.document, &self.app.syntax_revision]
+        vec![&self.document, &self.app.syntax_revision, &self.app.preferences]
     }
     fn as_any(&self) -> &dyn Any {
         self

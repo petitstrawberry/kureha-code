@@ -5,6 +5,99 @@ use scarlet_ui::clipboard::{ClipboardError, ClipboardProvider};
 use std::time::{Duration, Instant};
 
 #[test]
+fn word_wrap_toggle_preserves_document_and_expands_under_minimap() {
+    use scarlet_ui::{pipeline::RenderingPipeline, views::TextViewRenderObject};
+    fn editor(element: &dyn Element) -> Option<(ElementId, f32, usize)> {
+        if let Some(text) = element
+            .render_object()
+            .and_then(|r| r.as_any().downcast_ref::<TextViewRenderObject>())
+        {
+            return Some((
+                element.id(),
+                text.size().width,
+                text.text_layout().visual_lines.len(),
+            ));
+        }
+        element
+            .children()
+            .iter()
+            .find_map(|child| editor(child.as_ref()))
+    }
+    let source = format!(
+        "    let value = \"{}\";\nend",
+        "折り返し表示 long_source_code ".repeat(12)
+    );
+    let app = test_app(&source, None, false);
+    let mut pipeline = RenderingPipeline::new();
+    let window = || {
+        Window::new("Wrap", app.content())
+            .decorated(false)
+            .size(Size::new(900.0, 500.0))
+    };
+    pipeline.set_root(window().create_element());
+    pipeline.layout_initial();
+    let (id, width, rows) = editor(pipeline.element_tree().root().unwrap()).unwrap();
+    assert!(app.preferences.get().word_wrap);
+    assert!(rows > 2);
+    let mut modifiers = scarlet_ui::event::KeyModifiers::empty();
+    modifiers.alt = true;
+    for wrapped in [false, true] {
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+            keycode: KeyCode::Char('z'),
+            modifiers,
+        }));
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c: 'z' }));
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Released {
+            keycode: KeyCode::Char('z'),
+            modifiers,
+        }));
+        assert_eq!(app.preferences.get().word_wrap, wrapped);
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.layout_initial();
+        let (next_id, next_width, next_rows) =
+            editor(pipeline.element_tree().root().unwrap()).unwrap();
+        assert_eq!(next_id, id, "switching wrap must retain the text view");
+        assert_eq!(next_width, width + if wrapped { 0.0 } else { 100.0 });
+        assert_eq!(next_rows > 2, wrapped);
+        assert_eq!(
+            app.runtime.lock().unwrap().workspace.documents[0]
+                .editor
+                .document
+                .as_str()
+                .as_ref(),
+            source
+        );
+        if let Some(dir) = std::env::var_os("KUREHA_WRAP_PREVIEW") {
+            let dir = PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let buffer = pipeline.render().unwrap();
+            let rgb: Vec<_> = buffer
+                .data()
+                .chunks_exact(4)
+                .flat_map(|p| [p[2], p[1], p[0]])
+                .collect();
+            image::save_buffer(
+                dir.join(if wrapped {
+                    "wrap-on.png"
+                } else {
+                    "wrap-off.png"
+                }),
+                &rgb,
+                buffer.width(),
+                buffer.height(),
+                image::ColorType::Rgb8,
+            )
+            .unwrap();
+        }
+    }
+    pipeline.teardown();
+}
+
+#[test]
 fn shifted_split_shortcut_accepts_logical_pipe_character() {
     use scarlet_ui::pipeline::RenderingPipeline;
     let app = test_app("first\nsecond", None, false);
