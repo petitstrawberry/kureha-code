@@ -10,10 +10,14 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/3e41b24abd260e8f71dbe2f5737d24122f972158";
+    appcoat = {
+      url = "github:petitstrawberry/appcoat/3ddff8882449d82ce4c8829d538b0157b5ff0096";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     scarlet-rust-toolchain.url = "github:petitstrawberry/scarlet-rust-nix/2b4ddd555389a8c53806bbc2586440b2662c38dd";
   };
 
-  outputs = { nixpkgs, scarlet-rust-toolchain, ... }:
+  outputs = { nixpkgs, scarlet-rust-toolchain, appcoat, ... }:
     let
       # These are the host platforms provided by the pinned Scarlet toolchain.
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
@@ -40,6 +44,7 @@
         pkgs.mkShell ({
           packages = [
             rust
+            appcoat.packages.${system}.appcoat
             pkgs.rustfmt
             pkgs.git
             pkgs.python3

@@ -1,5 +1,5 @@
 [[layers]]
 kind = "app"
-source = "../../app.toml"
+source = "../../dist/scarlet/kureha-code.app"
 to = "/applications/kureha-code.app"
 architectures = ["aarch64", "riscv64"]
