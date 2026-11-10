@@ -471,7 +471,7 @@ impl App {
         )
     }
     fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
-        self.tab_region(Surface::section(vstack! {
+        self.tab_region(TabPane::new(
             self.tabs_view(group),
             if self.group_id(group).is_some_and(|id| self.is_settings_tab(id)) {
                 Either::A(self.settings_view(group))
@@ -482,8 +482,9 @@ impl App {
                     None => Either::B(VStack::new(()).frame(f32::INFINITY,f32::INFINITY).background(self.theme.get().editor_colors().background)),
                 }),
             }) },
-        }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY))
-            .surface_style(self.theme.get().chrome_style()).corner_radius(16.0).clip_content(true)
+        )
+            .surface_style(self.theme.get().chrome_style())
+            .border_color(self.theme.get().colors().border)
             .key(format!("editor-group-{group}")), tab_drag::RegionId::Group(group))
     }
     fn tabs_view(&self, group: usize) -> impl View + Clone + use<> {
@@ -851,12 +852,6 @@ impl App {
         MenuBarModel::new(vec![
             MenuItemModel::app().children(vec![
                 self.item("settings", "Settings…", "Ctrl+,", App::open_settings),
-                self.item(
-                    "acknowledgements",
-                    "Acknowledgements…",
-                    "",
-                    App::open_acknowledgements,
-                ),
             ]),
             MenuItemModel::new("file", "File").children(vec![
                 self.item("new", "New File", "Ctrl+N", App::new_document),

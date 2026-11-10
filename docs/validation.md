@@ -807,8 +807,8 @@ The locked, offline macOS release build passed.
 
 Settings is an ordinary workbench tab with the existing tab identity and drag/split
 paths. It owns no text document and closing it does not create an Untitled file.
-The existing ScarletUI `MenuItemModel::app()` adds Settings and Acknowledgements
-to the macOS application menu. Open Settings File remains in Settings and the
+The existing ScarletUI `MenuItemModel::app()` adds Settings to the macOS application menu. Acknowledgements is a section
+inside Settings, without a separate application-menu item. Open Settings File remains in Settings and the
 command palette. Settings sections use ScarletUI `TabView`; acknowledgements
 uses an inline searchable `ListView` beside the notice text.
 
@@ -860,3 +860,24 @@ All six Python tests passed, including complete theme/font notice coverage, Tabl
 copyright attribution, and notice/catalogue inclusion in an Appcoat package. The
 release macOS package passed signature verification; its notices match the source
 files and the executable embeds the Gruvbox attribution and provenance.
+
+
+## Shared tab pane framing — 2026-11-10
+
+ScarletUI `TabPane::new(bar, content)` now owns the editor groups and panel frame.
+It composes the shared Surface renderer with separately clipped bar/content slots,
+then paints the foreground border after both. Kureha supplies theme colors and
+slots rather than assembling the outer radius, clipping and border itself.
+The settings TabView has 16 logical pixels of space above it.
+
+ScarletUI's 23 TabView/TabPane tests and API doctest passed. The new pixel regression
+covers opaque slot backgrounds, continuous outer edges, rounded clipping and
+stable child identities through resize/rebuild. Kureha's 122 binary tests passed
+(10 optional tests ignored), including tab splitting/moving, terminal/panel and
+settings behavior. Light/dark settings previews are in `artifacts/settings-tab-pane/`.
+
+The packaged macOS app was also checked with the native SGFX/WGPU backend:
+Appearance/Acknowledgements switched within the shared frame, the top spacing was
+visible, and the application menu contained Settings without an Acknowledgements
+item. All six Python catalogue/packaging tests and package signature verification
+passed. The packaged build is `dist/tab-pane/Kureha Code.app`.

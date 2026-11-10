@@ -223,6 +223,7 @@ impl App {
             indicator_height: 0.0,
         })
         .font_size(13.0)
+        .padding_insets(EdgeInsets::new(0.0, 16.0, 0.0, 0.0))
         .frame(f32::INFINITY, f32::INFINITY)
         .background(colors.background)
         .on_event_capture(move |event| {
