@@ -852,12 +852,6 @@ impl App {
             MenuItemModel::app().children(vec![
                 self.item("settings", "Settings…", "Ctrl+,", App::open_settings),
                 self.item(
-                    "settings-file",
-                    "Open Settings File…",
-                    "",
-                    App::open_preferences_file,
-                ),
-                self.item(
                     "acknowledgements",
                     "Acknowledgements…",
                     "",

@@ -20,7 +20,6 @@ enum Mode {
     Files,
     Commands,
     Line,
-    Licenses,
     Themes {
         code_only: bool,
     },
@@ -30,7 +29,6 @@ enum Action {
     File(PathBuf),
     Command(&'static str),
     Theme(kureha_code::theme::Theme),
-    License(usize),
 }
 #[derive(Clone, Debug)]
 struct Row {
@@ -503,9 +501,6 @@ impl App {
     pub(super) fn show_theme_picker(&self, code_only: bool) {
         self.show_navigation(Mode::Themes { code_only });
     }
-    pub(super) fn show_license_picker(&self) {
-        self.show_navigation(Mode::Licenses);
-    }
     fn preview_selected_theme(&self) {
         if !matches!(self.nav.mode.get(), Mode::Themes { .. }) {
             return;
@@ -861,26 +856,6 @@ impl App {
                 service.requested = false;
                 service.displayed_query = Some(request);
             }
-            Mode::Licenses => {
-                let query_lower = query.trim().to_lowercase();
-                let rows = super::settings_ui::acknowledgements()
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, entry)| entry.0.to_lowercase().contains(&query_lower))
-                    .take(VISIBLE_RESULTS)
-                    .map(|(index, entry)| Row {
-                        label: entry.0.clone(),
-                        detail: String::new(),
-                        key: format!("license:{index}"),
-                        action: Action::License(index),
-                    })
-                    .collect();
-                self.nav.show_rows(rows);
-                self.nav
-                    .set_hint("Search dependencies, fonts and themes".into());
-                service.requested = false;
-                service.displayed_query = Some(request);
-            }
             Mode::Themes { code_only } => {
                 let rows = if navigation::validate_query(&query).is_ok() {
                     self.theme_rows(code_only, &query)
@@ -1060,7 +1035,6 @@ impl App {
         match row.action {
             Action::File(path) => self.open(path),
             Action::Command(id) => self.execute_navigation_command(id),
-            Action::License(index) => self.settings_ui.show_license(index),
             Action::Theme(theme) => {
                 self.apply_theme(theme);
                 if let Some(name) = selected_theme {
@@ -1170,7 +1144,6 @@ impl App {
         let placeholder = match self.nav.mode.get() {
             Mode::Commands => "Type a command",
             Mode::Line => "Go to line:column",
-            Mode::Licenses => "Search acknowledgements",
             Mode::Themes { code_only: false } => "Select Color Theme",
             Mode::Themes { code_only: true } => "Select Code Color Theme",
             _ => "Search files by name · > commands · : line",
@@ -1458,21 +1431,6 @@ mod tests {
         app.nav.query.set("Nord".into());
         app.accept_navigation();
         assert_eq!(app.preferences.get().code_theme.as_deref(), Some("Nord"));
-    }
-    #[test]
-    fn acknowledgements_picker_filters_and_keeps_the_settings_tab() {
-        let app = App::new();
-        app.open_acknowledgements();
-        let tab = app.group_id(0);
-        app.show_license_picker();
-        app.nav.query.set("Monokai".into());
-        app.poll_navigation();
-        assert_eq!(app.nav.rows.get().len(), 1);
-        assert_eq!(app.nav.rows.get()[0].label, "Monokai palette");
-        app.accept_navigation();
-        assert!(!app.nav.is_open());
-        assert_eq!(app.group_id(0), tab);
-        assert!(app.active_id().is_none());
     }
     #[test]
     fn mounted_theme_hover_previews_without_losing_query_focus() {

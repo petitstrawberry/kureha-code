@@ -807,8 +807,10 @@ The locked, offline macOS release build passed.
 
 Settings is an ordinary workbench tab with the existing tab identity and drag/split
 paths. It owns no text document and closing it does not create an Untitled file.
-The existing ScarletUI `MenuItemModel::app()` adds Settings, Open Settings File
-and Acknowledgements to the macOS application menu.
+The existing ScarletUI `MenuItemModel::app()` adds Settings and Acknowledgements
+to the macOS application menu. Open Settings File remains in Settings and the
+command palette. Settings sections use ScarletUI `TabView`; acknowledgements
+uses an inline searchable `ListView` beside the notice text.
 
 Confirmed color/code themes, code font size and minimap visibility are saved in
 `settings.toml`, next to `theme.toml`. Writes run on the theme worker, preserve TOML
@@ -845,3 +847,7 @@ empty workbench and Cmd+W closed only that tab. Acknowledgements search and Ente
 selection displayed the matching notice. The workbench now retains a focusable
 ancestor so shortcuts work even when no text editor is focused. Windows/Linux/
 Scarlet runtime behavior of this settings change was not exercised.
+
+The TabView/inline-list follow-up passed 12 focused settings tests and renderer
+previews in Kureha/Monokai. Native macOS interaction verified section switching,
+inline search with Enter to select a notice, and the simplified application menu.

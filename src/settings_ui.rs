@@ -6,6 +6,11 @@ use std::sync::OnceLock;
 pub(super) struct Settings {
     page: State<usize>,
     license: State<usize>,
+    query: State<String>,
+    rows: State<Vec<usize>>,
+    selected_row: State<Option<usize>>,
+    last_query: Arc<Mutex<Option<String>>>,
+    row_inputs: ui::RowInputs,
     license_text: State<String>,
     document: State<Arc<kureha_code::markdown::Document>>,
     position: Arc<Mutex<crate::markdown_view::PreviewPosition>>,
@@ -15,6 +20,11 @@ impl Settings {
         Self {
             page: state(0),
             license: state(0),
+            query: state(String::new()),
+            rows: state(Vec::new()),
+            selected_row: state(None),
+            last_query: Default::default(),
+            row_inputs: Default::default(),
             license_text: state(String::new()),
             document: state(Arc::new(Default::default())),
             position: Arc::new(Mutex::new(Default::default())),
@@ -23,9 +33,34 @@ impl Settings {
     pub fn listenables(&self) -> Vec<&dyn Listenable> {
         vec![&self.page, &self.license, &self.document]
     }
+    pub(super) fn refresh_license_list(&self) {
+        let query = self.query.get();
+        let mut previous = self.last_query.lock().unwrap();
+        if previous.as_ref() == Some(&query) {
+            return;
+        }
+        let needle = query.trim().to_lowercase();
+        let rows: Vec<_> = acknowledgements()
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.0.to_lowercase().contains(&needle))
+            .map(|(index, _)| index)
+            .collect();
+        self.selected_row
+            .set(rows.iter().position(|id| *id == self.license.get()));
+        self.row_inputs
+            .retain("license:", rows.iter().map(ToString::to_string));
+        self.rows.set(rows);
+        *previous = Some(query);
+    }
     pub(super) fn show_license(&self, index: usize) {
         if let Some(entry) = acknowledgements().get(index) {
             self.license.set(index);
+            self.selected_row
+                .set(self.rows.get().iter().position(|id| *id == index));
+            if self.license_text.get() == entry.1 {
+                return;
+            }
             self.license_text.set(entry.1.clone());
             use kureha_code::markdown::{Block, Document, Span};
             let blocks = entry
@@ -95,6 +130,11 @@ impl App {
         }
         self.close_navigation();
         self.dismiss_language_panel();
+        self.settings_ui.refresh_license_list();
+        if self.settings_ui.license_text.get().is_empty() {
+            self.settings_ui
+                .show_license(self.settings_ui.license.get());
+        }
         let (id, existing) = {
             let mut rt = self.runtime.lock().unwrap();
             let id = match rt.settings_tab {
@@ -162,34 +202,38 @@ impl App {
         let colors = self.theme.get().colors();
         let appearance = self.clone();
         let licenses = self.clone();
-        let navigation = hstack! {
-            Button::new("Appearance").header_style().text_color(colors.foreground)
-                .background_color(if self.settings_ui.page.get()==0 {colors.selection} else {Color::TRANSPARENT})
-                .on_click(move || { appearance.settings_ui.page.set(0); }),
-            Button::new("Acknowledgements").header_style().text_color(colors.foreground)
-                .background_color(if self.settings_ui.page.get()==1 {colors.selection} else {Color::TRANSPARENT})
-                .on_click(move || { licenses.settings_ui.page.set(1); licenses.settings_ui.show_license(licenses.settings_ui.license.get()); }),
-            Spacer::new(),
-        }.spacing(8.0).padding_insets(EdgeInsets::new(20.0, 12.0, 20.0, 0.0));
-        let body = if self.settings_ui.page.get() == 0 {
-            Either::A(self.appearance_settings())
-        } else {
-            Either::B(self.license_settings())
-        };
         let focus = self.clone();
-        vstack! { navigation, body }
-            .spacing(0.0)
-            .frame(f32::INFINITY, f32::INFINITY)
-            .background(colors.background)
-            .on_event_capture(move |event| {
-                if matches!(
-                    event,
-                    Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })
-                ) {
-                    focus.focus_group(group);
-                }
-                false
-            })
+        TabView::with_selected_index(
+            vec![
+                TabItem::new("Appearance", move || appearance.appearance_settings()),
+                TabItem::new("Acknowledgements", move || licenses.license_settings()),
+            ],
+            self.settings_ui.page.clone(),
+        )
+        .tab_bar_placement(scarlet_ui::views::TabBarPlacement::Top)
+        .material(self.theme.get().input_material())
+        .style(scarlet_ui::views::TabStyle {
+            background_color: colors.background,
+            selected_color: colors.selection,
+            hover_color: colors.selection.with_opacity(0.35),
+            border_color: Color::TRANSPARENT,
+            text_color: colors.foreground,
+            selected_text_color: colors.foreground,
+            indicator_color: Color::TRANSPARENT,
+            indicator_height: 0.0,
+        })
+        .font_size(13.0)
+        .frame(f32::INFINITY, f32::INFINITY)
+        .background(colors.background)
+        .on_event_capture(move |event| {
+            if matches!(
+                event,
+                Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })
+            ) {
+                focus.focus_group(group);
+            }
+            false
+        })
     }
     fn appearance_settings(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
@@ -259,8 +303,43 @@ impl App {
     }
     fn license_settings(&self) -> impl View + Clone + use<> {
         let colors = self.theme.get().colors();
-        let selected = self.clone();
+        let rows = self.settings_ui.clone();
+        let submit = self.settings_ui.clone();
         let copy = self.clone();
+        let list = ListView::new(
+            self.settings_ui.rows.clone(),
+            self.settings_ui.selected_row.clone(),
+            32.0,
+            move |index, id, selected| {
+                let select = rows.clone();
+                ui::list_row(
+                    Text::new(acknowledgements()[id].0.clone())
+                        .font_size(13.0)
+                        .color(colors.foreground)
+                        .padding(6.0)
+                        .frame(f32::INFINITY, 32.0)
+                        .clip(),
+                    rows.row_inputs.get(format!("license:{id}")),
+                    selected == Some(index),
+                    true,
+                    colors,
+                    move || select.show_license(id),
+                )
+            },
+        )
+        .item_key(|id| (*id as u64).into())
+        .frame(f32::INFINITY, f32::INFINITY);
+        let browser = vstack! {
+            TextField::new(self.settings_ui.query.clone()).placeholder("Search")
+                .font_size(13.0).text_color(colors.foreground).placeholder_color(colors.muted)
+                .background_color(colors.elevated).border_color(colors.border).focused_border_color(colors.accent)
+                .material(self.theme.get().input_material()).on_submit(move || {
+                    submit.refresh_license_list();
+                    if let Some(id) = submit.rows.get().first().copied() { submit.show_license(id); }
+                }).frame(f32::INFINITY, 32.0),
+            list,
+        }.spacing(8.0).frame(f32::INFINITY, f32::INFINITY);
+
         let text = ScrollView::new(crate::markdown_view::MarkdownView {
             document: self.settings_ui.document.get(),
             theme: self.theme.get(),
@@ -273,11 +352,8 @@ impl App {
         .frame(f32::INFINITY, f32::INFINITY)
         .clip()
         .key(format!("license-body-{}", self.settings_ui.license.get()));
-        vstack! {
+        let detail = vstack! {
             hstack! {
-                Button::new(acknowledgements()[self.settings_ui.license.get()].0.clone()).header_style()
-                    .text_color(colors.foreground).background_color(colors.selection)
-                    .on_click(move || selected.show_license_picker()),
                 Spacer::new(),
                 Button::new("Copy").header_style().text_color(colors.foreground).background_color(colors.selection).on_click(move || {
                     if let Some(service)=copy.clipboard_service() {
@@ -287,7 +363,16 @@ impl App {
                 }),
             },
             text,
-        }.spacing(16.0).padding(24.0).frame(f32::INFINITY,f32::INFINITY)
+        }.spacing(8.0).frame(f32::INFINITY,f32::INFINITY);
+        SplitView::new(browser, detail)
+            .fraction(0.32)
+            .min_first(140.0)
+            .min_second(160.0)
+            .divider_thickness(12.0)
+            .divider_hit_slop(0.0)
+            .divider_colors(Color::TRANSPARENT, colors.selection)
+            .padding(16.0)
+            .frame(f32::INFINITY, f32::INFINITY)
     }
 }
 
@@ -403,6 +488,36 @@ mod tests {
         pipeline.teardown();
     }
     #[test]
+    fn inline_license_filter_keeps_notice_identity_when_rows_change() {
+        let app = App::new();
+        app.open_settings();
+        let settings = &app.settings_ui;
+        assert!(!settings.document.get().blocks.is_empty());
+        settings.query.set("Monokai".into());
+        settings.refresh_license_list();
+        let rows = settings.rows.get();
+        assert_eq!(rows.len(), 1);
+        let id = rows[0];
+        settings.show_license(id);
+        let document = settings.document.get();
+        assert_eq!(settings.selected_row.get(), Some(0));
+        settings.query.set(String::new());
+        settings.refresh_license_list();
+        assert_eq!(settings.license.get(), id);
+        assert_eq!(
+            settings.rows.get()[settings.selected_row.get().unwrap()],
+            id
+        );
+        settings.show_license(id);
+        assert!(Arc::ptr_eq(&document, &settings.document.get()));
+        settings.query.set("no-such-dependency".into());
+        settings.refresh_license_list();
+        assert!(settings.rows.get().is_empty());
+        assert_eq!(settings.selected_row.get(), None);
+        assert!(Arc::ptr_eq(&document, &settings.document.get()));
+        assert!(!app.nav.is_open());
+    }
+    #[test]
     fn license_page_blocks_typing_without_changing_the_editor() {
         use scarlet_ui::event::{MouseButton, MouseEvent};
         let app = App::with_document();
@@ -421,13 +536,13 @@ mod tests {
         pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
             button: MouseButton::Left,
             click_count: 1,
-            x: 400,
+            x: 800,
             y: 260,
         }));
         pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
             button: MouseButton::Left,
             click_count: 1,
-            x: 400,
+            x: 800,
             y: 260,
         }));
         pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c: 'X' }));

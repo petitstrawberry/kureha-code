@@ -1558,6 +1558,9 @@ impl Application for App {
     fn on_idle(&mut self) {
         self.poll_terminals();
         self.poll_theme_settings();
+        if self.runtime.lock().unwrap().settings_tab.is_some() {
+            self.settings_ui.refresh_license_list();
+        }
         self.poll_menu();
         self.poll();
         self.poll_navigation();
