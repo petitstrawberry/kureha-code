@@ -945,13 +945,13 @@ fn workbench_lays_out_without_a_window_at_normal_and_minimum_sizes() {
 fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
     use scarlet_ui::event::{MouseButton, MouseEvent, ScrollSource, WheelPhase};
     use scarlet_ui::pipeline::RenderingPipeline;
-    let app = App::with_document();
+    let app = App::new();
     app.runtime.lock().unwrap().explorer.root = Some(PathBuf::from("/project"));
     app.tree_rows.set(
-        (0..100)
+        (0..45)
             .map(|i| Row {
                 key: format!("file-{i}"),
-                path: Some(PathBuf::from(format!("/project/sample-{i:03}.rs"))),
+                path: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("README.md")),
                 label: format!("sample-{i:03}.rs"),
                 depth: 0,
                 directory: false,
@@ -968,17 +968,23 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
     pipeline.set_paint_enabled(false);
     pipeline.set_root(window().create_element());
     pipeline.layout_initial();
+    pipeline.resize(Size::new(1100.0, 1000.0));
     pipeline.render();
     fn sidebar(
         e: &dyn Element,
         origin: Point,
-    ) -> Option<(scarlet_ui::element::ElementId, f32, f32)> {
+    ) -> Option<(scarlet_ui::element::ElementId, f32, f32, f32)> {
         let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
         if e.type_name_debug().contains("ScrollViewRenderObject")
             && p.x < 100.0
             && e.bounds().size.height > 200.0
         {
-            return Some((e.id(), e.bounds().size.width, e.children()[0].position().y));
+            return Some((
+                e.id(),
+                e.bounds().size.width,
+                e.children()[0].position().y,
+                p.y,
+            ));
         }
         e.children()
             .iter()
@@ -1026,7 +1032,6 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
                 .root_mut()
                 .unwrap()
                 .update(&window());
-            pipeline.layout_initial();
             pipeline.render();
         }
     }
@@ -1041,7 +1046,7 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
     );
     pipeline.handle_event(&Event::Mouse(MouseEvent::Wheel {
         delta_x: 0,
-        delta_y: -243,
+        delta_y: -980,
         x: 100,
         y: 300,
         phase: WheelPhase::Moved,
@@ -1057,7 +1062,6 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
             .root_mut()
             .unwrap()
             .update(&window());
-        pipeline.layout_initial();
         pipeline.render();
         assert_eq!(
             state(&pipeline),
@@ -1065,6 +1069,59 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
             "workbench rebuild reset user state"
         );
     }
+    // Selecting a visible file must not move the list beneath the pointer.
+    for event in [
+        MouseEvent::ButtonPressed {
+            button: MouseButton::Left,
+            x: 100,
+            y: 800,
+            click_count: 1,
+        },
+        MouseEvent::ButtonReleased {
+            button: MouseButton::Left,
+            x: 100,
+            y: 800,
+            click_count: 1,
+        },
+    ] {
+        pipeline.handle_event(&Event::Mouse(event));
+        pipeline
+            .element_tree_mut()
+            .root_mut()
+            .unwrap()
+            .update(&window());
+        pipeline.render();
+        assert_eq!(
+            state(&pipeline),
+            scrolled,
+            "clicking a visible row moved the viewport"
+        );
+    }
+    let clicked_index = ((800.0 - scrolled.3 - scrolled.2) / 27.0).floor() as usize;
+    assert_eq!(
+        app.tree_selected.get(),
+        Some(clicked_index),
+        "painted row and hit target must agree"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while app.runtime.lock().unwrap().job.is_some() {
+        app.poll();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(app.active_id().is_some());
+    pipeline
+        .element_tree_mut()
+        .root_mut()
+        .unwrap()
+        .update(&window());
+    pipeline.render();
+    assert_eq!(
+        state(&pipeline),
+        scrolled,
+        "opening the file moved the viewport"
+    );
+
     let x = scrolled.1 as i32 + 3;
     pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
         button: MouseButton::Left,

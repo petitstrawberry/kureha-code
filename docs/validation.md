@@ -730,3 +730,24 @@ API; copied text comes from the parser so wide and combining characters survive.
   and paste into a different panel session while the editor terminal has focus.
 - No new native OS clipboard or Linux/Windows runtime validation was performed.
 - The locked, offline macOS release build passed.
+
+
+## Explorer scroll and context-menu stability — 2026-11-10
+
+- Updated both platform pins to ScarletUI `0419dbec` (PR #96, based on #95).
+  Bounded HStack/VStack layout defers explicit fill children until sibling space
+  has been allocated, preventing provisional viewport sizes from clamping scroll.
+- The mounted Explorer regression now resizes the window, scrolls near the end
+  of a shorter listing, rebuilds the workbench, clicks a visible row, and waits
+  for the file to open. It checks row hit coordinates, stable scroll position,
+  retained sidebar width and divider release/blur behavior. The previous pin
+  failed with an offset change from -245 to -225; the new pin passes.
+- Context menus consume wheel packets without closing, and survive repeated
+  notifications of the same window size. Changed size, focus loss, Escape and
+  outside clicks still dismiss them. Core tests cover zero/nonzero wheel packets,
+  all trackpad phases, resize, redraw and existing menu activation behavior.
+- Kureha: 120 library + 109 application tests passed; 10 optional/manual tests ignored.
+- ScarletUI: 727 core tests passed, five ignored; all eight list tests passed
+  after adding the horizontal-layout/real-resize regression (728 unique passing tests).
+- These are mounted pipeline tests. Native macOS trackpad replay was not verified.
+- The locked, offline macOS release build passed.
