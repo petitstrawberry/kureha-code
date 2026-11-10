@@ -4,21 +4,19 @@ use kureha_code::{
     workspace::{Bindings, DocumentId, TabId, Workspace},
 };
 use scarlet_ui::{
-    Event, KeyCode, MenuBarModel, MenuEntry, MenuItemModel, PlatformWindow, WindowContext,
-    WindowId,
     clipboard::{ClipboardHandle, TextClipboard},
     file_dialog::{FileDialog, FileDialogHandle, FileDialogMode, FileDialogOutcome},
     generate_state_id, hstack, if_view,
     prelude::*,
-    scenes, vstack,
+    scenes, vstack, Event, KeyCode, MenuBarModel, MenuEntry, MenuItemModel, PlatformWindow,
+    WindowContext, WindowId,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
-        mpsc,
+        mpsc, Arc, Mutex,
     },
     thread,
 };
@@ -31,8 +29,10 @@ mod markdown_ui;
 mod markdown_view;
 mod navigation_ui;
 mod popup;
+mod preferences;
 mod preview;
 mod project_ui;
+mod settings_ui;
 mod tab_drag;
 mod terminal_ui;
 mod theme_settings;
@@ -80,6 +80,9 @@ struct ClipboardTarget {
     selection: TextSelection,
 }
 enum ClipboardJob {
+    TextCopy {
+        handle: ClipboardHandle<()>,
+    },
     TerminalCopy {
         handle: ClipboardHandle<()>,
     },
@@ -120,6 +123,8 @@ struct Runtime {
     minimap: kureha_code::minimap::MinimapCache,
     pane_bindings: BTreeMap<(DocumentId, usize), Bindings>,
     group_tabs: Vec<Vec<TabId>>,
+    settings_tab: Option<TabId>,
+    deferred_preferences: Option<(kureha_code::theme::Theme, preferences::Preferences)>,
     save_all: Vec<DocumentId>,
 }
 #[derive(Clone)]
@@ -130,6 +135,9 @@ struct App {
     editor_font: Option<FontStack>,
     theme: State<kureha_code::theme::Theme>,
     theme_settings: Arc<Mutex<Option<theme_settings::Watcher>>>,
+    preferences: State<preferences::Preferences>,
+    settings_ui: settings_ui::Settings,
+    workbench_focus: State<bool>,
     minimap_visible: State<bool>,
     panel_visible: State<bool>,
     panel_fraction: State<f32>,
@@ -200,6 +208,9 @@ impl App {
                 kureha_code::theme::preset("kureha").unwrap(),
             ),
             theme_settings: Arc::new(Mutex::new(None)),
+            preferences: State::new(generate_state_id(), Default::default()),
+            settings_ui: settings_ui::Settings::new(),
+            workbench_focus: State::new(generate_state_id(), true),
             minimap_visible: State::new(generate_state_id(), true),
             panel_visible: State::new(generate_state_id(), false),
             panel_fraction: State::new(generate_state_id(), 0.70),
@@ -251,6 +262,7 @@ impl App {
     }
     fn toggle_minimap(&self) {
         self.minimap_visible.update(|shown| *shown = !*shown);
+        self.change_preferences(preferences::Change::Minimap(self.minimap_visible.get()));
     }
     fn changed(&self) {
         self.chrome.update(|value| *value = value.wrapping_add(1));
@@ -400,7 +412,9 @@ impl App {
         let group = self.focused_group.get();
         let exists = {
             let mut rt = self.runtime.lock().unwrap();
-            let exists = rt.document_for_tab(id).is_some() || self.terminal.for_tab(id).is_some();
+            let exists = rt.settings_tab == Some(id)
+                || rt.document_for_tab(id).is_some()
+                || self.terminal.for_tab(id).is_some();
             if exists && !rt.group_tabs[group].contains(&id) {
                 rt.group_tabs[group].push(id);
             }
@@ -491,6 +505,9 @@ impl App {
     }
     fn request_close(&self, tab: Option<TabId>) {
         if let Some(id) = tab {
+            if self.close_settings_tab(id) {
+                return;
+            }
             if self.close_terminal_tab(id) {
                 return;
             }
@@ -1153,9 +1170,11 @@ impl App {
         let completion = {
             let mut rt = self.runtime.lock().unwrap();
             let result = match rt.clipboard_job.as_ref() {
-                Some(ClipboardJob::Copy { handle, .. } | ClipboardJob::TerminalCopy { handle }) => {
-                    handle.try_take().map(|r| r.map(|()| None))
-                }
+                Some(
+                    ClipboardJob::Copy { handle, .. }
+                    | ClipboardJob::TerminalCopy { handle }
+                    | ClipboardJob::TextCopy { handle },
+                ) => handle.try_take().map(|r| r.map(|()| None)),
                 Some(ClipboardJob::Paste { handle, .. })
                 | Some(ClipboardJob::TerminalPaste { handle, .. }) => handle.try_take(),
                 None => None,
@@ -1166,6 +1185,7 @@ impl App {
             return;
         };
         let message = match (job, result) {
+            (ClipboardJob::TextCopy { .. }, Ok(_)) => "Copied to desktop clipboard",
             (ClipboardJob::TerminalCopy { .. }, Ok(_)) => "Copied terminal output",
             (ClipboardJob::Copy { cut: false, .. }, Ok(_)) => "Copied to desktop clipboard",
             (ClipboardJob::Copy { target, .. }, Ok(_)) => {
@@ -1454,6 +1474,7 @@ impl View for App {
     fn listenables(&self) -> Vec<&dyn Listenable> {
         let mut listenables: Vec<&dyn Listenable> = vec![
             &self.chrome,
+            &self.preferences,
             &self.panes,
             &self.pane_layout,
             &self.focused_group,
@@ -1465,6 +1486,7 @@ impl View for App {
             &self.panel_fraction,
             &self.terminal.revision,
         ];
+        listenables.extend(self.settings_ui.listenables());
         listenables.extend(self.nav.listenables());
         listenables.extend(self.project.listenables());
         listenables
@@ -1536,6 +1558,9 @@ impl Application for App {
     fn on_idle(&mut self) {
         self.poll_terminals();
         self.poll_theme_settings();
+        if self.runtime.lock().unwrap().settings_tab.is_some() {
+            self.settings_ui.refresh_license_list();
+        }
         self.poll_menu();
         self.poll();
         self.poll_navigation();

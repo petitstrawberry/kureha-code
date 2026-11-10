@@ -550,7 +550,7 @@ impl App {
         } else {
             Either::B(VStack::new(()))
         };
-        self.tab_region(Surface::section(vstack! {
+        self.tab_region(TabPane::new(
             hstack! {
                 ScrollView::new(HStack::new(super::ui::ViewCollection(sessions)).spacing(4.0)).horizontal()
                     .content_size(width, 30.0).scroll_to_horizontal_range(selected.0, selected.1).frame(f32::INFINITY, 32.0),
@@ -562,7 +562,7 @@ impl App {
             Surface::section(body.padding(10.0).background(background)).fill(background).corner_radius(12.0).clip_content(true)
                 .frame(f32::INFINITY, f32::INFINITY).padding_insets(EdgeInsets::new(6.0, 0.0, 6.0, 6.0))
                 .on_event_capture(move |event| { if matches!(event, Event::Mouse(MouseEvent::ButtonPressed { button: MouseButton::Left, .. })) { focus.terminal.focus(); focus.project.blur(); } false }),
-        }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY)).surface_style(theme.chrome_style()).corner_radius(16.0).clip_content(true), tab_drag::RegionId::Panel)
+        ).surface_style(theme.chrome_style()).border_color(colors.border), tab_drag::RegionId::Panel)
     }
 }
 

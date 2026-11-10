@@ -351,11 +351,15 @@ impl App {
         .frame(f32::INFINITY, f32::INFINITY)
         .background(theme.workspace_background()), self.navigation_overlay())).alignment(Alignment::TopLeading)
         .frame(f32::INFINITY,f32::INFINITY)
+        .focusable(self.workbench_focus.clone())
         .on_event_capture(move |event| {
             if keys.tab_drag_event(event) { return true; }
             let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event else {
                 return false;
             };
+            if modifiers.primary() && *keycode == KeyCode::Char(',') {
+                keys.open_settings(); return true;
+            }
             if keys.navigation_key(*keycode,*modifiers) { return true; }
             if keys.nav.is_open() { return false; }
             if modifiers.primary() && modifiers.shift && matches!(keycode, KeyCode::Char('f'|'F')) {
@@ -467,17 +471,20 @@ impl App {
         )
     }
     fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
-        self.tab_region(Surface::section(vstack! {
+        self.tab_region(TabPane::new(
             self.tabs_view(group),
-            match self.group_id(group).filter(|tab| self.terminal.for_tab(*tab).is_some()) {
+            if self.group_id(group).is_some_and(|id| self.is_settings_tab(id)) {
+                Either::A(self.settings_view(group))
+            } else { Either::B(match self.group_id(group).filter(|tab| self.terminal.for_tab(*tab).is_some()) {
                 Some(tab) => Either::A(self.terminal_tab_view(tab, group)),
                 None => Either::B(match self.group_document(group) {
                     Some(id) => Either::A(self.document_view(id, group)),
                     None => Either::B(VStack::new(()).frame(f32::INFINITY,f32::INFINITY).background(self.theme.get().editor_colors().background)),
                 }),
-            },
-        }.spacing(0.0).frame(f32::INFINITY,f32::INFINITY))
-            .surface_style(self.theme.get().chrome_style()).corner_radius(16.0).clip_content(true)
+            }) },
+        )
+            .surface_style(self.theme.get().chrome_style())
+            .border_color(self.theme.get().colors().border)
             .key(format!("editor-group-{group}")), tab_drag::RegionId::Group(group))
     }
     fn tabs_view(&self, group: usize) -> impl View + Clone + use<> {
@@ -489,6 +496,8 @@ impl App {
                 if let Some(doc) = rt.document_for_tab(*tab).and_then(|id| rt.workspace.get(id)) {
                     let saving = matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id, .. }) if *id == doc.id);
                     Some((*tab, doc.path.clone(), format!("{}{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if rt.markdown.tabs.contains_key(tab) { " · Preview" } else { "" }, if saving { " …" } else { "" }), false))
+                } else if rt.settings_tab == Some(*tab) {
+                    Some((*tab, None, "Settings".into(), false))
                 } else {
                     self.terminal.for_tab(*tab).map(|session| (*tab, None, terminal_ui::session_label(session.id), true))
                 }
@@ -502,7 +511,7 @@ impl App {
             left += width + 4.0;
             let select = self.clone();
             let close = self.clone();
-            let icon = if terminal { file_icons::FileIcon { icon: Icon::Terminal, color: theme.colors().foreground } } else { file_icons::for_path(path.as_deref()).themed(&theme, Some(id) == active) };
+            let icon = if self.is_settings_tab(id) { file_icons::FileIcon { icon: Icon::Settings, color: theme.colors().foreground } } else if terminal { file_icons::FileIcon { icon: Icon::Terminal, color: theme.colors().foreground } } else { file_icons::for_path(path.as_deref()).themed(&theme, Some(id) == active) };
             let content = hstack! {
                 Button::new(label).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).font_size(13.0).padding(7.0)
                     .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Pixels(18)).icon_style(icon.style())
@@ -818,7 +827,13 @@ impl App {
         .frame(f32::INFINITY, f32::INFINITY)
         .surface_style(theme.chrome_style())
     }
-    fn item(&self, id: &str, label: &str, shortcut: &str, action: fn(&App)) -> MenuEntry {
+    pub(super) fn item(
+        &self,
+        id: &str,
+        label: &str,
+        shortcut: &str,
+        action: fn(&App),
+    ) -> MenuEntry {
         let app = self.clone();
         let shortcut = if cfg!(target_os = "macos") && !matches!(id, "completion" | "go-to-line") {
             shortcut.replacen("Ctrl+", "Cmd+", 1)
@@ -835,6 +850,9 @@ impl App {
     }
     pub(super) fn menu(&self) -> MenuBarModel {
         MenuBarModel::new(vec![
+            MenuItemModel::app().children(vec![
+                self.item("settings", "Settings…", "Ctrl+,", App::open_settings),
+            ]),
             MenuItemModel::new("file", "File").children(vec![
                 self.item("new", "New File", "Ctrl+N", App::new_document),
                 self.item("open", "Open File…", "Ctrl+O", |a| {

@@ -802,3 +802,133 @@ The locked, offline macOS release build passed.
   published; the documented Scarlet path accepts a separately built artifact.
 - Developer ID signing, notarization and macOS document-open event handling are
   outside this integration. The generated app uses local ad-hoc signing.
+
+## Settings and acknowledgements — 2026-11-10
+
+Settings is an ordinary workbench tab with the existing tab identity and drag/split
+paths. It owns no text document and closing it does not create an Untitled file.
+The existing ScarletUI `MenuItemModel::app()` adds Settings to the macOS application menu. Acknowledgements is a section
+inside Settings, without a separate application-menu item. Open Settings File remains in Settings and the
+command palette. Settings sections use ScarletUI `TabView`; acknowledgements
+uses an inline searchable `ListView` beside the notice text.
+
+Confirmed color/code themes, code font size and minimap visibility are saved in
+`settings.toml`, next to `theme.toml`. Writes run on the theme worker, preserve TOML
+comments, follow existing symlinks and replace files atomically. Invalid settings
+are retained with an error. Shutdown drains queued saves. Live theme preview and
+cancel do not write settings; delayed save acknowledgements wait for a preview to
+close and cannot overwrite a newer choice.
+
+Generate the checked-in offline license catalogue after updating dependencies:
+
+```sh
+nix develop --command python3 scripts/generate-acknowledgements.py
+python3 -m unittest discover -s tests -p 'test_acknowledgements.py'
+```
+
+`cargo-about` is supplied by the pinned flake. It resolves dependency licenses with
+`generate --locked --fail --format json`; `about.toml` records accepted licenses
+and checksum-verified repository LICENSE clarifications for Scarlet workspace
+crates whose manifests omit license metadata. The small adapter only reshapes
+that report and adds the bundled font/theme notices. No custom license discovery
+or download logic remains. The catalogue is embedded in the executable and copied
+into packaged resources, so reading it does not require a network connection.
+
+Regressions cover settings-tab reuse/moves/splits/closing without documents,
+read-only notices (including IME), theme preview/confirmation, persistence across
+restart, malformed input, atomic external edits, symlinks and shutdown flushing.
+CPU previews of Kureha/Monokai settings and notices are in `artifacts/settings/`.
+
+The final suite passed 242 Rust tests (12 optional tests ignored), four packaging
+tests and the catalogue check. macOS SGFX/WGPU validation used a disposable config:
+Settings opened in the main window from the application menu, Monokai selection
+was saved, and a fresh packaged launch restored it. Cmd+, opened Settings from an
+empty workbench and Cmd+W closed only that tab. Acknowledgements search and Enter
+selection displayed the matching notice. The workbench now retains a focusable
+ancestor so shortcuts work even when no text editor is focused. Windows/Linux/
+Scarlet runtime behavior of this settings change was not exercised.
+
+The TabView/inline-list follow-up passed 12 focused settings tests and renderer
+previews in Kureha/Monokai. Native macOS interaction verified section switching,
+inline search with Enter to select a notice, and the simplified application menu.
+
+The bundled-asset follow-up adds a dedicated Gruvbox notice with pinned upstream
+MIT declarations and author attribution. Upstream supplies no standalone LICENSE
+or copyright notice; the notice explicitly identifies the standard permission and
+warranty terms supplied from SPDX rather than presenting them as an upstream file.
+All six Python tests passed, including complete theme/font notice coverage, Tabler
+copyright attribution, and notice/catalogue inclusion in an Appcoat package. The
+release macOS package passed signature verification; its notices match the source
+files and the executable embeds the Gruvbox attribution and provenance.
+
+
+## Shared tab pane framing — 2026-11-10
+
+ScarletUI `TabPane::new(bar, content)` now owns the editor groups and panel frame.
+It composes the shared Surface renderer with separately clipped bar/content slots,
+then paints the foreground border after both. Kureha supplies theme colors and
+slots rather than assembling the outer radius, clipping and border itself.
+The settings TabView has 16 logical pixels of space above it.
+
+ScarletUI's 23 TabView/TabPane tests and API doctest passed. The new pixel regression
+covers opaque slot backgrounds, continuous outer edges, rounded clipping and
+stable child identities through resize/rebuild. Kureha's 122 binary tests passed
+(10 optional tests ignored), including tab splitting/moving, terminal/panel and
+settings behavior. Light/dark settings previews are in `artifacts/settings-tab-pane/`.
+
+The packaged macOS app was also checked with the native SGFX/WGPU backend:
+Appearance/Acknowledgements switched within the shared frame, the top spacing was
+visible, and the application menu contained Settings without an Acknowledgements
+item. All six Python catalogue/packaging tests and package signature verification
+passed. The packaged build is `dist/tab-pane/Kureha Code.app`.
+
+
+## Control label baselines — 2026-11-10
+
+The ScarletUI pin includes the shared Button/TabView/Select baseline calculation
+from floating-point ascent and descent, following Qt's single-line layout model.
+CPU and SGFX snap the translated baseline once; text damage bounds, tile origins
+and retained replay anchors use the same calculation. Glyph ink does not influence
+label placement, and no per-label pixel offset is applied.
+
+The dependency passed 736 core tests (5 optional tests ignored) and 136 SGFX
+renderer tests. Kureha's six settings tests (including the manual light/dark
+preview fixture) passed against the final revision. Preview images are in
+`artifacts/settings-baseline-final/`; the final package is
+`dist/baseline-final/Kureha Code.app`.
+
+The final native macOS SGFX/WGPU package was inspected on Appearance and
+Acknowledgements, including notice scrolling and repaint. All six Python checks
+and package signature verification passed. The test app used a disposable config.
+
+## Acknowledgements row alignment — 2026-11-10
+
+The row's `Text.padding(6).frame(INFINITY, 32)` placed a 16px measured line at
+y=6; `frame` constrains size but does not align its child. Its line center was
+y=14 inside a row centered at y=16. The label now uses leading horizontal and
+center vertical alignment, with horizontal padding only. No font-specific or
+glyph-ink offset is used, and the row height and font size remain unchanged.
+
+`license_labels_center_the_measured_line_including_mixed_japanese` checks the
+actual element layout for Latin, Japanese, mixed text, accents and descenders.
+`license_alignment_guides` renders those same Text objects before/after at 1x
+and 2x. Blue marks the row center, green the measured Text box, and red the
+logical baseline (the renderer snaps it to the physical pixel grid). Coordinates
+are saved alongside the PNGs in `artifacts/settings-alignment/alignment.csv`.
+The corrected first row has top/bottom y=8/24 and baseline y=20.568 within the
+32px row; the previous values were y=6/22 and y=18.568. All eight settings tests,
+including mixed-text guides and light/dark page renders, passed.
+The release build `dist/alignment/Kureha Code.app` passed signature verification;
+the corrected list placement was also inspected in the native macOS SGFX/WGPU
+window. Mixed-script guide images use the CPU backend with the same Text layout.
+
+The ScarletUI pin also includes cached Rustybuzz shaping and fractional glyph
+placement from petitstrawberry/scarlet-ui#99. That revision passed 740 core and
+136 SGFX tests; Kureha passed 122 binary and 120 library tests before the row
+alignment change. The typography work does not resolve the remaining difference
+between the glass rim behind the tab strip and behind opaque pane content.
+
+```sh
+KUREHA_SETTINGS_PREVIEW=artifacts/settings-alignment \
+  cargo test --bin kureha-code settings_ui::tests -- --include-ignored
+```

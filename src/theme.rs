@@ -235,6 +235,12 @@ impl Theme {
         Theme::Custom(std::sync::Arc::new(combined))
     }
 
+    pub fn with_font_size(&self, size: f32) -> Theme {
+        let mut combined = custom::definition(self);
+        combined.font_size = size.clamp(8.0, 48.0);
+        Theme::Custom(std::sync::Arc::new(combined))
+    }
+
     /// Preserves document, selection, scroll bindings, and decorations.
     pub fn style_text_view(&self, view: TextView) -> TextView {
         let c = self.editor_colors();
@@ -352,7 +358,7 @@ mod tests {
 }
 
 mod custom;
-pub use custom::{CustomTheme, THEME_TEMPLATE, parse_theme, theme_path};
+pub use custom::{parse_theme, theme_path, CustomTheme, THEME_TEMPLATE};
 
 mod presets;
-pub use presets::{PRESETS, preset};
+pub use presets::{preset, PRESETS};
