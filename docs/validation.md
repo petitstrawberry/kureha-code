@@ -881,3 +881,22 @@ Appearance/Acknowledgements switched within the shared frame, the top spacing wa
 visible, and the application menu contained Settings without an Acknowledgements
 item. All six Python catalogue/packaging tests and package signature verification
 passed. The packaged build is `dist/tab-pane/Kureha Code.app`.
+
+
+## Control label baselines — 2026-11-10
+
+The ScarletUI pin includes the shared Button/TabView/Select baseline calculation
+from floating-point ascent and descent, following Qt's single-line layout model.
+CPU and SGFX snap the translated baseline once; text damage bounds, tile origins
+and retained replay anchors use the same calculation. Glyph ink does not influence
+label placement, and no per-label pixel offset is applied.
+
+The dependency passed 736 core tests (5 optional tests ignored) and 136 SGFX
+renderer tests. Kureha's six settings tests (including the manual light/dark
+preview fixture) passed against the final revision. Preview images are in
+`artifacts/settings-baseline-final/`; the final package is
+`dist/baseline-final/Kureha Code.app`.
+
+The final native macOS SGFX/WGPU package was inspected on Appearance and
+Acknowledgements, including notice scrolling and repaint. All six Python checks
+and package signature verification passed. The test app used a disposable config.
