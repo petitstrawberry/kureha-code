@@ -205,7 +205,9 @@ def publish(directory, prerelease):
             if sha(path) != sha(downloaded / path.name):
                 raise ValueError("published asset differs: " + path.name)
     # The workflow commits only this file after all uploaded assets are verified.
-    (ROOT / "platforms/scarlet/bundle.toml").write_bytes((directory / "bundle.toml").read_bytes())
+    bundle = ROOT / "platforms/scarlet/bundle.toml"
+    bundle.parent.mkdir(parents=True, exist_ok=True)
+    bundle.write_bytes((directory / "bundle.toml").read_bytes())
 
 
 def main(argv=None):

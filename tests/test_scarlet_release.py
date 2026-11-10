@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import shutil
 import struct
 import tarfile
 import tempfile
@@ -131,6 +132,7 @@ class ScarletReleaseTests(unittest.TestCase):
                 record = json.loads(path.read_text())
                 record[flag] = True
                 release.write_json(path, record)
+
                 output = self.root / flag
                 release.assemble(self.inputs, self.version, output)
                 with patch.object(release.subprocess, "check_output", return_value="a" * 40), \
@@ -140,6 +142,25 @@ class ScarletReleaseTests(unittest.TestCase):
                     run.assert_not_called()
                 record[flag] = False
                 release.write_json(path, record)
+
+    def test_first_publish_creates_bundle_directory_after_asset_verification(self):
+        output = self.assemble()
+        checkout = self.root / "fresh checkout"
+        checkout.mkdir()
+
+        def run(command, **kwargs):
+            if command[:3] == ["gh", "release", "download"]:
+                downloaded = Path(command[command.index("--dir") + 1])
+                for source in output.iterdir():
+                    shutil.copyfile(source, downloaded / source.name)
+
+        with patch.object(release, "ROOT", checkout), \
+                patch.object(release.subprocess, "check_output", return_value="a" * 40), \
+                patch.object(release.subprocess, "run", side_effect=run) as commands:
+            release.publish(output, prerelease=True)
+        self.assertEqual(commands.call_count, 2)
+        self.assertEqual((checkout / "platforms/scarlet/bundle.toml").read_bytes(),
+                         (output / "bundle.toml").read_bytes())
 
 
 if __name__ == "__main__":
