@@ -43,3 +43,7 @@ to = "licenses/JETBRAINS_MONO_NERD_FONT_LICENSE.txt"
 [[resources]]
 source = "assets/themes"
 to = "themes"
+
+[[resources]]
+source = "assets/acknowledgements.json"
+to = "licenses/acknowledgements.json"

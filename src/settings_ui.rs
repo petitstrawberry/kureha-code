@@ -1,0 +1,493 @@
+use super::preferences::Change;
+use super::*;
+use std::sync::OnceLock;
+
+#[derive(Clone)]
+pub(super) struct Settings {
+    page: State<usize>,
+    license: State<usize>,
+    license_text: State<String>,
+    document: State<Arc<kureha_code::markdown::Document>>,
+    position: Arc<Mutex<crate::markdown_view::PreviewPosition>>,
+}
+impl Settings {
+    pub fn new() -> Self {
+        Self {
+            page: state(0),
+            license: state(0),
+            license_text: state(String::new()),
+            document: state(Arc::new(Default::default())),
+            position: Arc::new(Mutex::new(Default::default())),
+        }
+    }
+    pub fn listenables(&self) -> Vec<&dyn Listenable> {
+        vec![&self.page, &self.license, &self.document]
+    }
+    pub(super) fn show_license(&self, index: usize) {
+        if let Some(entry) = acknowledgements().get(index) {
+            self.license.set(index);
+            self.license_text.set(entry.1.clone());
+            use kureha_code::markdown::{Block, Document, Span};
+            let blocks = entry
+                .1
+                .split("\n\n")
+                .enumerate()
+                .map(|(line, text)| Block {
+                    cells: vec![vec![Span {
+                        text: text.to_owned(),
+                        style: Default::default(),
+                    }]],
+                    source_line: line,
+                    ..Default::default()
+                })
+                .collect();
+            self.document.set(Arc::new(Document {
+                blocks: Arc::new(blocks),
+                ..Default::default()
+            }));
+            *self.position.lock().unwrap() = Default::default();
+        }
+    }
+}
+fn state<T: Clone + Send + Sync + 'static>(value: T) -> State<T> {
+    State::new(generate_state_id(), value)
+}
+pub(super) fn acknowledgements() -> &'static Vec<(String, String)> {
+    static ENTRIES: OnceLock<Vec<(String, String)>> = OnceLock::new();
+    ENTRIES.get_or_init(|| {
+        let catalogue: serde_json::Value =
+            serde_json::from_str(include_str!("../assets/acknowledgements.json"))
+                .expect("generated license catalogue");
+        let texts = catalogue["texts"].as_array().unwrap();
+        catalogue["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                let label = format!(
+                    "{} {}",
+                    entry["name"].as_str().unwrap(),
+                    entry["version"].as_str().unwrap()
+                )
+                .trim()
+                .to_owned();
+                let mut body = format!(
+                    "{label}\n{}\n{}\n\n",
+                    entry["license"].as_str().unwrap(),
+                    entry["source"].as_str().unwrap()
+                );
+                for index in entry["texts"].as_array().unwrap() {
+                    body.push_str(texts[index.as_u64().unwrap() as usize].as_str().unwrap());
+                    body.push_str("\n\n");
+                }
+                (label, body)
+            })
+            .collect()
+    })
+}
+impl App {
+    pub(super) fn is_settings_tab(&self, id: TabId) -> bool {
+        self.runtime.lock().unwrap().settings_tab == Some(id)
+    }
+    fn show_settings_tab(&self) {
+        if self.blocked() {
+            return;
+        }
+        self.close_navigation();
+        self.dismiss_language_panel();
+        let (id, existing) = {
+            let mut rt = self.runtime.lock().unwrap();
+            let id = match rt.settings_tab {
+                Some(id) => id,
+                None => {
+                    let id = rt.workspace.new_tab_id();
+                    rt.settings_tab = Some(id);
+                    id
+                }
+            };
+            let focused = self.focused_group.get();
+            let existing = if rt.group_tabs[focused].contains(&id) {
+                Some(focused)
+            } else {
+                rt.group_tabs.iter().position(|tabs| tabs.contains(&id))
+            };
+            (id, existing)
+        };
+        self.focus_group(existing.unwrap_or(self.focused_group.get()));
+        self.activate(id);
+        self.invalidate_clipboard();
+        self.update_position();
+        self.changed();
+    }
+    pub(super) fn open_settings(&self) {
+        self.settings_ui.page.set(0);
+        self.show_settings_tab();
+    }
+    pub(super) fn open_acknowledgements(&self) {
+        self.settings_ui.page.set(1);
+        self.settings_ui
+            .show_license(self.settings_ui.license.get());
+        self.show_settings_tab();
+    }
+    pub(super) fn close_settings_tab(&self, id: TabId) -> bool {
+        if !self.is_settings_tab(id) {
+            return false;
+        }
+        if self.blocked() {
+            return true;
+        }
+        let group = self.focused_group.get();
+        let next = {
+            let mut rt = self.runtime.lock().unwrap();
+            let tabs = &mut rt.group_tabs[group];
+            let Some(index) = tabs.iter().position(|tab| *tab == id) else {
+                return true;
+            };
+            tabs.remove(index);
+            tabs.get(index.min(tabs.len().saturating_sub(1))).copied()
+        };
+        if self.group_id(group) == Some(id) {
+            self.panes.update(|panes| panes[group] = next);
+            if next.is_none() {
+                self.retire_empty_group(group);
+            }
+            self.focus_group_terminal(self.focused_group.get());
+        }
+        self.invalidate_clipboard();
+        self.update_position();
+        self.changed();
+        true
+    }
+    pub(super) fn settings_view(&self, group: usize) -> impl View + Clone + use<> {
+        let colors = self.theme.get().colors();
+        let appearance = self.clone();
+        let licenses = self.clone();
+        let navigation = hstack! {
+            Button::new("Appearance").header_style().text_color(colors.foreground)
+                .background_color(if self.settings_ui.page.get()==0 {colors.selection} else {Color::TRANSPARENT})
+                .on_click(move || { appearance.settings_ui.page.set(0); }),
+            Button::new("Acknowledgements").header_style().text_color(colors.foreground)
+                .background_color(if self.settings_ui.page.get()==1 {colors.selection} else {Color::TRANSPARENT})
+                .on_click(move || { licenses.settings_ui.page.set(1); licenses.settings_ui.show_license(licenses.settings_ui.license.get()); }),
+            Spacer::new(),
+        }.spacing(8.0).padding_insets(EdgeInsets::new(20.0, 12.0, 20.0, 0.0));
+        let body = if self.settings_ui.page.get() == 0 {
+            Either::A(self.appearance_settings())
+        } else {
+            Either::B(self.license_settings())
+        };
+        let focus = self.clone();
+        vstack! { navigation, body }
+            .spacing(0.0)
+            .frame(f32::INFINITY, f32::INFINITY)
+            .background(colors.background)
+            .on_event_capture(move |event| {
+                if matches!(
+                    event,
+                    Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })
+                ) {
+                    focus.focus_group(group);
+                }
+                false
+            })
+    }
+    fn appearance_settings(&self) -> impl View + Clone + use<> {
+        let theme = self.theme.get();
+        let colors = theme.colors();
+        let preferences = self.preferences.get();
+        let color_app = self.clone();
+        let code_app = self.clone();
+        let follow = self.clone();
+        let custom = self.clone();
+        let smaller = self.clone();
+        let larger = self.clone();
+        let reset_size = self.clone();
+        let minimap_app = self.clone();
+        let file_app = self.clone();
+        let custom_app = self.clone();
+        let button = |label: String| {
+            Button::new(label)
+                .header_style()
+                .text_color(colors.foreground)
+                .background_color(colors.selection)
+                .font_size(13.0)
+        };
+        let label = |text: &str| Text::new(text).font_size(13.0).color(colors.muted);
+        let size = theme.editor_font_size();
+        ScrollView::new(vstack! {
+            vstack! {
+                label("Color theme"),
+                hstack! {
+                button(theme.name().into()).on_click(move || color_app.show_theme_picker(false)),
+                Button::new("Use Custom Theme").header_style().text_color(colors.muted).background_color(Color::TRANSPARENT)
+                    .enabled(preferences.color_theme.is_some()).on_click(move || custom.change_preferences(Change::Color(None))),
+                }.spacing(12.0),
+            }.alignment(Alignment::Leading).spacing(6.0),
+            vstack! {
+                label("Code & terminal"),
+                hstack! {
+                button(preferences.code_theme.clone().unwrap_or_else(|| "Follow color theme".into()))
+                    .on_click(move || code_app.show_theme_picker(true)),
+                Button::new("Reset").header_style().text_color(colors.muted).background_color(Color::TRANSPARENT)
+                    .enabled(preferences.code_theme.is_some()).on_click(move || follow.change_preferences(Change::Code(None))),
+                }.spacing(12.0),
+            }.alignment(Alignment::Leading).spacing(6.0),
+            vstack! {
+                label("Code font size"),
+                hstack! {
+                button("−".into()).on_click(move || smaller.change_preferences(Change::FontSize(Some((size-1.0).max(8.0))))),
+                Text::new(format!("{size} px")).font_size(13.0).color(colors.foreground),
+                button("+".into()).on_click(move || larger.change_preferences(Change::FontSize(Some((size+1.0).min(48.0))))),
+                Button::new("Reset").header_style().text_color(colors.muted).background_color(Color::TRANSPARENT)
+                    .enabled(preferences.font_size.is_some()).on_click(move || reset_size.change_preferences(Change::FontSize(None))),
+                }.spacing(12.0),
+            }.alignment(Alignment::Leading).spacing(6.0),
+            vstack! {
+                label("Minimap"),
+                hstack! {
+                button(if self.minimap_visible.get() { "Visible" } else { "Hidden" }.into())
+                    .on_click(move || minimap_app.toggle_minimap()),
+                }.spacing(12.0),
+            }.alignment(Alignment::Leading).spacing(6.0),
+            hstack! {
+                Button::new("Open Settings File…").header_style().text_color(colors.accent).background_color(Color::TRANSPARENT)
+                    .on_click(move || file_app.open_preferences_file()),
+                Button::new("Edit Custom Theme…").header_style().text_color(colors.accent).background_color(Color::TRANSPARENT)
+                    .on_click(move || custom_app.open_theme_settings()),
+            }.spacing(8.0),
+        }.alignment(Alignment::Leading).spacing(16.0).padding(20.0)).frame(f32::INFINITY, f32::INFINITY)
+    }
+    fn license_settings(&self) -> impl View + Clone + use<> {
+        let colors = self.theme.get().colors();
+        let selected = self.clone();
+        let copy = self.clone();
+        let text = ScrollView::new(crate::markdown_view::MarkdownView {
+            document: self.settings_ui.document.get(),
+            theme: self.theme.get(),
+            font: self.document_font(),
+            position: self.settings_ui.position.clone(),
+            on_link: Arc::new(|_| {}),
+            on_scroll: Arc::new(|_| {}),
+        })
+        .scrollbar_color(colors.muted)
+        .frame(f32::INFINITY, f32::INFINITY)
+        .clip()
+        .key(format!("license-body-{}", self.settings_ui.license.get()));
+        vstack! {
+            hstack! {
+                Button::new(acknowledgements()[self.settings_ui.license.get()].0.clone()).header_style()
+                    .text_color(colors.foreground).background_color(colors.selection)
+                    .on_click(move || selected.show_license_picker()),
+                Spacer::new(),
+                Button::new("Copy").header_style().text_color(colors.foreground).background_color(colors.selection).on_click(move || {
+                    if let Some(service)=copy.clipboard_service() {
+                        let handle=service.write_text(copy.settings_ui.license_text.get());
+                        copy.runtime.lock().unwrap().clipboard_job=Some(ClipboardJob::TextCopy {handle});
+                    }
+                }),
+            },
+            text,
+        }.spacing(16.0).padding(24.0).frame(f32::INFINITY,f32::INFINITY)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use scarlet_ui::event::KeyEvent;
+    use scarlet_ui::pipeline::RenderingPipeline;
+    #[test]
+    fn settings_menu_uses_the_existing_application_menu_contract() {
+        let app = App::new();
+        for menu in [app.menu()] {
+            let application = menu
+                .items()
+                .iter()
+                .find(|item| item.id() == "__app__")
+                .unwrap();
+            let settings = application
+                .children_value()
+                .iter()
+                .find_map(|entry| match entry {
+                    MenuEntry::Item(item) if item.id() == "settings" => Some(item),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(settings.title(), "Settings…");
+            assert_eq!(
+                settings.shortcut_value(),
+                Some(if cfg!(target_os = "macos") {
+                    "Cmd+,"
+                } else {
+                    "Ctrl+,"
+                })
+            );
+        }
+    }
+    #[test]
+    fn settings_reuses_a_tab_and_moves_and_closes_independently_of_documents() {
+        let app = App::with_document();
+        let document = app.document_id();
+        app.open_settings();
+        let settings = app.group_id(0).unwrap();
+        assert_ne!(settings, document);
+        assert!(app.active_id().is_none());
+        app.open_settings();
+        app.open_acknowledgements();
+        assert_eq!(
+            app.runtime.lock().unwrap().group_tabs[0],
+            vec![document, settings]
+        );
+        assert_eq!(app.runtime.lock().unwrap().workspace.documents.len(), 1);
+        app.split_editor(false);
+        let right = app.focused_group.get();
+        assert_eq!(app.group_id(right), Some(settings));
+        app.close_active();
+        assert_eq!(app.pane_order(), vec![0]);
+        assert_eq!(app.group_id(0), Some(settings));
+        app.activate(document);
+        app.split_editor(true);
+        let bottom = app.focused_group.get();
+        app.move_tab_internal(settings, 0, bottom, usize::MAX, false);
+        app.focus_group(0);
+        app.open_settings();
+        assert_eq!(app.focused_group.get(), bottom);
+        assert_eq!(app.group_id(bottom), Some(settings));
+        app.save(); // Settings is not a text document and never prompts to save.
+        assert!(app.runtime.lock().unwrap().dialog.is_none());
+        app.close_active();
+        assert_eq!(app.group_id(bottom), Some(document));
+        app.close_active();
+        app.close_active();
+        assert!(app.runtime.lock().unwrap().workspace.documents.is_empty());
+        app.open_settings();
+        assert!(app.runtime.lock().unwrap().workspace.documents.is_empty());
+        app.close_active();
+        assert!(app.panes.get().iter().all(Option::is_none));
+    }
+    #[test]
+    fn settings_shortcuts_work_without_an_open_document() {
+        use scarlet_ui::event::KeyModifiers;
+        let app = App::new();
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new("Kureha Code", app.content())
+                .decorated(false)
+                .size(Size::new(1100.0, 760.0))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        let mut modifiers = KeyModifiers::empty();
+        if cfg!(target_os = "macos") {
+            modifiers.super_key = true;
+        } else {
+            modifiers.control = true;
+        }
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+            keycode: KeyCode::Char(','),
+            modifiers,
+        }));
+        assert!(app.group_id(0).is_some_and(|id| app.is_settings_tab(id)));
+        pipeline.set_root(
+            Window::new("Kureha Code", app.content())
+                .decorated(false)
+                .size(Size::new(1100.0, 760.0))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+            keycode: KeyCode::Char('w'),
+            modifiers,
+        }));
+        assert_eq!(app.group_id(0), None);
+        pipeline.teardown();
+    }
+    #[test]
+    fn license_page_blocks_typing_without_changing_the_editor() {
+        use scarlet_ui::event::{MouseButton, MouseEvent};
+        let app = App::with_document();
+        let id = app.document_id();
+        app.open_acknowledgements();
+        let original = app.settings_ui.license_text.get();
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new("Kureha Code", app.content())
+                .decorated(false)
+                .size(Size::new(1100.0, 760.0))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        pipeline.render().unwrap();
+        pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+            button: MouseButton::Left,
+            click_count: 1,
+            x: 400,
+            y: 260,
+        }));
+        pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+            button: MouseButton::Left,
+            click_count: 1,
+            x: 400,
+            y: 260,
+        }));
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c: 'X' }));
+        pipeline.handle_event(&Event::TextInputCommit {
+            context_id: 0,
+            serial: 1,
+            text: "日本語".into(),
+        });
+        assert_eq!(app.settings_ui.license_text.get(), original);
+        assert!(app.active_id().is_none());
+        assert_eq!(
+            app.runtime
+                .lock()
+                .unwrap()
+                .workspace
+                .get(id)
+                .unwrap()
+                .editor
+                .document
+                .as_str(),
+            ""
+        );
+        pipeline.teardown();
+    }
+    #[test]
+    #[ignore = "manual native settings preview"]
+    fn settings_preview() {
+        let dir = PathBuf::from(std::env::var_os("KUREHA_SETTINGS_PREVIEW").unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["kureha", "monokai"] {
+            let app = App::new();
+            app.set_theme(kureha_code::theme::preset(name).unwrap());
+            app.open_settings();
+            for page in [0, 1] {
+                app.settings_ui.page.set(page);
+                app.settings_ui.show_license(0);
+                let mut pipeline = RenderingPipeline::new();
+                pipeline.set_root(
+                    Window::new("Kureha Code", app.content())
+                        .decorated(false)
+                        .size(Size::new(1100.0, 760.0))
+                        .create_element(),
+                );
+                pipeline.layout_initial();
+                let buffer = pipeline.render().unwrap();
+                let rgb: Vec<u8> = buffer
+                    .data()
+                    .chunks_exact(4)
+                    .flat_map(|p| [p[2], p[1], p[0]])
+                    .collect();
+                image::save_buffer(
+                    dir.join(format!("settings-{name}-{page}.png")),
+                    &rgb,
+                    buffer.width(),
+                    buffer.height(),
+                    image::ColorType::Rgb8,
+                )
+                .unwrap();
+                pipeline.teardown();
+            }
+        }
+    }
+}

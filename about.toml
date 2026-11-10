@@ -1,0 +1,111 @@
+# Order selects one license when a dependency offers alternatives.
+accepted = [
+    "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib",
+    "Unicode-3.0", "BSL-1.0", "CC0-1.0", "CDLA-Permissive-2.0",
+    "Unlicense", "0BSD", "Apache-2.0 WITH LLVM-exception",
+]
+
+# These workspace crates inherit the repository MIT license, but their
+# manifests do not declare it. Verify the pinned source text by checksum.
+
+[gpu-raw.clarify]
+license = "MIT"
+[[gpu-raw.clarify.files]]
+path = "../../../LICENSE"
+checksum = "800c05070a6e73f3ddadcc00af8668989934e5c3398a24e200ed840fa2f7247b"
+
+[sbus.clarify]
+license = "MIT"
+[[sbus.clarify.files]]
+path = "../../../LICENSE"
+checksum = "800c05070a6e73f3ddadcc00af8668989934e5c3398a24e200ed840fa2f7247b"
+
+[sbus-client.clarify]
+license = "MIT"
+[[sbus-client.clarify.files]]
+path = "../../../LICENSE"
+checksum = "800c05070a6e73f3ddadcc00af8668989934e5c3398a24e200ed840fa2f7247b"
+
+[scarlet-abi.clarify]
+license = "MIT"
+[[scarlet-abi.clarify.files]]
+path = "../../../LICENSE"
+checksum = "800c05070a6e73f3ddadcc00af8668989934e5c3398a24e200ed840fa2f7247b"
+
+[scarlet-desktop-config.clarify]
+license = "MIT"
+[[scarlet-desktop-config.clarify.files]]
+path = "../../../LICENSE"
+checksum = "800c05070a6e73f3ddadcc00af8668989934e5c3398a24e200ed840fa2f7247b"
+
+[scarlet-fs.clarify]
+license = "MIT"
+[[scarlet-fs.clarify.files]]
+path = "../../../LICENSE"
+checksum = "800c05070a6e73f3ddadcc00af8668989934e5c3398a24e200ed840fa2f7247b"
+
+[scarlet-os.clarify]
+license = "MIT"
+[[scarlet-os.clarify.files]]
+path = "../../../LICENSE"
+checksum = "800c05070a6e73f3ddadcc00af8668989934e5c3398a24e200ed840fa2f7247b"
+
+[scarlet-scroll-motion.clarify]
+license = "MIT"
+[[scarlet-scroll-motion.clarify.files]]
+path = "../../LICENSE"
+checksum = "3c605c2ad882b01f936d8746ee083714fa8c425df776b51eb12f4c95c8468cdf"
+
+[scarlet-sys.clarify]
+license = "MIT"
+[[scarlet-sys.clarify.files]]
+path = "../../../LICENSE"
+checksum = "800c05070a6e73f3ddadcc00af8668989934e5c3398a24e200ed840fa2f7247b"
+
+[scarlet-ui.clarify]
+license = "MIT"
+[[scarlet-ui.clarify.files]]
+path = "../../LICENSE"
+checksum = "3c605c2ad882b01f936d8746ee083714fa8c425df776b51eb12f4c95c8468cdf"
+
+[scarlet-ui-core.clarify]
+license = "MIT"
+[[scarlet-ui-core.clarify.files]]
+path = "../../LICENSE"
+checksum = "3c605c2ad882b01f936d8746ee083714fa8c425df776b51eb12f4c95c8468cdf"
+
+[scarlet-ui-macros.clarify]
+license = "MIT"
+[[scarlet-ui-macros.clarify.files]]
+path = "../../LICENSE"
+checksum = "3c605c2ad882b01f936d8746ee083714fa8c425df776b51eb12f4c95c8468cdf"
+
+[scarlet-ui-platform-sws.clarify]
+license = "MIT"
+[[scarlet-ui-platform-sws.clarify.files]]
+path = "../../LICENSE"
+checksum = "3c605c2ad882b01f936d8746ee083714fa8c425df776b51eb12f4c95c8468cdf"
+
+[scarlet-ui-platform-winit.clarify]
+license = "MIT"
+[[scarlet-ui-platform-winit.clarify.files]]
+path = "../../LICENSE"
+checksum = "3c605c2ad882b01f936d8746ee083714fa8c425df776b51eb12f4c95c8468cdf"
+
+[scarlet-ui-renderer-sgfx.clarify]
+license = "MIT"
+[[scarlet-ui-renderer-sgfx.clarify.files]]
+path = "../../LICENSE"
+checksum = "3c605c2ad882b01f936d8746ee083714fa8c425df776b51eb12f4c95c8468cdf"
+
+[sws-client.clarify]
+license = "MIT"
+[[sws-client.clarify.files]]
+path = "../../../LICENSE"
+checksum = "800c05070a6e73f3ddadcc00af8668989934e5c3398a24e200ed840fa2f7247b"
+
+[sws-protocol.clarify]
+license = "MIT"
+[[sws-protocol.clarify.files]]
+path = "../../../LICENSE"
+checksum = "800c05070a6e73f3ddadcc00af8668989934e5c3398a24e200ed840fa2f7247b"

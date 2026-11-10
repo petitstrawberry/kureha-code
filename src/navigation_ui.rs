@@ -20,6 +20,7 @@ enum Mode {
     Files,
     Commands,
     Line,
+    Licenses,
     Themes {
         code_only: bool,
     },
@@ -29,6 +30,7 @@ enum Action {
     File(PathBuf),
     Command(&'static str),
     Theme(kureha_code::theme::Theme),
+    License(usize),
 }
 #[derive(Clone, Debug)]
 struct Row {
@@ -239,6 +241,24 @@ const COMMANDS: &[CommandDescriptor] = &[
         "Go: Go to Line / Column",
         "navigate row",
         "Ctrl+G"
+    ),
+    command!(
+        "settings",
+        "Preferences: Open Settings",
+        "appearance preferences",
+        "Primary+,"
+    ),
+    command!(
+        "settings-file",
+        "Preferences: Open Settings File",
+        "configuration toml",
+        ""
+    ),
+    command!(
+        "acknowledgements",
+        "Help: Acknowledgements",
+        "licenses copyright fonts themes",
+        ""
     ),
     command!("open", "File: Open File…", "browse picker", "Primary+O"),
     command!(
@@ -483,6 +503,9 @@ impl App {
     pub(super) fn show_theme_picker(&self, code_only: bool) {
         self.show_navigation(Mode::Themes { code_only });
     }
+    pub(super) fn show_license_picker(&self) {
+        self.show_navigation(Mode::Licenses);
+    }
     fn preview_selected_theme(&self) {
         if !matches!(self.nav.mode.get(), Mode::Themes { .. }) {
             return;
@@ -507,7 +530,7 @@ impl App {
         }
     }
     fn theme_rows(&self, code_only: bool, query: &str) -> Vec<Row> {
-        use kureha_code::theme::{PRESETS, Theme, preset};
+        use kureha_code::theme::{preset, Theme, PRESETS};
         let original = self
             .nav
             .preview_original
@@ -529,7 +552,10 @@ impl App {
                 let theme = if code_only {
                     original.with_code_theme(&choice)
                 } else {
-                    choice
+                    self.preferences
+                        .get()
+                        .font_size
+                        .map_or(choice.clone(), |size| choice.with_font_size(size))
                 };
                 Row {
                     key: format!("theme:{label}"),
@@ -835,6 +861,26 @@ impl App {
                 service.requested = false;
                 service.displayed_query = Some(request);
             }
+            Mode::Licenses => {
+                let query_lower = query.trim().to_lowercase();
+                let rows = super::settings_ui::acknowledgements()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, entry)| entry.0.to_lowercase().contains(&query_lower))
+                    .take(VISIBLE_RESULTS)
+                    .map(|(index, entry)| Row {
+                        label: entry.0.clone(),
+                        detail: String::new(),
+                        key: format!("license:{index}"),
+                        action: Action::License(index),
+                    })
+                    .collect();
+                self.nav.show_rows(rows);
+                self.nav
+                    .set_hint("Search dependencies, fonts and themes".into());
+                service.requested = false;
+                service.displayed_query = Some(request);
+            }
             Mode::Themes { code_only } => {
                 let rows = if navigation::validate_query(&query).is_ok() {
                     self.theme_rows(code_only, &query)
@@ -1005,6 +1051,8 @@ impl App {
         let Some(row) = self.nav.rows.get().get(index).cloned() else {
             return;
         };
+        let code_only = matches!(self.nav.mode.get(), Mode::Themes { code_only: true });
+        let selected_theme = (row.key != "theme:current-custom").then(|| row.label.clone());
         if matches!(row.action, Action::Theme(_)) {
             self.nav.preview_original.lock().unwrap().take();
         }
@@ -1012,7 +1060,17 @@ impl App {
         match row.action {
             Action::File(path) => self.open(path),
             Action::Command(id) => self.execute_navigation_command(id),
-            Action::Theme(theme) => self.apply_theme(theme),
+            Action::License(index) => self.settings_ui.show_license(index),
+            Action::Theme(theme) => {
+                self.apply_theme(theme);
+                if let Some(name) = selected_theme {
+                    self.change_preferences(if code_only {
+                        super::preferences::Change::Code(Some(name))
+                    } else {
+                        super::preferences::Change::Color(Some(name))
+                    });
+                }
+            }
         }
     }
     fn execute_navigation_command(&self, id: &str) {
@@ -1051,6 +1109,9 @@ impl App {
             "close-split" => self.close_split(),
             "select-color-theme" => self.show_theme_picker(false),
             "select-code-theme" => self.show_theme_picker(true),
+            "settings" => self.open_settings(),
+            "settings-file" => self.open_preferences_file(),
+            "acknowledgements" => self.open_acknowledgements(),
             "theme-edit" => self.open_theme_settings(),
             "theme-reload" => self.reload_theme_settings(),
             "minimap" => self.toggle_minimap(),
@@ -1109,6 +1170,7 @@ impl App {
         let placeholder = match self.nav.mode.get() {
             Mode::Commands => "Type a command",
             Mode::Line => "Go to line:column",
+            Mode::Licenses => "Search acknowledgements",
             Mode::Themes { code_only: false } => "Select Color Theme",
             Mode::Themes { code_only: true } => "Select Code Color Theme",
             _ => "Search files by name · > commands · : line",
@@ -1280,18 +1342,17 @@ mod tests {
     }
     #[test]
     fn theme_picker_is_nested_previews_and_restores_or_commits() {
-        use kureha_code::theme::{Theme, preset};
+        use kureha_code::theme::{preset, Theme};
         let app = app_with_text("let value = 1;");
         let original = app.theme.get();
         assert_eq!(original.name(), "Kureha");
         app.show_commands();
-        assert!(
-            !app.nav
-                .rows
-                .get()
-                .iter()
-                .any(|row| row.key == "theme-monokai")
-        );
+        assert!(!app
+            .nav
+            .rows
+            .get()
+            .iter()
+            .any(|row| row.key == "theme-monokai"));
         app.nav.query.set("Select Color Theme".into());
         app.poll_navigation();
         let entry = app
@@ -1371,6 +1432,48 @@ mod tests {
         assert_eq!(app.theme.get().colors(), custom.colors());
     }
 
+    #[test]
+    fn theme_confirmation_persists_choices_but_preview_and_cancel_do_not() {
+        let app = App::new();
+        app.preferences.update(|p| p.font_size = Some(20.0));
+        app.set_theme(app.theme.get().with_font_size(20.0));
+        let original = app.preferences.get();
+        app.open_settings();
+        app.show_theme_picker(false);
+        app.nav.query.set("Monokai".into());
+        app.poll_navigation();
+        assert_eq!(app.theme.get().editor_font_size(), 20.0);
+        assert_eq!(app.preferences.get(), original);
+        app.close_navigation();
+        assert_eq!(app.preferences.get(), original);
+        app.show_theme_picker(false);
+        app.nav.query.set("Monokai".into());
+        app.accept_navigation();
+        assert_eq!(
+            app.preferences.get().color_theme.as_deref(),
+            Some("Monokai")
+        );
+        assert_eq!(app.preferences.get().font_size, Some(20.0));
+        app.show_theme_picker(true);
+        app.nav.query.set("Nord".into());
+        app.accept_navigation();
+        assert_eq!(app.preferences.get().code_theme.as_deref(), Some("Nord"));
+    }
+    #[test]
+    fn acknowledgements_picker_filters_and_keeps_the_settings_tab() {
+        let app = App::new();
+        app.open_acknowledgements();
+        let tab = app.group_id(0);
+        app.show_license_picker();
+        app.nav.query.set("Monokai".into());
+        app.poll_navigation();
+        assert_eq!(app.nav.rows.get().len(), 1);
+        assert_eq!(app.nav.rows.get()[0].label, "Monokai palette");
+        app.accept_navigation();
+        assert!(!app.nav.is_open());
+        assert_eq!(app.group_id(0), tab);
+        assert!(app.active_id().is_none());
+    }
     #[test]
     fn mounted_theme_hover_previews_without_losing_query_focus() {
         use scarlet_ui::{

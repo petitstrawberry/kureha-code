@@ -47,8 +47,13 @@ python3 scripts/package.py --platform scarlet --target aarch64-unknown-scarlet \
 
 ## Configuration
 
-**View → Customize Theme…** opens `~/.config/kureha-code/theme.toml`.
-See the [configuration example](assets/theme.toml) for available settings.
+Open the Settings tab with **Kureha Code → Settings…** (`⌘,` on macOS, `Ctrl+,` elsewhere).
+Theme choices, code font size and minimap visibility are saved automatically.
+Settings also includes the bundled dependency, font and theme acknowledgements.
+
+**Open Settings File…** opens `~/.config/kureha-code/settings.toml`.
+**Edit Custom Theme…** opens `~/.config/kureha-code/theme.toml`;
+see the [configuration example](assets/theme.toml) for available overrides.
 
 Language servers must be installed separately. Override their commands in
 `~/.config/kureha-code/lsp.toml`:
@@ -59,7 +64,7 @@ command = "/path/to/rust-analyzer"
 args = []
 ```
 
-Both configuration paths respect `$XDG_CONFIG_HOME`.
+Configuration paths respect `$XDG_CONFIG_HOME`.
 
 ## Development
 

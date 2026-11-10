@@ -45,6 +45,7 @@
           packages = [
             rust
             appcoat.packages.${system}.appcoat
+            pkgs.cargo-about
             pkgs.rustfmt
             pkgs.git
             pkgs.python3

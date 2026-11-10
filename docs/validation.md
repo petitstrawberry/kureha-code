@@ -802,3 +802,46 @@ The locked, offline macOS release build passed.
   published; the documented Scarlet path accepts a separately built artifact.
 - Developer ID signing, notarization and macOS document-open event handling are
   outside this integration. The generated app uses local ad-hoc signing.
+
+## Settings and acknowledgements — 2026-11-10
+
+Settings is an ordinary workbench tab with the existing tab identity and drag/split
+paths. It owns no text document and closing it does not create an Untitled file.
+The existing ScarletUI `MenuItemModel::app()` adds Settings, Open Settings File
+and Acknowledgements to the macOS application menu.
+
+Confirmed color/code themes, code font size and minimap visibility are saved in
+`settings.toml`, next to `theme.toml`. Writes run on the theme worker, preserve TOML
+comments, follow existing symlinks and replace files atomically. Invalid settings
+are retained with an error. Shutdown drains queued saves. Live theme preview and
+cancel do not write settings; delayed save acknowledgements wait for a preview to
+close and cannot overwrite a newer choice.
+
+Generate the checked-in offline license catalogue after updating dependencies:
+
+```sh
+nix develop --command python3 scripts/generate-acknowledgements.py
+python3 -m unittest discover -s tests -p 'test_acknowledgements.py'
+```
+
+`cargo-about` is supplied by the pinned flake. It resolves dependency licenses with
+`generate --locked --fail --format json`; `about.toml` records accepted licenses
+and checksum-verified repository LICENSE clarifications for Scarlet workspace
+crates whose manifests omit license metadata. The small adapter only reshapes
+that report and adds the bundled font/theme notices. No custom license discovery
+or download logic remains. The catalogue is embedded in the executable and copied
+into packaged resources, so reading it does not require a network connection.
+
+Regressions cover settings-tab reuse/moves/splits/closing without documents,
+read-only notices (including IME), theme preview/confirmation, persistence across
+restart, malformed input, atomic external edits, symlinks and shutdown flushing.
+CPU previews of Kureha/Monokai settings and notices are in `artifacts/settings/`.
+
+The final suite passed 242 Rust tests (12 optional tests ignored), four packaging
+tests and the catalogue check. macOS SGFX/WGPU validation used a disposable config:
+Settings opened in the main window from the application menu, Monokai selection
+was saved, and a fresh packaged launch restored it. Cmd+, opened Settings from an
+empty workbench and Cmd+W closed only that tab. Acknowledgements search and Enter
+selection displayed the matching notice. The workbench now retains a focusable
+ancestor so shortcuts work even when no text editor is focused. Windows/Linux/
+Scarlet runtime behavior of this settings change was not exercised.
