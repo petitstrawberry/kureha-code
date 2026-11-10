@@ -851,3 +851,12 @@ Scarlet runtime behavior of this settings change was not exercised.
 The TabView/inline-list follow-up passed 12 focused settings tests and renderer
 previews in Kureha/Monokai. Native macOS interaction verified section switching,
 inline search with Enter to select a notice, and the simplified application menu.
+
+The bundled-asset follow-up adds a dedicated Gruvbox notice with pinned upstream
+MIT declarations and author attribution. Upstream supplies no standalone LICENSE
+or copyright notice; the notice explicitly identifies the standard permission and
+warranty terms supplied from SPDX rather than presenting them as an upstream file.
+All six Python tests passed, including complete theme/font notice coverage, Tabler
+copyright attribution, and notice/catalogue inclusion in an Appcoat package. The
+release macOS package passed signature verification; its notices match the source
+files and the executable embeds the Gruvbox attribution and provenance.

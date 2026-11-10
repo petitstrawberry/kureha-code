@@ -42,6 +42,7 @@ def generate(report):
         ("M PLUS 1", "OFL-1.1", "https://github.com/coz-m/MPLUS_FONTS", "assets/fonts/MPLUS_FONTS_OFL.txt"),
         ("Noto Sans CJK JP", "OFL-1.1", "https://github.com/notofonts/noto-cjk", "assets/fonts/NOTO_SANS_CJK_OFL.txt"),
         ("Dracula palette", "MIT", "https://github.com/dracula/dracula-theme", "assets/themes/dracula.LICENSE"),
+        ("Gruvbox palette", "MIT", "https://github.com/morhetz/gruvbox/tree/ef8864bb42bf244f0295d1c5a403b27e3d139695", "assets/themes/gruvbox.LICENSE"),
         ("Monokai palette", "MIT", "https://github.com/microsoft/vscode", "assets/themes/monokai.LICENSE"),
         ("Nord palette", "MIT", "https://github.com/nordtheme/nord", "assets/themes/nord.LICENSE"),
         ("Solarized palettes", "MIT", "https://github.com/altercation/solarized", "assets/themes/solarized.LICENSE"),

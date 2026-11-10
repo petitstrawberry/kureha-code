@@ -65,6 +65,15 @@ class PackagingTests(unittest.TestCase):
             self.assertTrue((output / "Contents/Resources" / plist["CFBundleIconFile"]).is_file())
         else:
             self.assertTrue((output / "share/pixmaps/org.scarlet-os.kureha-code.png").is_file())
+        license_paths = list(output.rglob("gruvbox.LICENSE"))
+        self.assertEqual(len(license_paths), 1)
+        self.assertEqual(license_paths[0].read_bytes(), (ROOT / "assets/themes/gruvbox.LICENSE").read_bytes())
+        catalogues = list(output.rglob("acknowledgements.json"))
+        self.assertEqual(len(catalogues), 1)
+        catalogue = json.loads(catalogues[0].read_text())
+        gruvbox = next(entry for entry in catalogue["entries"] if entry["name"] == "Gruvbox palette")
+        self.assertIn(license_paths[0].read_text().strip(),
+                      {catalogue["texts"][index].strip() for index in gruvbox["texts"]})
         launched = subprocess.run(["appcoat", "run", "--package", str(output), "--", "日本語 file.md"],
                                  capture_output=True, text=True)
         self.assertEqual(launched.returncode, 0, launched.stderr)

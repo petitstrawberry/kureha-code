@@ -24,6 +24,23 @@ class AcknowledgementsTests(unittest.TestCase):
         self.assertNotIn('/Users/', serialized)
         self.assertNotIn('/nix/store/', serialized)
 
+    def test_asset_license_texts_and_tabler_attribution_are_included(self):
+        data = json.loads((ROOT / 'assets/acknowledgements.json').read_text())
+        notices = {text.strip() for text in data['texts']}
+        for path in (ROOT / 'assets/themes').glob('*.LICENSE'):
+            self.assertIn(path.read_text().strip(), notices, str(path))
+        for path in (ROOT / 'assets/fonts').glob('*.txt'):
+            self.assertIn(path.read_text().strip(), notices, str(path))
+        gruvbox = next(entry for entry in data['entries'] if entry['name'] == 'Gruvbox palette')
+        self.assertEqual(gruvbox['license'], 'MIT')
+        self.assertIn('ef8864bb42bf244f0295d1c5a403b27e3d139695', gruvbox['source'])
+        body = '\n'.join(data['texts'][index] for index in gruvbox['texts'])
+        self.assertIn('Pavel Pertsev', body)
+        self.assertIn('Permission is hereby granted', body)
+        self.assertIn('not an upstream LICENSE file', body)
+        tabler = next(entry for entry in data['entries'] if entry['name'] == 'scarlet-ui-icons-tabler')
+        self.assertIn('Paweł Kuna', '\n'.join(data['texts'][index] for index in tabler['texts']))
+
 
 if __name__ == '__main__':
     unittest.main()
