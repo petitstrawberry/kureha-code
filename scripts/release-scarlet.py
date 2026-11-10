@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""Build Scarlet apps, assemble checksum-pinned bundles, and publish releases."""
+import argparse
+import gzip
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY = "petitstrawberry/kureha-code"
+TARGETS = {"aarch64-unknown-scarlet": ("aarch64", 183),
+           "riscv64gc-unknown-scarlet": ("riscv64", 243)}
+APP_PATH = "applications/kureha-code.app"
+EXECUTABLE = APP_PATH + "/bin/kureha-code"
+
+
+def sha(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def version_tag(value):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value):
+        raise ValueError("invalid release tag")
+    return value
+
+
+def write_json(path, value):
+    path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def verify_elf(header, target):
+    if (len(header) < 64 or header[:8] != b"\x7fELF\x02\x01\x01\x53"
+            or struct.unpack_from("<H", header, 16)[0] not in (2, 3)
+            or struct.unpack_from("<H", header, 18)[0] != TARGETS[target][1]):
+        raise ValueError("expected a native Scarlet ELF for " + target)
+
+
+def verify_archive(path, target):
+    """Check the image layout and target before composing or publishing a bundle."""
+    names = set()
+    descriptors = []
+    with tarfile.open(path, "r:gz") as archive:
+        for member in archive:
+            name = member.name
+            relative = PurePosixPath(name)
+            if (relative.is_absolute() or ".." in relative.parts
+                    or str(relative) != name or name in names
+                    or not name.startswith(APP_PATH + "/") and name != APP_PATH
+                    or not (member.isfile() or member.isdir())):
+                raise ValueError("invalid app archive member: " + name)
+            names.add(name)
+            if member.isfile():
+                with archive.extractfile(member) as stream:
+                    header = stream.read(64)
+                if header.startswith(b"\x7fELF"):
+                    verify_elf(header, target)
+                if name == EXECUTABLE:
+                    verify_elf(header, target)
+                    if not member.mode & 0o111:
+                        raise ValueError("app executable lacks executable permissions")
+                if relative.parent == PurePosixPath(APP_PATH) and name.endswith(".desktop"):
+                    descriptors.append(name)
+        if EXECUTABLE not in names or len(descriptors) != 1:
+            raise ValueError("archive must contain the app executable and one descriptor")
+        with archive.extractfile(descriptors[0]) as stream:
+            descriptor = stream.read().decode()
+        fields = dict(line.split("=", 1) for line in descriptor.splitlines()
+                      if "=" in line and not line.startswith("#"))
+        if (fields.get("X-Scarlet-AppFormat") != "1"
+                or fields.get("X-Scarlet-Target") != target
+                or fields.get("Exec") != "bin/kureha-code %f"):
+            raise ValueError("invalid Scarlet app descriptor")
+
+
+def build(target, version, output, artifact=None):
+    version_tag(version)
+    arch = TARGETS[target][0]
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True))
+    output.mkdir(parents=True, exist_ok=False)
+    try:
+        archive_path = output / f"kureha-code-{arch}-{version}.tar.gz"
+        with tempfile.TemporaryDirectory(prefix="kureha-scarlet-") as temporary:
+            stage = Path(temporary)
+            app = stage / APP_PATH
+            command = [sys.executable, str(ROOT / "scripts/package.py"), "--platform", "scarlet",
+                       "--target", target, "--output", str(app)]
+            if artifact:
+                command.extend(["--artifact", str(artifact.resolve(strict=True))])
+            subprocess.run(command, cwd=ROOT, check=True)
+            # Normalize metadata and gzip headers; include the complete .app,
+            # including Appcoat resources and notices, under its runtime path.
+            with archive_path.open("wb") as stream:
+                with gzip.GzipFile(fileobj=stream, mode="wb", filename="", mtime=0) as gz:
+                    with tarfile.open(fileobj=gz, mode="w") as archive:
+                        for path in [app, *sorted(app.rglob("*"))]:
+                            if path.is_symlink() or not (path.is_dir() or path.is_file()):
+                                raise ValueError("unsupported app file: " + str(path))
+                            info = archive.gettarinfo(str(path), arcname=path.relative_to(stage).as_posix())
+                            info.uid = info.gid = info.mtime = 0
+                            info.uname = info.gname = ""
+                            info.mode = 0o755 if path.is_dir() or path.stat().st_mode & 0o111 else 0o644
+                            if path.is_file():
+                                with path.open("rb") as payload:
+                                    archive.addfile(info, payload)
+                            else:
+                                archive.addfile(info)
+        verify_archive(archive_path, target)
+        write_json(output / f"{arch}.json", {
+            "version": version, "target": target, "arch": arch,
+            "revision": revision, "dirty": dirty, "external_artifact": artifact is not None,
+            "archive": archive_path.name, "sha256": sha(archive_path),
+            "cargo_lock_sha256": sha(ROOT / "Cargo.lock"),
+            "flake_lock_sha256": sha(ROOT / "flake.lock"),
+        })
+    except BaseException:
+        shutil.rmtree(output)
+        raise
+
+
+def assemble(inputs, version, output):
+    version_tag(version)
+    records = []
+    for target, (arch, _) in TARGETS.items():
+        record = json.loads((inputs / f"{arch}.json").read_text())
+        name = f"kureha-code-{arch}-{version}.tar.gz"
+        if (record["target"] != target or record["arch"] != arch or record["version"] != version
+                or record["archive"] != name or record["sha256"] != sha(inputs / name)):
+            raise ValueError("release input mismatch: " + arch)
+        verify_archive(inputs / name, target)
+        records.append(record)
+    for key in ("revision", "cargo_lock_sha256", "flake_lock_sha256"):
+        if len({record[key] for record in records}) != 1:
+            raise ValueError("architecture builds disagree on " + key)
+    output.mkdir(parents=True, exist_ok=False)
+    for record in records:
+        shutil.copyfile(inputs / record["archive"], output / record["archive"])
+    checksums = ", ".join(f'{record["arch"]} = "sha256:{record["sha256"]}"' for record in records)
+    url = f"https://github.com/{REPOSITORY}/releases/download/{version}/kureha-code-{{arch}}-{version}.tar.gz"
+    (output / "bundle.toml").write_text(
+        "# Generated from verified Scarlet release archives.\n"
+        f"# Source revision: {records[0]['revision']}\n"
+        '[[layers]]\nkind = "archive"\n'
+        f'url = "{url}"\nsha256 = {{ {checksums} }}\n'
+        'format = "tar-gz"\nto = "/"\n')
+    write_json(output / "release.json", {"version": version, "builds": records})
+    (output / "SHA256SUMS").write_text("".join(
+        f"{sha(path)}  {path.name}\n" for path in sorted(output.iterdir())))
+
+
+def verify_release(directory):
+    release = json.loads((directory / "release.json").read_text())
+    version = version_tag(release["version"])
+    with tempfile.TemporaryDirectory(prefix="kureha-release-verify-") as temporary:
+        inputs = Path(temporary) / "inputs"
+        inputs.mkdir()
+        for record in release["builds"]:
+            if record["target"] not in TARGETS or record["arch"] != TARGETS[record["target"]][0]:
+                raise ValueError("invalid release target")
+            name = f"kureha-code-{record['arch']}-{version}.tar.gz"
+            if record["archive"] != name:
+                raise ValueError("invalid archive name")
+            shutil.copyfile(directory / name, inputs / name)
+            write_json(inputs / f"{record['arch']}.json", record)
+        expected = Path(temporary) / "expected"
+        assemble(inputs, version, expected)
+        actual_files = {path.name for path in directory.iterdir()}
+        if actual_files != {path.name for path in expected.iterdir()}:
+            raise ValueError("unexpected release files")
+        for path in expected.iterdir():
+            if sha(path) != sha(directory / path.name):
+                raise ValueError("release verification failed: " + path.name)
+    return release
+
+
+def publish(directory, prerelease):
+    release = verify_release(directory)
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    if any(record["revision"] != revision or record["dirty"] or record["external_artifact"]
+           for record in release["builds"]):
+        raise ValueError("publish requires clean source builds matching the checkout")
+    version = release["version"]
+    command = ["gh", "release", "create", version, "--repo", REPOSITORY, "--target", revision,
+               "--title", "Kureha Code for Scarlet " + version,
+               "--notes", "Native AArch64 and RISC-V64 apps and a checksum-pinned Scarlet bundle. "
+               "Requires Scarlet's SWS and installed SGFX driver. Shared graphics libraries are provided by the OS."]
+    if prerelease:
+        command.append("--prerelease")
+    # gh release create fails if this tag already has a release. Never replace assets.
+    subprocess.run([*command, *[str(path) for path in sorted(directory.iterdir())]], check=True)
+    with tempfile.TemporaryDirectory(prefix="kureha-release-download-") as temporary:
+        downloaded = Path(temporary)
+        subprocess.run(["gh", "release", "download", version, "--repo", REPOSITORY,
+                        "--dir", str(downloaded)], check=True)
+        verify_release(downloaded)
+        for path in directory.iterdir():
+            if sha(path) != sha(downloaded / path.name):
+                raise ValueError("published asset differs: " + path.name)
+    # The workflow commits only this file after all uploaded assets are verified.
+    (ROOT / "platforms/scarlet/bundle.toml").write_bytes((directory / "bundle.toml").read_bytes())
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    builder = commands.add_parser("build")
+    builder.add_argument("--target", choices=TARGETS, required=True)
+    builder.add_argument("--version", required=True)
+    builder.add_argument("--output", type=Path, required=True)
+    builder.add_argument("--artifact", type=Path, help="Package an existing binary for local validation only")
+    assembler = commands.add_parser("assemble")
+    assembler.add_argument("--inputs", type=Path, required=True)
+    assembler.add_argument("--version", required=True)
+    assembler.add_argument("--output", type=Path, required=True)
+    verifier = commands.add_parser("verify")
+    verifier.add_argument("--artifacts", type=Path, required=True)
+    publisher = commands.add_parser("publish")
+    publisher.add_argument("--artifacts", type=Path, required=True)
+    publisher.add_argument("--prerelease", action="store_true")
+    args = parser.parse_args(argv)
+    if args.command == "build":
+        build(args.target, args.version, args.output.resolve(), args.artifact)
+    elif args.command == "assemble":
+        assemble(args.inputs.resolve(), args.version, args.output.resolve())
+    elif args.command == "verify":
+        verify_release(args.artifacts.resolve())
+    else:
+        publish(args.artifacts.resolve(), args.prerelease)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError, tarfile.TarError) as error:
+        print(f"scarlet-release: {error}", file=sys.stderr)
+        sys.exit(1)

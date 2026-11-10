@@ -1,0 +1,180 @@
+name: Build and release Scarlet apps
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - 'appcoat.toml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'LICENSE'
+      - '.github/workflows/scarlet-release.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - 'appcoat.toml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/workflows/scarlet-release.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Fresh release tag (empty generates a unique Scarlet build tag)
+        default: ''
+      publish:
+        type: boolean
+        description: Publish release assets and update bundle.toml on main
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scarlet-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Choose release tag
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os, re, tomllib
+          from pathlib import Path
+          app = tomllib.loads(Path('appcoat.toml').read_text())['app']
+          version = os.environ.get('REQUESTED_VERSION')
+          if not version and os.environ['GITHUB_REF_TYPE'] == 'tag':
+              version = os.environ['GITHUB_REF_NAME']
+          version = version or f"scarlet-v{app['version']}-{os.environ['GITHUB_RUN_NUMBER']}.{os.environ['GITHUB_RUN_ATTEMPT']}"
+          if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', version):
+              raise SystemExit('Invalid release tag')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+          PY
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-scarlet
+            arch: aarch64
+          - target: riscv64gc-unknown-scarlet
+            arch: riscv64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: accept-flake-config = true
+      - uses: cachix/cachix-action@v17
+        with:
+          name: scarlet-rust-toolchain
+      - name: Cache Cargo builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: scarlet-${{ runner.os }}-${{ runner.arch }}-${{ matrix.arch }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: |
+            scarlet-${{ runner.os }}-${{ runner.arch }}-${{ matrix.arch }}-
+      - name: Test packaging and release tooling
+        if: matrix.arch == 'aarch64'
+        run: nix develop --accept-flake-config --command python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Build and package native app
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          nix develop --accept-flake-config --command python3 scripts/release-scarlet.py build \
+            --target "$TARGET" --version "$VERSION" --output artifacts/scarlet-build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scarlet-${{ matrix.arch }}
+          path: artifacts/scarlet-build/
+          if-no-files-found: error
+          compression-level: 0
+
+  assemble:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scarlet-*
+          path: artifacts/scarlet-inputs
+          merge-multiple: true
+      - name: Generate and verify release bundle
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          python3 scripts/release-scarlet.py assemble \
+            --inputs artifacts/scarlet-inputs --version "$VERSION" --output artifacts/scarlet-release
+          python3 scripts/release-scarlet.py verify --artifacts artifacts/scarlet-release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scarlet-release
+          path: artifacts/scarlet-release/
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+      (github.event_name == 'push' || inputs.publish)
+    needs: [prepare, assemble]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: scarlet-release
+          path: artifacts/scarlet-release
+      - name: Publish and verify assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          flags=()
+          if [ "$IS_TAG" != true ]; then flags+=(--prerelease); fi
+          python3 scripts/release-scarlet.py publish --artifacts artifacts/scarlet-release "${flags[@]}"
+      - name: Update checked-in bundle on main
+        if: github.ref == 'refs/heads/main'
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add platforms/scarlet/bundle.toml
+          git commit -m "Pin Scarlet app release $VERSION"
+          git push origin HEAD:main
