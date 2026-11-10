@@ -932,3 +932,48 @@ between the glass rim behind the tab strip and behind opaque pane content.
 KUREHA_SETTINGS_PREVIEW=artifacts/settings-alignment \
   cargo test --bin kureha-code settings_ui::tests -- --include-ignored
 ```
+
+## Code wrapping and overview correspondence — 2026-11-10
+
+`word_wrap` defaults to true and persists through the existing settings worker.
+View → Toggle Word Wrap, Alt+Z, the command palette and Settings change the same
+preference. Wrapping stops before the minimap. Unwrapped code occupies the full
+editor width, with the minimap composited over its right edge.
+Settings uses Toggle controls for word wrap and minimap visibility, and a Select
+for Word boundaries / Characters. External preference changes update their bound
+states. The mode selector is disabled while wrapping is off. `wrap_at_words` defaults to
+true; false uses grapheme boundaries to fill the available width without moving
+back to a word boundary. The choice persists independently from wrap visibility.
+
+ScarletUI's `WrapMode::Code` uses Unicode line-break opportunities and retains
+source indentation on continuation rows. Breaks remain grapheme boundaries;
+oversized unbreakable runs fall back to fitting graphemes. Deep indentation is
+omitted when it would consume at least half the continuation width. The layout
+preserves continuation offsets when scrolling, including for caret hit testing.
+References: [VS Code line breaking](https://github.com/microsoft/vscode/blob/main/src/vs/editor/common/viewModel/monospaceLineBreaksComputer.ts)
+and [unicode-linebreak](https://docs.rs/unicode-linebreak/0.1.5/unicode_linebreak/).
+
+The overview reads the actual TextView fragments and glyph advances after layout.
+Its rows, syntax colors, indentation, viewport rectangle and navigation therefore
+refer to wrapped display lines rather than logical source line numbers. Sampling
+retains both ends of long files and caps work at 768 rows, 96 columns, 32 marks
+per row and 256KiB of display-text inspection. No second text shaping pass is
+performed. Original text and selections survive wrap toggles and pane resizes.
+
+Core validation passed 741 tests (5 ignored) before adding the character option;
+both focused wrapping regressions passed with the final modes. The winit backend
+passed 45 tests. Kureha passed 122 library and 126 binary tests (13 ignored);
+checks cover Unicode boundaries, indentation, unchanged source/element identity,
+width allocation, switch clicks and external updates, settings restart restoration,
+actual visual-row navigation and
+dragging outside the overview. Before/after previews use
+`KUREHA_WRAP_PREVIEW=artifacts/word-wrap-final cargo test --bin kureha-code word_wrap`.
+The existing text-file read limit remains 16MiB.
+
+Native macOS validation used an isolated settings directory and a temporary app
+identifier to avoid targeting other running builds. Toggle clicks, mode selection,
+disabled mode selection with wrapping off, persistence across restart and Option+Z
+without inserting text were exercised. Unwrapped code was visible beneath the
+translucent minimap; wrapped code and overview rows changed together. The signed
+release package passed `codesign --verify --deep --strict`; six Python catalogue
+and packaging tests passed. Linux and Scarlet runtimes were not exercised.

@@ -5,6 +5,8 @@ use std::sync::OnceLock;
 #[derive(Clone)]
 pub(super) struct Settings {
     page: State<usize>,
+    word_wrap: State<bool>,
+    wrap_mode: State<usize>,
     license: State<usize>,
     query: State<String>,
     rows: State<Vec<usize>>,
@@ -19,6 +21,8 @@ impl Settings {
     pub fn new() -> Self {
         Self {
             page: state(0),
+            word_wrap: state(true),
+            wrap_mode: state(0),
             license: state(0),
             query: state(String::new()),
             rows: state(Vec::new()),
@@ -32,6 +36,15 @@ impl Settings {
     }
     pub fn listenables(&self) -> Vec<&dyn Listenable> {
         vec![&self.page, &self.license, &self.document]
+    }
+    pub(super) fn sync_preferences(&self, preferences: &preferences::Preferences) {
+        if self.word_wrap.get() != preferences.word_wrap {
+            self.word_wrap.set(preferences.word_wrap);
+        }
+        let mode = usize::from(!preferences.wrap_at_words);
+        if self.wrap_mode.get() != mode {
+            self.wrap_mode.set(mode);
+        }
     }
     pub(super) fn refresh_license_list(&self) {
         let query = self.query.get();
@@ -259,6 +272,8 @@ impl App {
         let larger = self.clone();
         let reset_size = self.clone();
         let minimap_app = self.clone();
+        let wrap_app = self.clone();
+        let wrap_mode_app = self.clone();
         let file_app = self.clone();
         let custom_app = self.clone();
         let button = |label: String| {
@@ -299,10 +314,21 @@ impl App {
                 }.spacing(12.0),
             }.alignment(Alignment::Leading).spacing(6.0),
             vstack! {
+                label("Word wrap"),
+                hstack! {
+                    Toggle::new(self.settings_ui.word_wrap.clone())
+                        .on_change(move |enabled| wrap_app.change_preferences(Change::WordWrap(enabled))),
+                    Select::new(vec!["Word boundaries".into(), "Characters".into()], self.settings_ui.wrap_mode.clone())
+                        .width(190.0)
+                        .enabled(preferences.word_wrap)
+                        .on_change(move |mode| wrap_mode_app.change_preferences(Change::WrapAtWords(mode == 0))),
+                }.spacing(12.0),
+            }.alignment(Alignment::Leading).spacing(6.0),
+            vstack! {
                 label("Minimap"),
                 hstack! {
-                button(if self.minimap_visible.get() { "Visible" } else { "Hidden" }.into())
-                    .on_click(move || minimap_app.toggle_minimap()),
+                Toggle::new(self.minimap_visible.clone())
+                    .on_change(move |visible| minimap_app.change_preferences(Change::Minimap(visible))),
                 }.spacing(12.0),
             }.alignment(Alignment::Leading).spacing(6.0),
             hstack! {
@@ -390,6 +416,79 @@ mod tests {
     use scarlet_ui::event::KeyEvent;
     use scarlet_ui::pipeline::RenderingPipeline;
     use scarlet_ui::renderer::{CpuPaintRenderer, PaintContext};
+
+    #[test]
+    fn appearance_switches_update_preferences_and_follow_external_changes() {
+        use scarlet_ui::event::{MouseButton, MouseEvent};
+        use scarlet_ui::views::ToggleRenderObject;
+        fn switches(element: &dyn Element, parent: Point, points: &mut Vec<Point>) {
+            let origin = Point::new(
+                parent.x + element.position().x,
+                parent.y + element.position().y,
+            );
+            if let Some(render) = element.render_object() {
+                if render.as_any().is::<ToggleRenderObject>() {
+                    points.push(Point::new(
+                        origin.x + render.size().width / 2.0,
+                        origin.y + render.size().height / 2.0,
+                    ));
+                }
+            }
+            for child in element.children() {
+                switches(child.as_ref(), origin, points);
+            }
+        }
+        let app = App::new();
+        app.open_settings();
+        let mut pipeline = RenderingPipeline::new();
+        let window = || {
+            Window::new("Settings", app.content())
+                .decorated(false)
+                .size(Size::new(1100.0, 760.0))
+        };
+        pipeline.set_root(window().create_element());
+        pipeline.layout_initial();
+        let mut points = Vec::new();
+        switches(
+            pipeline.element_tree().root().unwrap(),
+            Point::new(0.0, 0.0),
+            &mut points,
+        );
+        assert_eq!(points.len(), 2);
+        for (index, point) in points.iter().enumerate() {
+            let (x, y) = (point.x as i32, point.y as i32);
+            pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+                button: MouseButton::Left,
+                click_count: 1,
+                x,
+                y,
+            }));
+            pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+                button: MouseButton::Left,
+                click_count: 1,
+                x,
+                y,
+            }));
+            if index == 0 {
+                assert!(!app.preferences.get().word_wrap);
+            } else {
+                assert!(app.preferences.get().hide_minimap);
+            }
+            pipeline
+                .element_tree_mut()
+                .root_mut()
+                .unwrap()
+                .update(&window());
+            pipeline.layout_initial();
+        }
+        app.change_preferences(Change::WordWrap(true));
+        app.change_preferences(Change::WrapAtWords(false));
+        app.change_preferences(Change::Minimap(true));
+        assert!(app.settings_ui.word_wrap.get());
+        assert_eq!(app.settings_ui.wrap_mode.get(), 1);
+        assert!(app.minimap_visible.get());
+        pipeline.teardown();
+    }
 
     fn label_bounds(element: &dyn Element, parent: Point) -> Rect {
         let origin = Point::new(

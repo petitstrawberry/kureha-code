@@ -260,6 +260,9 @@ impl App {
             .editor_font()
             .or_else(|| self.editor_font.clone())
     }
+    fn toggle_word_wrap(&self) {
+        self.change_preferences(preferences::Change::WordWrap(!self.preferences.get().word_wrap));
+    }
     fn toggle_minimap(&self) {
         self.minimap_visible.update(|shown| *shown = !*shown);
         self.change_preferences(preferences::Change::Minimap(self.minimap_visible.get()));

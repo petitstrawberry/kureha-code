@@ -392,6 +392,7 @@ const COMMANDS: &[CommandDescriptor] = &[
         "entire editor area layout",
         ""
     ),
+    command!("word-wrap", "View: Toggle Word Wrap", "code wrapping lines", "Alt+Z"),
     command!("minimap", "View: Toggle Minimap", "overview", ""),
     command!(
         "restart-terminal",
@@ -615,6 +616,10 @@ impl App {
     /// Call before workbench shortcuts. While open, other shortcut handlers
     /// should stop dispatching and return false to the focused TextField.
     pub(crate) fn navigation_key(&self, key: KeyCode, modifiers: KeyModifiers) -> bool {
+        if !self.nav.is_open() && modifiers.alt && !modifiers.primary() && !modifiers.control && !modifiers.shift && matches!(key, KeyCode::Char('z' | 'Z')) {
+            self.toggle_word_wrap();
+            return true;
+        }
         if !self.nav.is_open()
             && cfg!(target_os = "macos")
             && modifiers.control
@@ -1088,6 +1093,7 @@ impl App {
             "acknowledgements" => self.open_acknowledgements(),
             "theme-edit" => self.open_theme_settings(),
             "theme-reload" => self.reload_theme_settings(),
+            "word-wrap" => self.toggle_word_wrap(),
             "minimap" => self.toggle_minimap(),
             "tab-outer-left" => {
                 if let Some(id) = self.group_id(self.focused_group.get()) {
