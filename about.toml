@@ -1,3 +1,5 @@
+# Test-only crates are not shipped.
+ignore-dev-dependencies = true
 # Order selects one license when a dependency offers alternatives.
 accepted = [
     "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib",

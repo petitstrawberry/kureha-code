@@ -21,6 +21,7 @@ use std::{
     thread,
 };
 mod editing_ui;
+mod extension_ui;
 mod groups;
 mod hover;
 mod language;
@@ -1574,6 +1575,7 @@ impl Application for App {
         if let Some(report) = kureha_code::extensions::take_load_report() {
             self.status.set(report);
         }
+        self.poll_extensions();
         if kureha_code::syntax::poll() {
             self.syntax_revision
                 .update(|revision| *revision = revision.wrapping_add(1));

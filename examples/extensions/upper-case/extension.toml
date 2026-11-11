@@ -1,0 +1,13 @@
+[extension]
+id = "example.upper-case"
+name = "Upper Case"
+version = "0.1.0"
+api = 1
+wasm = "target/wasm32-unknown-unknown/release/kureha_upper_case.wasm"
+
+[activation]
+commands = ["upper-case.selection"]
+
+[[contributes.commands]]
+id = "upper-case.selection"
+title = "Upper-case Selection"

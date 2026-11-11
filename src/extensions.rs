@@ -2,7 +2,10 @@
 //!
 //! Extensions live in `<extensions dir>/<folder>/extension.toml`. This module
 //! only reads data: themes, file-extension mappings and language server
-//! launch settings. No extension code runs here. See `docs/extensions.md`.
+//! launch settings. Extension code runs only in [`host`]. See `docs/extensions.md`.
+
+pub mod host;
+pub mod runtime;
 
 use crate::theme::Theme;
 use std::{
@@ -450,6 +453,8 @@ pub struct Extension {
     pub root: PathBuf,
     pub manifest: Manifest,
     pub themes: Vec<Theme>,
+    /// Resolved module path, checked to stay inside `root`.
+    pub wasm: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -491,9 +496,11 @@ fn load_extension(folder: &Path) -> Result<Extension, String> {
         &root.join(MANIFEST_FILE),
         MAX_MANIFEST_BYTES,
     )?)?;
-    if let Some(wasm) = &manifest.wasm {
-        contained(&root, wasm)?;
-    }
+    let wasm = manifest
+        .wasm
+        .as_ref()
+        .map(|wasm| contained(&root, wasm))
+        .transpose()?;
     let themes = manifest
         .contributes
         .themes
@@ -508,6 +515,7 @@ fn load_extension(folder: &Path) -> Result<Extension, String> {
         root,
         manifest,
         themes,
+        wasm,
     })
 }
 

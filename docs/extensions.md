@@ -232,13 +232,19 @@ kx_free(ptr: u32, len: u32)
 kx_call(ptr: u32, len: u32) -> u64        // 上位32bit=ptr、下位32bit=len
 ```
 
-ホストが公開する関数。
+ホストが公開する関数(インポート元のモジュール名は `kureha`)。
 
 ```text
-kx_host(ptr: u32, len: u32) -> u64        // 同期で完了する操作
+kx_host(ptr: u32, len: u32) -> i64        // 要求を処理し、返事の長さを返す(負なら失敗)
+kx_host_take(ptr: u32, len: u32) -> i32   // 保留中の返事を拡張のメモリへ書き込む
 ```
 
-- 引数と戻り値は1つのメッセージをバイト列にしたもの。形式は postcard を第一候補とする。
+- ホストが拡張の `kx_alloc` を呼び返すと再入になるため、返事は「長さを受け取る →
+  拡張が確保 → `kx_host_take` で写す」の2段階で渡す。
+- `kx_call` に渡したバッファと、`kx_call` が返したバッファは、どちらもホストが `kx_free` で解放する。
+- 拡張が `kureha` の2関数以外をインポートしていたら読み込まない(WASIも渡さない)。
+- 引数と戻り値は1つのメッセージをバイト列にしたもの。段階2ではJSONにした(既存の依存だけで済み、
+  デバッグしやすい)。枠組みは形式に依存しないので、速度が問題になればpostcardへ替えられる。
 - `kx_call` に渡すメッセージ: `Activate`、`Query`、`TaskStart`、`TaskEvent`、`UiMessage`、`Deactivate`。
 - タスク中の待ちが発生する操作(ファイル読み書き、プロセス、ネットワーク)は、
   `kx_host` が要求IDだけ返し、完了時にホストが `TaskEvent { id, result }` で起こす。
@@ -274,7 +280,7 @@ kx_host(ptr: u32, len: u32) -> u64        // 同期で完了する操作
 
 ## 未決事項
 
-- メッセージ形式を postcard にするか。デバッグのしやすさではJSON、速度とサイズではpostcard。
+- メッセージ形式。段階2はJSONで実装した。postcardへ替えるかは、Scarletでの測定次第。
 - 予算の単位。wasmiのfuelを時間に換算するか、実行量そのままで管理するか。
 - 構文情報をどこまで公開するか。syntectのスコープ名をそのまま出すと将来の差し替えが難しくなる。
 - 保存時の整形のように「結果を待つ」必要がある場面の扱い。待ち時間の上限と、超えた場合の挙動。
@@ -307,8 +313,43 @@ kx_host(ptr: u32, len: u32) -> u64        // 同期で完了する操作
 `language_servers` の `command` は `[capabilities] process` にも書かれていないと読み込まない。
 `commands`、`views`、`activation`、`capabilities` の残りは解析と検証のみで、まだ使われない。
 
+### 段階2: wasmiホストの最小版(実装済み)
+
+`src/extensions/runtime.rs`(1拡張のインスタンス)、`src/extensions/host.rs`(ワーカー)、
+`src/extension_ui.rs`(コマンドパレットと結果の適用)。
+
+- wasmi 2.0。デスクトップは `auto-dispatch`、Scarletは末尾呼び出しの最適化に頼らない
+  `portable-dispatch`。`wat` はテスト専用で、配布物と謝辞には入らない
+  (`about.toml` で開発用依存を除外)。
+- WASMは専用スレッド `extension-host` だけで動く。UIは要求を送り、`poll_extensions` で返事を受け取る。
+  拡張は最初に使われたときにインスタンス化して `activate` を送る。
+- 1回の呼び出しごとにfuelを設定する。既定値は `Budgets::default()`(起動 2000万、
+  クエリ 200万、タスク 1億)。メモリは64 MiB、`.wasm` は16 MiB、メッセージは1 MiBまで。
+- 予算超過が3回続いた拡張は再起動まで無効にする。トラップしたインスタンスは捨て、次回作り直す。
+- 拡張から来たポインタと長さはすべて範囲検査する。編集と装飾の範囲は、スナップショットの
+  文字境界にあり、重ならないことを確かめてから使う。
+- ホストの関数は `read`(呼び出し中のスナップショットから範囲を読む)と `log` だけ。
+  権限が要る操作はまだない。
+- コマンドは、マニフェストに `wasm` がある拡張のものだけをコマンドパレットに
+  「拡張名: タイトル」で出す。行のキーは `ext:<拡張id>:<コマンドid>` で、組み込みと衝突しない。
+- コマンドの編集は、言語サーバーの編集と同じ確認を通して1回のundoで適用する。
+  実行中に文書や作業中のエディタが変わっていたら捨てて、ステータスバーに理由を出す。
+- テキストは rope のスナップショットではなく、`Arc<String>` の複製を渡している。
+
+`decorations` クエリは、ABI・検証・予算までは実装してテストしたが、エディタへの描画はまだない。
+
+計測。Apple Silicon(macOS)のリリースビルドで、空ループは約230万fuel/ms
+(`cargo test --release fuel_throughput -- --ignored --nocapture`)。既定値ではクエリ約0.9 ms、
+タスク約43 ms、起動約9 ms に相当する。**Scarlet実機での計測はまだで、段階2の関門
+(予算内に収まるか)は未確認。** 予算の値はその結果で見直す。
+
+例: `examples/extensions/upper-case` は選択範囲を大文字にする拡張を、ABIを直接使ってRustで書いたもの。
+`cargo test real_guest -- --ignored` に `KUREHA_TEST_EXTENSION_WASM` を渡すと、ビルド済みの
+モジュールをランタイムに通して確かめられる。
+
 ### 次にやること
 
-- 段階2: wasmiホストの最小版。依存追加に伴い `assets/acknowledgements.json` の再生成と、
-  Scarlet向けのベンダリング確認が必要。
+- Scarlet実機でのfuel計測と、予算の見直し。
+- `decorations` の結果をエディタに描く(見えている範囲だけ問い合わせ、版でキャッシュ)。
 - 拡張一覧と読み込みエラーを見られる画面(コマンドパレットの項目から開く)。
+- Rust向けSDKクレート(上の例のエクスポートと `kx_host` の呼び出しを隠す)。

@@ -1057,11 +1057,13 @@ impl App {
                         };
                         drop(rt);
                         match edits {
-                            Ok(edits) => self.apply_language_edits(
-                                &guard,
-                                &edits,
-                                if is_rename { "Rename" } else { "Format" },
-                            ),
+                            Ok(edits) => {
+                                self.apply_language_edits(
+                                    &guard,
+                                    &edits,
+                                    if is_rename { "Rename" } else { "Format" },
+                                );
+                            }
                             Err(error) => {
                                 self.status.set(error);
                                 self.dismiss_language_panel();
@@ -1408,9 +1410,38 @@ impl App {
         self.dismiss_language_panel();
         self.language_send("textDocument/rename", None, None, false, Some(&name));
     }
-    fn apply_language_edits(&self, guard: &Guard, edits: &[Value], label: &str) {
+    /// Applies byte-offset edits computed against `text` at `revision`, through
+    /// the same stale-result checks as language server edits.
+    pub(super) fn apply_offset_edits(
+        &self,
+        id: DocumentId,
+        revision: u64,
+        navigation: u64,
+        text: &str,
+        edits: &[(std::ops::Range<usize>, String)],
+        label: &str,
+    ) -> bool {
+        let values = edits
+            .iter()
+            .map(|(range, inserted)| {
+                json!({
+                    "range": {"start": position(text, range.start), "end": position(text, range.end)},
+                    "newText": inserted,
+                })
+            })
+            .collect::<Vec<_>>();
+        let guard = Guard {
+            id,
+            revision,
+            caret: 0,
+            navigation,
+        };
+        self.apply_language_edits(&guard, &values, label)
+    }
+    /// Returns whether the edits were applied.
+    fn apply_language_edits(&self, guard: &Guard, edits: &[Value], label: &str) -> bool {
         let Some(id) = self.active_id() else {
-            return;
+            return false;
         };
         if id != guard.id
             || !self.editable(id)
@@ -1419,21 +1450,21 @@ impl App {
             self.status.set(format!(
                 "{label} discarded because the active editor changed"
             ));
-            return;
+            return false;
         }
         let Some(bindings) = self.bindings(id) else {
-            return;
+            return false;
         };
         let selection = bindings.selection.get();
         let mut rt = self.runtime.lock().unwrap();
         let Some(doc) = rt.workspace.get_mut(id) else {
-            return;
+            return false;
         };
         if doc.editor.revision() != guard.revision {
             drop(rt);
             self.status
                 .set(format!("{label} discarded because the document changed"));
-            return;
+            return false;
         }
         let original = doc.editor.document.as_str();
         match prepare_edits(&original, edits, selection) {
@@ -1441,7 +1472,7 @@ impl App {
                 if original[plan.edit.replaced_range.clone()] == plan.edit.inserted {
                     drop(rt);
                     self.status.set(format!("{label}: no changes needed"));
-                    return;
+                    return false;
                 }
                 doc.editor.moved(selection);
                 doc.editor.edit_plan(&plan);
@@ -1452,10 +1483,12 @@ impl App {
                 self.changed();
                 self.status
                     .set(format!("{label} applied · Undo restores the previous text"));
+                true
             }
             Err(error) => {
                 drop(rt);
                 self.status.set(error);
+                false
             }
         }
     }

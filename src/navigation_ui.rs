@@ -28,6 +28,8 @@ enum Mode {
 enum Action {
     File(PathBuf),
     Command(&'static str),
+    /// Extension id and command id; kept apart from built-in ids.
+    ExtensionCommand(&'static str, &'static str),
     Theme(kureha_code::theme::Theme),
 }
 #[derive(Clone, Debug)]
@@ -858,15 +860,49 @@ impl App {
         match mode {
             Mode::Closed => {}
             Mode::Commands => {
-                let rows = navigation::filter_commands(COMMANDS, &query, VISIBLE_RESULTS)
+                // Extension commands are listed once the registry has loaded.
+                let contributed = kureha_code::extensions::loaded()
+                    .map(|registry| {
+                        registry
+                            .extensions
+                            .iter()
+                            .filter(|e| e.wasm.is_some())
+                            .flat_map(|e| {
+                                e.manifest.contributes.commands.iter().map(move |c| (e, c))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let mut commands = COMMANDS.to_vec();
+                commands.extend(contributed.iter().map(|(extension, command)| {
+                    CommandDescriptor {
+                        id: command.id.as_str(),
+                        label: command.title.as_str(),
+                        keywords: extension.manifest.name.as_str(),
+                        shortcut: "",
+                    }
+                }));
+                let rows = navigation::filter_commands(&commands, &query, VISIBLE_RESULTS)
                     .into_iter()
-                    .map(|hit| {
-                        let command = COMMANDS[hit.command_index];
-                        Row {
-                            label: command.label.into(),
-                            detail: shortcut(command.shortcut),
-                            key: command.id.into(),
-                            action: Action::Command(command.id),
+                    .map(|hit| match hit.command_index.checked_sub(COMMANDS.len()) {
+                        None => {
+                            let command = COMMANDS[hit.command_index];
+                            Row {
+                                label: command.label.into(),
+                                detail: shortcut(command.shortcut),
+                                key: command.id.into(),
+                                action: Action::Command(command.id),
+                            }
+                        }
+                        Some(index) => {
+                            let (extension, command) = contributed[index];
+                            let id = extension.manifest.id.as_str();
+                            Row {
+                                label: format!("{}: {}", extension.manifest.name, command.title),
+                                detail: String::new(),
+                                key: format!("ext:{id}:{}", command.id),
+                                action: Action::ExtensionCommand(id, command.id.as_str()),
+                            }
                         }
                     })
                     .collect::<Vec<_>>();
@@ -1063,6 +1099,9 @@ impl App {
         match row.action {
             Action::File(path) => self.open(path),
             Action::Command(id) => self.execute_navigation_command(id),
+            Action::ExtensionCommand(extension, command) => {
+                self.run_extension_command(extension, command)
+            }
             Action::Theme(theme) => {
                 self.apply_theme(theme);
                 if let Some(name) = selected_theme {
