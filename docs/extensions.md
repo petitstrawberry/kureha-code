@@ -362,7 +362,7 @@ kx_host_take(ptr: u32, len: u32) -> i32   // 保留中の返事を拡張のメ�
 | コマンド | fuel | タスク予算に対して | 時間 |
 | --- | --- | --- | --- |
 | Convert to snake_case(184 KiB) | 4.99億 | 50% | 63 ms |
-| Format JSON | 2.72億 | 27% | 57 ms |
+| Format Selection as JSON | 2.72億 | 27% | 57 ms |
 | Minify JSON | 1.53億 | 15% | 30 ms |
 | URL Encode(184 KiB) | 1.01億 | 10% | 16 ms |
 | Sort Lines | 0.84億 | 8% | 17 ms |
@@ -381,7 +381,8 @@ macOSのデバッグビルドで、Enterから編集の適用まで初回読み�
   バッファのエクスポート、`kx_host` の2段階呼び出し、JSONの読み書きを隠し、`export!(handler)` で
   エクスポートを生成する。FFIは `wasm32` のときだけ有効なので、変換処理はネイティブでテストできる。
 - `examples/extensions/text-tools`: 実用向けの例。行の並べ替え・重複削除・反転、行末空白の削除、
-  JSONの整形・圧縮(キー順と数値の表記を保つ)、大文字小文字や snake_case などの変換、
+  JSONの圧縮と、他のファイルに埋め込まれたJSONの選択範囲の整形(キー順と数値の表記を保つ。JSONファイル
+  自体の整形は整形器としてFormat Documentが受け持つ)、大文字小文字や snake_case などの変換、
   Base64・URLのエンコードとデコード、行数・単語数・文字数。行のコマンドは選択行(なければ文書全体)、
   変換系は選択範囲だけに効く。CRLFと末尾の改行を保ち、入力は192 KiBまで。
 - `examples/extensions/upper-case`: 最小の例。選択範囲を大文字にする。

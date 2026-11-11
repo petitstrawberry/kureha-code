@@ -52,20 +52,15 @@ fn whole_lines(document: &Document, id: &str) -> Reply {
             transform::trim_trailing(input),
             "Trimmed trailing whitespace",
         ),
-        "json-format" | "json-minify" => {
+        "json-minify" => {
             let range = if document.selection.is_empty() {
                 transform::trimmed(&text, 0..text.len())
             } else {
                 transform::trimmed(&text, document.selection.clone())
             };
             let input = &text[range.clone()];
-            let result = if id == "json-format" {
-                transform::json_format(input)
-            } else {
-                transform::json_minify(input)
-            };
-            return match result {
-                Ok(output) => replace(range, input, output, "Reformatted JSON"),
+            return match transform::json_minify(input) {
+                Ok(output) => replace(range, input, output, "Minified JSON"),
                 Err(e) => Reply::error(e),
             };
         }
@@ -100,6 +95,16 @@ fn selection(document: &Document, id: &str) -> Reply {
         Ok(text) => text,
         Err(e) => return Reply::error(e),
     };
+    if id == "json-format-selection" {
+        // JSON embedded in another file; whole JSON files use Format Document.
+        let lead = input.len() - input.trim_start().len();
+        let target = range.start + lead..range.start + input.trim_end().len();
+        let json = input.trim();
+        return match transform::json_format(json) {
+            Ok(output) => replace(target, json, output, "Formatted the selection as JSON"),
+            Err(e) => Reply::error(e),
+        };
+    }
     let case = |case| Ok(transform::convert_case(&input, case));
     let result = match id {
         "case-upper" => case(Case::Upper),
@@ -159,7 +164,7 @@ pub fn handle(request: Request) -> Reply {
         Request::Command { id, document } => match id.strip_prefix("text-tools.") {
             Some(
                 id @ ("sort-lines" | "unique-lines" | "reverse-lines" | "trim-trailing"
-                | "json-format" | "json-minify" | "count"),
+                | "json-minify" | "count"),
             ) => whole_lines(&document, id),
             Some(id) => selection(&document, id),
             None => Reply::unsupported(),

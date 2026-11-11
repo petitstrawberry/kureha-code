@@ -6,7 +6,8 @@ Everyday text commands for Kureha Code, written with the minimal SDK in
 | Commands | Works on |
 | --- | --- |
 | Sort Lines, Remove Duplicate Lines, Reverse Lines, Trim Trailing Whitespace | Selected lines (grown to whole lines), or the whole document |
-| Format JSON, Minify JSON | Selection or whole document. Key order and number text are kept |
+| Minify JSON | Selection or whole document. Key order and number text are kept |
+| Format Selection as JSON | Selection only, for JSON inside other files (Markdown, logs, tests). JSON files use Code: Format Document |
 | Count Lines, Words and Characters | Selection or whole document. Shown in the status bar |
 | Convert to UPPER / lower / Title / snake_case / CONSTANT_CASE / camelCase / PascalCase / kebab-case | Selection only |
 | Base64 Encode / Decode, URL Encode / Decode | Selection only. Decoding refuses bytes that are not UTF-8 |

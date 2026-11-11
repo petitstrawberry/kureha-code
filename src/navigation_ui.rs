@@ -2132,8 +2132,9 @@ mod tests {
         use scarlet_ui::prelude::{TextPosition, TextSelection};
         let registry = kureha_code::extensions::registry();
         assert!(registry.errors.is_empty(), "{:?}", registry.errors);
-        let source = "{\"name\":\"kureha\",\"version\":1.10,\"tags\":[\"editor\",\"wasm\"]}\n";
-        let app = app_with_text(source);
+        let json = "{\"name\":\"kureha\",\"version\":1.10,\"tags\":[\"editor\",\"wasm\"]}";
+        let source = format!("Config:\n{json}\nend\n");
+        let app = app_with_text(&source);
         let id = app.document_id();
         let document = || {
             app.bindings(id)
@@ -2143,18 +2144,37 @@ mod tests {
                 .as_str()
                 .to_string()
         };
-        // No selection: the whole document is reformatted, final newline kept.
+        // JSON inside another document: only the selected JSON is formatted.
+        let start = source.find('{').unwrap();
+        app.bindings(id).unwrap().selection.set(TextSelection {
+            anchor: TextPosition::new(start),
+            caret: TextPosition::new(start + json.len() + 1),
+        });
         run_palette_command(
             &app,
-            "format json",
-            "Text Tools: Format JSON",
+            "format selection json",
+            "Text Tools: Format Selection as JSON",
             Some("text-tools-palette.png"),
         );
         assert_eq!(
             document(),
-            "{\n  \"name\": \"kureha\",\n  \"version\": 1.10,\n  \"tags\": [\n    \"editor\",\n    \"wasm\"\n  ]\n}\n"
+            "Config:\n{\n  \"name\": \"kureha\",\n  \"version\": 1.10,\n  \"tags\": [\n    \"editor\",\n    \"wasm\"\n  ]\n}\nend\n"
         );
-        assert_eq!(app.status.get(), "Reformatted JSON");
+        assert_eq!(app.status.get(), "Formatted the selection as JSON");
+        // Whole JSON files go through Code: Format Document instead.
+        let mut palette = primary();
+        palette.shift = true;
+        assert!(app.navigation_key(KeyCode::Char('p'), palette));
+        app.nav.query.set("format json".into());
+        app.poll_navigation();
+        assert!(
+            !app.nav
+                .rows
+                .get()
+                .iter()
+                .any(|row| row.label == "Text Tools: Format JSON")
+        );
+        app.close_navigation();
         render_preview(&app, "text-tools-json.png");
         // A selected key converts to camelCase.
         let text = document();

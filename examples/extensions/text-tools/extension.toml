@@ -21,9 +21,11 @@ title = "Reverse Lines"
 id = "text-tools.trim-trailing"
 title = "Trim Trailing Whitespace"
 
+# JSON files are formatted by Code: Format Document (see `formatters` below).
+# This command is for JSON embedded in other files.
 [[contributes.commands]]
-id = "text-tools.json-format"
-title = "Format JSON"
+id = "text-tools.json-format-selection"
+title = "Format Selection as JSON"
 
 [[contributes.commands]]
 id = "text-tools.json-minify"

@@ -426,7 +426,7 @@ fn text_tools_budget() {
         ("text-tools.sort-lines", lines.clone(), false),
         ("text-tools.unique-lines", lines.clone(), false),
         ("text-tools.trim-trailing", lines.clone(), false),
-        ("text-tools.json-format", json.clone(), false),
+        ("text-tools.json-format-selection", json.clone(), true),
         ("text-tools.json-minify", pretty_json_below(limit), false),
         ("text-tools.count", lines.clone(), false),
         ("text-tools.case-snake", words.clone(), true),
