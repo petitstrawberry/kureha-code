@@ -1571,6 +1571,9 @@ impl Application for App {
         self.poll_clipboard();
         self.poll_language();
         self.poll_language_interactions();
+        if let Some(report) = kureha_code::extensions::take_load_report() {
+            self.status.set(report);
+        }
         if kureha_code::syntax::poll() {
             self.syntax_revision
                 .update(|revision| *revision = revision.wrapping_add(1));
@@ -1578,6 +1581,7 @@ impl Application for App {
     }
 }
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    kureha_code::extensions::preload();
     let mut app = App::new();
     app.apply_theme(app.theme.get());
     app.start_theme_settings();

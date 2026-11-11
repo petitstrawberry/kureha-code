@@ -107,7 +107,14 @@ pub(super) struct Service {
 }
 
 fn language(path: &Path) -> Option<&'static str> {
-    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    builtin_language(&extension).or_else(|| {
+        // Built-in mappings win so an extension cannot take over `.rs` files.
+        kureha_code::extensions::loaded()?.language_for_extension(&extension)
+    })
+}
+fn builtin_language(extension: &str) -> Option<&'static str> {
+    match extension {
         "rs" => Some("rust"),
         "py" | "pyi" => Some("python"),
         "js" | "mjs" | "cjs" => Some("javascript"),
@@ -164,6 +171,12 @@ fn command(language: &str) -> Result<(String, Vec<String>), String> {
                 .unwrap_or_default();
             return Ok((program.into(), args));
         }
+    }
+    // Extensions come after the user's own configuration but before defaults.
+    if let Some(server) =
+        kureha_code::extensions::loaded().and_then(|r| r.language_server(language))
+    {
+        return Ok((server.command.clone(), server.args.clone()));
     }
     Ok(match language {
         "rust" => ("rust-analyzer".into(), vec![]),

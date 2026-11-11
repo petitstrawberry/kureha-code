@@ -555,6 +555,14 @@ impl App {
                 .filter(|(id, _)| *id != "kureha")
                 .filter_map(|(id, _)| preset(id)),
         );
+        // Not loaded yet means the worker is still reading; show presets only.
+        if let Some(registry) = kureha_code::extensions::loaded() {
+            for (_, theme) in registry.themes() {
+                if !choices.iter().any(|c| c.name().eq_ignore_ascii_case(theme.name())) {
+                    choices.push(theme.clone());
+                }
+            }
+        }
         let mut rows = choices
             .into_iter()
             .map(|choice| {

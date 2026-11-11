@@ -116,7 +116,9 @@ pub(super) fn named_theme(name: &str) -> Result<Theme, String> {
     match name.to_ascii_lowercase().as_str() {
         "light" => Ok(Theme::Light),
         "dark" => Ok(Theme::Dark),
-        name => preset(name).ok_or_else(|| format!("Unknown theme: {name}")),
+        name => preset(name)
+            .or_else(|| kureha_code::extensions::registry().theme(name))
+            .ok_or_else(|| format!("Unknown theme: {name}")),
     }
 }
 
