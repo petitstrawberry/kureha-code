@@ -71,18 +71,21 @@ Each release carries the Scarlet apps and desktop packages for macOS and Linux.
 | Linux x86_64 / AArch64 | `kureha-code-linux-<arch>-<tag>.tar.gz` | Run `kureha-code/bin/kureha-code`. Needs the glibc version in the release notes, Fontconfig, Vulkan or OpenGL drivers and Wayland/xkbcommon or X11 libraries from the distribution |
 | Scarlet | see below | Installed into images through `bundle.toml` |
 
-Desktop packages are built outside Nix on GitHub-hosted runners (macOS 15,
-Ubuntu 22.04) with a pinned stable Rust and the flake's Appcoat revision, so
-they use the system loader and libraries. The build refuses packages that refer
-to `/nix/store`, Linux binaries with another dynamic loader, wrong architectures
-and macOS bundles whose signature does not verify. `release.json` records each
-build's source revision, and Linux builds also record the newest glibc symbol
-version they need. Desktop assets are listed in `SHA256SUMS` but never in
-`bundle.toml`, so Scarlet images are unaffected.
+Desktop packages use the same flake toolchain and Appcoat as the Scarlet
+builds, on GitHub-hosted macOS 15 and Ubuntu 24.04 runners. Linux binaries are
+then pointed at the distribution's dynamic loader with `patchelf` and their Nix
+library search paths removed, so they run outside Nix; they need the glibc
+named in the release notes (2.39 with the current nixpkgs, e.g. Ubuntu 24.04,
+Debian 13 or Fedora 40 and newer). The build refuses Linux binaries with another
+loader, a library search path or a library named by path, wrong architectures,
+other files that mention `/nix/store`, and macOS bundles that link the Nix store
+or whose signature does not verify. `release.json` records each build's source
+revision and the Linux glibc requirement. Desktop assets are listed in
+`SHA256SUMS` but never in `bundle.toml`, so Scarlet images are unaffected.
 
 ```sh
-python3 scripts/release-scarlet.py build-desktop --name linux-x86_64 \
-  --version local --output artifacts/desktop
+nix develop --command python3 scripts/release-scarlet.py build-desktop \
+  --name linux-x86_64 --version local --output artifacts/desktop
 ```
 
 Names are `macos-aarch64`, `linux-x86_64` and `linux-aarch64`; each must be built

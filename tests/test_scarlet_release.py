@@ -164,18 +164,39 @@ class ScarletReleaseTests(unittest.TestCase):
                          (output / "bundle.toml").read_bytes())
 
 
-def linux_elf(machine, loader, extra=b""):
-    """A minimal ELF64 with one PT_INTERP program header."""
+def linux_elf(machine, loader, extra=b"", needed=("libfontconfig.so.1", "libc.so.6"), runpath=None):
+    """A minimal ELF64 with PT_INTERP, one PT_LOAD and a dynamic section."""
     interp = loader.encode() + b"\0"
-    data = bytearray(120)
+    strings = b"\0"
+    offsets = {}
+    for name in [*needed, *([runpath] if runpath else [])]:
+        offsets[name] = len(strings)
+        strings += name.encode() + b"\0"
+    phoff, phnum = 64, 3
+    interp_at = phoff + 56 * phnum
+    strtab_at = interp_at + len(interp)
+    dynamic_at = (strtab_at + len(strings) + 7) // 8 * 8
+    entries = [(1, offsets[name]) for name in needed]
+    if runpath:
+        entries.append((29, offsets[runpath]))
+    entries += [(5, strtab_at), (0, 0)]
+    dynamic = b"".join(struct.pack("<qQ", tag, value) for tag, value in entries)
+    tail = b"GLIBC_2.17\0GLIBC_2.39\0GLIBC_2.4\0" + extra
+    size = dynamic_at + len(dynamic) + len(tail)
+    data = bytearray(dynamic_at)
     data[:8] = b"\x7fELF\x02\x01\x01\x00"
     struct.pack_into("<HH", data, 16, 3, machine)
-    struct.pack_into("<Q", data, 32, 64)  # e_phoff
-    struct.pack_into("<HH", data, 54, 56, 1)  # e_phentsize, e_phnum
-    struct.pack_into("<I", data, 64, 3)  # PT_INTERP
-    struct.pack_into("<Q", data, 72, 120)  # p_offset
-    struct.pack_into("<Q", data, 96, len(interp))  # p_filesz
-    return bytes(data) + interp + b"GLIBC_2.17\0GLIBC_2.34\0GLIBC_2.4\0" + extra
+    struct.pack_into("<Q", data, 32, phoff)
+    struct.pack_into("<HH", data, 54, 56, phnum)
+    for index, (kind, offset, length) in enumerate([
+            (3, interp_at, len(interp)), (1, 0, size), (2, dynamic_at, len(dynamic))]):
+        at = phoff + 56 * index
+        struct.pack_into("<I", data, at, kind)
+        struct.pack_into("<QQ", data, at + 8, offset, offset)  # p_offset, p_vaddr
+        struct.pack_into("<Q", data, at + 32, length)  # p_filesz
+    data[interp_at:interp_at + len(interp)] = interp
+    data[strtab_at:strtab_at + len(strings)] = strings
+    return bytes(data) + dynamic + tail
 
 
 class DesktopReleaseTests(ScarletReleaseTests):
@@ -237,21 +258,33 @@ class DesktopReleaseTests(ScarletReleaseTests):
             archive = release.desktop_archive_name(name, self.version)
             self.assertIn(f"{release.sha(output / archive)}  {archive}", sums)
             self.assertNotIn(archive, (output / "bundle.toml").read_text())
-        self.assertEqual(manifest["desktop"][1]["glibc"], "2.34")
+        self.assertEqual(manifest["desktop"][1]["glibc"], "2.39")
         notes = release.release_notes(manifest)
-        self.assertIn("glibc 2.34 or newer", notes)
+        self.assertIn("glibc 2.39 or newer", notes)
         self.assertIn("xattr -dr com.apple.quarantine", notes)
 
-    def test_nix_store_paths_and_foreign_loaders_are_rejected(self):
+    def test_linux_binaries_must_run_on_the_system_loader_and_libraries(self):
         machine, loader = release.LINUX_ELF["aarch64"]
         for executable, message in [
-                (linux_elf(machine, "/nix/store/abc-glibc/lib/ld-linux-aarch64.so.1"), "Nix store"),
+                (linux_elf(machine, "/nix/store/abc-glibc-2.42/lib/ld-linux-aarch64.so.1"), "loader"),
                 (linux_elf(machine, "/lib/ld-musl-aarch64.so.1"), "loader"),
                 (linux_elf(62, "/lib64/ld-linux-x86-64.so.2"), "aarch64 Linux ELF"),
-                (linux_elf(machine, loader, extra=b"/nix/store/xyz-libfoo"), "Nix store")]:
+                (linux_elf(machine, loader, runpath="/nix/store/abc-glibc-2.42/lib"), "search path"),
+                (linux_elf(machine, loader, needed=("/nix/store/abc-fontconfig/lib/libfontconfig.so.1",)),
+                 "by path")]:
             with self.subTest(message=message):
                 with self.assertRaisesRegex(ValueError, message):
                     self.make_desktop("linux-aarch64", executable=executable)
+        # Unused bytes, such as a removed RUNPATH or a library's last-resort
+        # search directory, may still mention the Nix store.
+        self.make_desktop("linux-aarch64", executable=linux_elf(
+            machine, loader, extra=b"/nix/store/abc-libx11-1.8/lib\0"))
+        self.assemble()
+        with self.assertRaisesRegex(ValueError, "Nix store"):
+            self.make_desktop("linux-aarch64", extra=[
+                (release.LINUX_DIR + "/share/kureha.desktop", b"Exec=/nix/store/x/bin/kureha-code", 0o644)])
+
+    def test_macos_packages_must_not_mention_the_nix_store(self):
         with self.assertRaisesRegex(ValueError, "Nix store"):
             self.make_desktop("macos-aarch64", extra=[
                 (release.MACOS_APP + "/Contents/Frameworks/libfoo.dylib", b"/nix/store/q-foo", 0o644)])

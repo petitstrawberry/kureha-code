@@ -34,7 +34,8 @@ MACOS_APP = "Kureha Code.app"
 MACOS_EXECUTABLE = MACOS_APP + "/Contents/MacOS/kureha-code"
 LINUX_DIR = "kureha-code"
 LINUX_EXECUTABLE = LINUX_DIR + "/bin/kureha-code"
-# A portable Linux binary uses the distribution's loader, never a Nix store path.
+# Linux binaries are built with Nix, then pointed at the distribution's loader
+# with their Nix library search paths removed, so they run outside Nix.
 LINUX_ELF = {"x86_64": (62, "/lib64/ld-linux-x86-64.so.2"),
              "aarch64": (183, "/lib/ld-linux-aarch64.so.1")}
 MACHO_ARM64 = 0x0100000C
@@ -120,24 +121,54 @@ def write_tar(stage, top, archive_path):
 
 
 def linux_executable(data, arch):
-    """Check a desktop Linux ELF and return the newest glibc version it needs."""
+    """Check a desktop Linux ELF and return the newest glibc version it needs.
+
+    The checks are structural: the loader, the absence of RPATH/RUNPATH and
+    bare library names. Nix store strings may remain as unused bytes, such as
+    a removed RUNPATH or a library's last-resort search directory.
+    """
     machine, loader = LINUX_ELF[arch]
     if (len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01" or data[7] not in (0, 3)
             or struct.unpack_from("<H", data, 18)[0] != machine):
         raise ValueError(f"expected a {arch} Linux ELF")
     phoff, = struct.unpack_from("<Q", data, 32)
     phentsize, phnum = struct.unpack_from("<HH", data, 54)
-    interpreter = None
+    interpreter, dynamic, loads = None, None, []
     for index in range(phnum):
         offset = phoff + index * phentsize
         if offset + 56 > len(data):
             raise ValueError("truncated ELF program headers")
-        if struct.unpack_from("<I", data, offset)[0] == 3:  # PT_INTERP
-            start, = struct.unpack_from("<Q", data, offset + 8)
-            size, = struct.unpack_from("<Q", data, offset + 32)
-            interpreter = data[start:start + size].rstrip(b"\0").decode(errors="replace")
+        kind, = struct.unpack_from("<I", data, offset)
+        p_offset, p_vaddr = struct.unpack_from("<QQ", data, offset + 8)
+        p_filesz, = struct.unpack_from("<Q", data, offset + 32)
+        if kind == 3:  # PT_INTERP
+            interpreter = data[p_offset:p_offset + p_filesz].rstrip(b"\0").decode(errors="replace")
+        elif kind == 2:  # PT_DYNAMIC
+            dynamic = (p_offset, p_filesz)
+        elif kind == 1:  # PT_LOAD
+            loads.append((p_vaddr, p_offset, p_filesz))
     if interpreter != loader:
         raise ValueError(f"Linux executable uses loader {interpreter!r}, expected {loader}")
+    entries = []
+    if dynamic:
+        start, size = dynamic
+        for at in range(start, min(start + size, len(data)) - 15, 16):
+            tag, value = struct.unpack_from("<qQ", data, at)
+            if tag == 0:  # DT_NULL
+                break
+            entries.append((tag, value))
+    if any(tag in (15, 29) for tag, _ in entries):  # DT_RPATH, DT_RUNPATH
+        raise ValueError("Linux executable still has a library search path")
+    strtab = next((value for tag, value in entries if tag == 5), None)  # DT_STRTAB
+    base = next((offset + strtab - vaddr for vaddr, offset, size in loads
+                 if strtab is not None and vaddr <= strtab < vaddr + size), None)
+    for tag, value in entries:
+        if tag == 1:  # DT_NEEDED
+            if base is None:
+                raise ValueError("Linux executable has an unreadable string table")
+            name = data[base + value:data.index(b"\0", base + value)].decode(errors="replace")
+            if "/" in name:
+                raise ValueError("Linux executable needs a library by path: " + name)
     versions = [tuple(map(int, v)) for v in re.findall(rb"GLIBC_(\d+)\.(\d+)", data)]
     return "%d.%d" % max(versions) if versions else None
 
@@ -171,7 +202,9 @@ def verify_desktop_archive(path, name):
         if (relative.is_absolute() or ".." in relative.parts or str(relative) != entry
                 or not (entry == top or entry.startswith(top + "/"))):
             raise ValueError("invalid desktop archive member: " + entry)
-        if data is not None and NIX_STORE in data:
+        # The Linux executable is checked structurally instead (see linux_executable).
+        linux_binary = platform == "linux" and entry == executable
+        if data is not None and NIX_STORE in data and not linux_binary:
             raise ValueError("desktop package refers to the Nix store: " + entry)
     if executable not in files or files[executable][2] is None:
         raise ValueError("desktop archive lacks " + executable)
@@ -189,7 +222,7 @@ def desktop_archive_name(name, version):
 
 
 def build_desktop(name, version, output, artifact=None):
-    """Package a desktop build for this host; cross builds are not supported."""
+    """Package a desktop build for this host inside `nix develop`; no cross builds."""
     version_tag(version)
     platform, arch = DESKTOP[name]
     host = ({"darwin": "macos", "linux": "linux"}.get(sys.platform),
@@ -221,6 +254,9 @@ def build_desktop(name, version, output, artifact=None):
                 subprocess.run(["ditto", "-c", "-k", "--norsrc", "--noextattr", "--noacl",
                                 "--keepParent", str(top), str(archive_path)], check=True)
             else:
+                # Run on the distribution's loader and libraries, not Nix's.
+                subprocess.run(["patchelf", "--set-interpreter", LINUX_ELF[arch][1], "--remove-rpath",
+                                str(stage / LINUX_EXECUTABLE)], check=True)
                 write_tar(stage, top, archive_path)
         glibc = verify_desktop_archive(archive_path, name)
         record = {
