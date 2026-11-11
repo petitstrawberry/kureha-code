@@ -48,6 +48,11 @@ impl Default for Budgets {
 }
 pub const MAX_EDITS: usize = 4096;
 pub const MAX_DECORATIONS: usize = 10_000;
+/// Fixed fuel charged for each host function call.
+pub const HOST_CALL_FUEL: u64 = 10_000;
+/// Fuel charged per byte the host reads, encodes or copies for the guest.
+/// Host work is native, but it must not be free or a guest could loop on it.
+pub const HOST_BYTE_FUEL: u64 = 4;
 const MAX_STATUS: usize = 256;
 const MAX_LOG_ENTRIES: usize = 64;
 const MAX_LOG_BYTES: usize = 1024;
@@ -134,6 +139,19 @@ struct HostState {
     log: Vec<String>,
 }
 
+/// Takes `units` from the caller's fuel, failing like an instruction would.
+fn charge(caller: &mut Caller<'_, HostState>, units: u64) -> Result<(), wasmi::Error> {
+    let fuel = caller.get_fuel()?;
+    if fuel < units {
+        caller.set_fuel(0)?;
+        return Err(TrapCode::OutOfFuel.into());
+    }
+    caller.set_fuel(fuel - units)
+}
+fn byte_fuel(bytes: usize) -> u64 {
+    (bytes as u64).saturating_mul(HOST_BYTE_FUEL)
+}
+
 fn guest_range(memory_len: usize, ptr: i32, len: i32) -> Option<Range<usize>> {
     let start = usize::try_from(ptr as u32).ok()?;
     let len = usize::try_from(len).ok()?;
@@ -217,15 +235,17 @@ fn kx_host(mut caller: Caller<'_, HostState>, ptr: i32, len: i32) -> Result<i64,
         return Ok(-1);
     }
     let request = data[range].to_vec();
+    charge(&mut caller, HOST_CALL_FUEL + byte_fuel(request.len()))?;
     let state = caller.data_mut();
     let reply = serde_json::to_vec(&handle_host_request(state, &request))
         .expect("JSON values always serialize");
+    state.pending = None;
+    charge(&mut caller, byte_fuel(reply.len()))?;
     if reply.len() > MAX_MESSAGE_BYTES {
-        state.pending = None;
         return Ok(-1);
     }
     let len = reply.len() as i64;
-    state.pending = Some(reply);
+    caller.data_mut().pending = Some(reply);
     Ok(len)
 }
 
@@ -238,6 +258,7 @@ fn kx_host_take(
     let Some(reply) = caller.data_mut().pending.take() else {
         return Ok(-1);
     };
+    charge(&mut caller, HOST_CALL_FUEL + byte_fuel(reply.len()))?;
     let data = memory.data_mut(&mut caller);
     match guest_range(data.len(), ptr, len) {
         Some(range) if range.len() == reply.len() => {

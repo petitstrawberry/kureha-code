@@ -560,7 +560,10 @@ impl App {
         // Not loaded yet means the worker is still reading; show presets only.
         if let Some(registry) = kureha_code::extensions::loaded() {
             for (_, theme) in registry.themes() {
-                if !choices.iter().any(|c| c.name().eq_ignore_ascii_case(theme.name())) {
+                if !choices
+                    .iter()
+                    .any(|c| c.name().eq_ignore_ascii_case(theme.name()))
+                {
                     choices.push(theme.clone());
                 }
             }
@@ -874,14 +877,16 @@ impl App {
                     })
                     .unwrap_or_default();
                 let mut commands = COMMANDS.to_vec();
-                commands.extend(contributed.iter().map(|(extension, command)| {
-                    CommandDescriptor {
-                        id: command.id.as_str(),
-                        label: command.title.as_str(),
-                        keywords: extension.manifest.name.as_str(),
-                        shortcut: "",
-                    }
-                }));
+                commands.extend(
+                    contributed
+                        .iter()
+                        .map(|(extension, command)| CommandDescriptor {
+                            id: command.id.as_str(),
+                            label: command.title.as_str(),
+                            keywords: extension.manifest.name.as_str(),
+                            shortcut: "",
+                        }),
+                );
                 let rows = navigation::filter_commands(&commands, &query, VISIBLE_RESULTS)
                     .into_iter()
                     .map(|hit| match hit.command_index.checked_sub(COMMANDS.len()) {

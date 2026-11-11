@@ -54,10 +54,7 @@ pub struct Host {
 }
 
 enum Slot {
-    Ready {
-        runtime: Box<Runtime>,
-        fuel_failures: u32,
-    },
+    Ready(Box<Runtime>),
     Failed(String),
 }
 
@@ -65,6 +62,8 @@ struct Worker {
     registry: &'static Registry,
     budgets: Budgets,
     slots: HashMap<String, Slot>,
+    /// Consecutive budget overruns, kept apart because overrun instances are dropped.
+    overruns: HashMap<String, u32>,
 }
 
 impl Worker {
@@ -72,10 +71,7 @@ impl Worker {
         let (registry, budgets) = (self.registry, self.budgets);
         self.slots.entry(extension.to_owned()).or_insert_with(|| {
             match instantiate(registry, extension, budgets) {
-                Ok(runtime) => Slot::Ready {
-                    runtime: Box::new(runtime),
-                    fuel_failures: 0,
-                },
+                Ok(runtime) => Slot::Ready(Box::new(runtime)),
                 Err(e) => Slot::Failed(e),
             }
         })
@@ -92,12 +88,8 @@ impl Worker {
             .find(|e| e.manifest.id == extension)
             .map_or(extension, |e| e.manifest.name.as_str())
             .to_owned();
-        let slot = self.slot(extension);
-        let (runtime, fuel_failures) = match &mut *slot {
-            Slot::Ready {
-                runtime,
-                fuel_failures,
-            } => (runtime, fuel_failures),
+        let runtime = match self.slot(extension) {
+            Slot::Ready(runtime) => runtime,
             Slot::Failed(reason) => return Err(format!("{name} is not available: {reason}")),
         };
         let result = call(runtime);
@@ -106,14 +98,21 @@ impl Worker {
         }
         match result {
             Ok(value) => {
-                *fuel_failures = 0;
+                self.overruns.remove(extension);
                 Ok(value)
             }
             Err(CallError::Fuel) => {
-                *fuel_failures += 1;
+                // Fuel can run out mid-update of the guest's own state (its
+                // allocator, say), so the instance is discarded like a trap.
+                self.slots.remove(extension);
+                let overruns = self.overruns.entry(extension.to_owned()).or_default();
+                *overruns += 1;
                 let message = format!("{name} {}", CallError::Fuel);
-                if *fuel_failures >= MAX_FUEL_FAILURES {
-                    *slot = Slot::Failed("it repeatedly exceeded its time budget".into());
+                if *overruns >= MAX_FUEL_FAILURES {
+                    self.slots.insert(
+                        extension.to_owned(),
+                        Slot::Failed("it repeatedly exceeded its time budget".into()),
+                    );
                     return Err(format!("{message}; it is now turned off until restart"));
                 }
                 Err(message)
@@ -193,6 +192,7 @@ impl Host {
                     registry,
                     budgets,
                     slots: HashMap::new(),
+                    overruns: HashMap::new(),
                 };
                 for request in inbox {
                     if outbox.send(worker.handle(request)).is_err() {

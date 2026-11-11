@@ -337,7 +337,21 @@ fn real_guest_upper_cases_the_selection() {
     let mut runtime = Runtime::new(&std::fs::read(path).unwrap(), Budgets::default()).unwrap();
     let mut document = snapshot("héllo wörld");
     document.selection = 0..6;
-    let outcome = runtime.command("upper-case.selection", document).unwrap();
+    let outcome = runtime
+        .command("upper-case.selection", document.clone())
+        .unwrap();
+    let mut large = snapshot(&"x".repeat(100_000));
+    large.selection = 0..100_000;
+    let started = std::time::Instant::now();
+    for _ in 0..10 {
+        runtime
+            .command("upper-case.selection", large.clone())
+            .unwrap();
+    }
+    println!(
+        "upper-case on a 100 KB selection: {:.2} ms per command",
+        started.elapsed().as_secs_f64() * 100.0
+    );
     assert_eq!(
         outcome.edits,
         [TextEdit {
@@ -355,4 +369,29 @@ fn real_guest_upper_cases_the_selection() {
             .as_deref(),
         Some("Select some text to upper-case")
     );
+}
+
+#[test]
+fn looping_on_host_reads_runs_out_of_fuel() {
+    let mut guest = Guest::new();
+    let (ptr, len) = guest.data(r#"{"op":"read","start":0,"end":400000}"#);
+    let wasm = guest
+        .body(format!(
+            "(loop $again (drop (call $host (i32.const {ptr}) (i32.const {len}))) (br $again))
+            (i64.const 0)"
+        ))
+        .wasm();
+    let budgets = Budgets {
+        task: 10_000_000,
+        ..Budgets::default()
+    };
+    let mut runtime = Runtime::new(&wasm, budgets).unwrap();
+    let started = std::time::Instant::now();
+    assert_eq!(
+        runtime.command("x.y", snapshot(&"a".repeat(400_000))),
+        Err(CallError::Fuel)
+    );
+    // Without host charges this loop would never stop: each guest iteration
+    // costs only a few units while the host copies 400 KB.
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
 }
