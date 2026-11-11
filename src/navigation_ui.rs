@@ -1984,4 +1984,97 @@ mod tests {
         }
         assert!(navigation::filter_commands(COMMANDS, "split", 10).len() >= 2);
     }
+    /// Drives the real palette, worker and an installed extension. Build the
+    /// example, point `KUREHA_EXTENSIONS_DIR` at a folder containing it, and run
+    /// `cargo test --bin kureha-code extension_command_end_to_end -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs KUREHA_EXTENSIONS_DIR with the built upper-case example"]
+    fn extension_command_end_to_end() {
+        use scarlet_ui::prelude::{TextPosition, TextSelection};
+        // With KUREHA_WORKBENCH_PREVIEW set, also save what the window shows.
+        let render = |app: &App, name: &str| {
+            use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
+            let Some(directory) = std::env::var_os("KUREHA_WORKBENCH_PREVIEW") else {
+                return;
+            };
+            let mut pipeline = RenderingPipeline::new();
+            pipeline.set_root(
+                Window::new("Kureha Code", app.content())
+                    .decorated(false)
+                    .size(Size::new(1100.0, 560.0))
+                    .create_element(),
+            );
+            pipeline.layout_initial();
+            let buffer = pipeline.render().expect("workbench paints");
+            let pixels = buffer
+                .data()
+                .chunks_exact(4)
+                .flat_map(|p| [p[2], p[1], p[0]])
+                .collect();
+            image::RgbImage::from_raw(buffer.width(), buffer.height(), pixels)
+                .unwrap()
+                .save(PathBuf::from(directory).join(name))
+                .unwrap();
+            pipeline.teardown();
+        };
+        let registry = kureha_code::extensions::registry();
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let text = "hello extension world\nsecond line stays\n";
+        let app = app_with_text(text);
+        let id = app.document_id();
+        let document = || {
+            app.bindings(id)
+                .unwrap()
+                .document
+                .get()
+                .as_str()
+                .to_string()
+        };
+        app.bindings(id).unwrap().selection.set(TextSelection {
+            anchor: TextPosition::new(0),
+            caret: TextPosition::new("hello extension world".len()),
+        });
+        let mut palette = primary();
+        palette.shift = true;
+        assert!(app.navigation_key(KeyCode::Char('p'), palette));
+        app.nav.query.set("upper".into());
+        app.poll_navigation();
+        let rows = app.nav.rows.get();
+        println!(
+            "palette rows for `upper`: {:?}",
+            rows.iter().map(|r| &r.label).collect::<Vec<_>>()
+        );
+        let index = rows
+            .iter()
+            .position(|row| row.label == "Upper Case: Upper-case Selection")
+            .expect("the extension command is listed");
+        assert_eq!(
+            rows[index].key,
+            "ext:example.upper-case:upper-case.selection"
+        );
+        app.nav.selected.set(Some(index));
+        render(&app, "extension-palette.png");
+        let started = Instant::now();
+        assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
+        println!("status after Enter: {}", app.status.get());
+        while document() == text {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "no edit; status: {}",
+                app.status.get()
+            );
+            std::thread::sleep(Duration::from_millis(5));
+            app.poll_extensions();
+        }
+        println!(
+            "applied after {:.1} ms (includes first-use instantiation); status: {}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            app.status.get()
+        );
+        assert_eq!(document(), "HELLO EXTENSION WORLD\nsecond line stays\n");
+        assert_eq!(app.status.get(), "Upper-cased 21 characters");
+        render(&app, "extension-applied.png");
+        app.undo(false);
+        assert_eq!(document(), text);
+    }
 }

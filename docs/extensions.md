@@ -350,6 +350,11 @@ kx_host_take(ptr: u32, len: u32) -> i32   // 保留中の返事を拡張のメ�
 
 **Scarlet実機での計測はまだで、段階2の関門(予算内に収まるか)は未確認。** 予算の値はその結果で見直す。
 
+実アプリの経路の確認: `cargo test --bin kureha-code extension_command_end_to_end -- --ignored`
+(`KUREHA_EXTENSIONS_DIR` にビルド済みの例を置く)。本物のコマンドパレット、ワーカー、例の拡張を通し、
+選択範囲が大文字になり1回のundoで戻ることを確かめる。`KUREHA_WORKBENCH_PREVIEW` を指定すると画面をPNGで保存する。
+macOSのデバッグビルドで、Enterから編集の適用まで初回読み込み込みで約25 ms。
+
 例: `examples/extensions/upper-case` は選択範囲を大文字にする拡張を、ABIを直接使ってRustで書いたもの。
 `cargo test real_guest -- --ignored` に `KUREHA_TEST_EXTENSION_WASM` を渡すと、ビルド済みの
 モジュールをランタイムに通して確かめられる。
