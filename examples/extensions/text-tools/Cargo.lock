@@ -48,6 +48,7 @@ name = "kureha-text-tools"
 version = "0.1.0"
 dependencies = [
  "kureha-extension",
+ "serde",
  "serde_json",
 ]
 

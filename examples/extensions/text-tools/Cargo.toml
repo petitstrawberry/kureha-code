@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 kureha-extension = { path = "../sdk" }
 # Keep key order and the exact text of numbers when reformatting JSON.
 serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+serde = "1"
 
 [profile.release]
 opt-level = "s"

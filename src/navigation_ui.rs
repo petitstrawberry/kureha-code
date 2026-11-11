@@ -85,6 +85,10 @@ pub(crate) struct Navigation {
     pub(super) row_inputs: super::ui::RowInputs,
 }
 impl Navigation {
+    /// Marks the current key press as a shortcut so its Alt text is dropped.
+    pub(super) fn swallow_shortcut_text(&self) {
+        self.shortcut_text.store(true, Ordering::Relaxed);
+    }
     /// Some backends emit printable text after an Alt shortcut key press.
     /// Consume only that press's text, never the next ordinary key press.
     pub(super) fn capture_shortcut_text(&self, event: &Event) -> bool {
@@ -201,7 +205,7 @@ macro_rules! command {
         }
     };
 }
-const COMMANDS: &[CommandDescriptor] = &[
+pub(super) const COMMANDS: &[CommandDescriptor] = &[
     command!(
         "markdown-refresh",
         "Markdown: Refresh Preview",
@@ -864,7 +868,7 @@ impl App {
             Mode::Closed => {}
             Mode::Commands => {
                 // Extension commands are listed once the registry has loaded.
-                let contributed = kureha_code::extensions::loaded()
+                let contributed = super::extension_ui::registry()
                     .map(|registry| {
                         registry
                             .extensions
@@ -904,7 +908,9 @@ impl App {
                             let id = extension.manifest.id.as_str();
                             Row {
                                 label: format!("{}: {}", extension.manifest.name, command.title),
-                                detail: String::new(),
+                                detail: super::extension_ui::extension_shortcut(id, &command.id)
+                                    .map(|key| shortcut(&key))
+                                    .unwrap_or_default(),
                                 key: format!("ext:{id}:{}", command.id),
                                 action: Action::ExtensionCommand(id, command.id.as_str()),
                             }
@@ -2169,5 +2175,83 @@ mod tests {
         app.undo(false);
         app.undo(false);
         assert_eq!(document(), source);
+    }
+    /// Format Document, format-on-save and a keybinding, all served by the
+    /// built Text Tools example. Needs it under `KUREHA_EXTENSIONS_DIR`.
+    #[test]
+    #[ignore = "needs KUREHA_EXTENSIONS_DIR with the built text-tools example"]
+    fn text_tools_formatter_and_keys_end_to_end() {
+        use scarlet_ui::prelude::{TextPosition, TextSelection};
+        let registry = kureha_code::extensions::registry();
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let dir = std::env::temp_dir().join(format!("kureha-text-tools-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("data.json");
+        let source = "{\"b\":[1,2],\"a\":1.10}\n";
+        std::fs::write(&path, source).unwrap();
+        let app = App::with_document();
+        let id = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .open(path.clone(), source);
+        app.activate(id);
+        let document = || {
+            app.bindings(id)
+                .unwrap()
+                .document
+                .get()
+                .as_str()
+                .to_string()
+        };
+        // The built-in command routes to the extension chosen for JSON.
+        run_palette_command(&app, "format document", "Code: Format Document", None);
+        let formatted = "{\n    \"b\": [\n        1,\n        2\n    ],\n    \"a\": 1.10\n}\n";
+        assert_eq!(document(), formatted);
+        assert_eq!(app.status.get(), "Formatted with Text Tools");
+        render_preview(&app, "text-tools-format-document.png");
+        // Format-on-save writes the formatted text.
+        app.undo(false);
+        app.preferences.update(|p| p.format_on_save = true);
+        app.save();
+        let until = Instant::now() + Duration::from_secs(10);
+        while !app.status.get().starts_with("Saved") {
+            assert!(Instant::now() < until, "status: {}", app.status.get());
+            std::thread::sleep(Duration::from_millis(5));
+            app.poll_extensions();
+            app.poll();
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), formatted);
+        // Alt+Shift+S sorts the selected lines through the keybinding.
+        app.bindings(id).unwrap().selection.set(TextSelection {
+            anchor: TextPosition::new(formatted.find("\"b\"").unwrap()),
+            caret: TextPosition::new(formatted.find("\"a\"").unwrap() + 3),
+        });
+        let mut alt_shift = KeyModifiers::empty();
+        alt_shift.alt = true;
+        alt_shift.shift = true;
+        assert!(app.extension_key(KeyCode::Char('S'), alt_shift));
+        while document() == formatted {
+            assert!(Instant::now() < until, "status: {}", app.status.get());
+            std::thread::sleep(Duration::from_millis(5));
+            app.poll_extensions();
+        }
+        assert_eq!(app.status.get(), "Sorted lines");
+        // The palette shows the shortcut next to the command.
+        let mut palette = primary();
+        palette.shift = true;
+        assert!(app.navigation_key(KeyCode::Char('p'), palette));
+        app.nav.query.set("sort lines".into());
+        app.poll_navigation();
+        let row = app
+            .nav
+            .rows
+            .get()
+            .into_iter()
+            .find(|row| row.label == "Text Tools: Sort Lines")
+            .unwrap();
+        assert_eq!(row.detail, shortcut("Alt+Shift+S"));
+        render_preview(&app, "text-tools-shortcut.png");
     }
 }

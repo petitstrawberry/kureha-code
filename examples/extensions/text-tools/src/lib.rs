@@ -122,9 +122,40 @@ fn selection(document: &Document, id: &str) -> Reply {
     }
 }
 
+/// The JSON formatter used by Format Document and format-on-save.
+fn format_json(document: &Document, tab_size: u32, insert_spaces: bool) -> Reply {
+    if document.length > MAX_INPUT_BYTES {
+        return too_large(document.length);
+    }
+    let text = match document.text() {
+        Ok(text) => text,
+        Err(e) => return Reply::error(e),
+    };
+    let range = transform::trimmed(&text, 0..text.len());
+    let indent = if insert_spaces {
+        " ".repeat(tab_size.clamp(1, 16) as usize)
+    } else {
+        "\t".into()
+    };
+    match transform::json_format_indented(&text[range.clone()], &indent) {
+        Ok(output) if output == text[range.clone()] => Reply::unchanged(),
+        Ok(output) if output.len() > MAX_OUTPUT_BYTES => {
+            Reply::error("the result is too large to apply")
+        }
+        Ok(output) => Reply::edit(range, output),
+        Err(e) => Reply::error(e),
+    }
+}
+
 pub fn handle(request: Request) -> Reply {
     match request {
         Request::Activate => Reply::ok(),
+        Request::Format {
+            document,
+            language: "json",
+            tab_size,
+            insert_spaces,
+        } => format_json(&document, tab_size, insert_spaces),
         Request::Command { id, document } => match id.strip_prefix("text-tools.") {
             Some(
                 id @ ("sort-lines" | "unique-lines" | "reverse-lines" | "trim-trailing"

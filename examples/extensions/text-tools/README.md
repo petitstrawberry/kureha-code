@@ -11,6 +11,15 @@ Everyday text commands for Kureha Code, written with the minimal SDK in
 | Convert to UPPER / lower / Title / snake_case / CONSTANT_CASE / camelCase / PascalCase / kebab-case | Selection only |
 | Base64 Encode / Decode, URL Encode / Decode | Selection only. Decoding refuses bytes that are not UTF-8 |
 
+Text Tools is also a **JSON formatter**: Code: Format Document (Alt+Shift+F)
+and format-on-save use it for `.json` files, with the editor's indentation.
+To keep the JSON language server instead, add `[formatter]` / `json = "lsp"`
+to the settings file.
+
+Shortcuts (while the editor has focus): Alt+Shift+S sort lines,
+Alt+Shift+D remove duplicate lines, Alt+Shift+U upper case,
+Alt+Shift+L lower case, Alt+Shift+C count.
+
 Line commands keep CRLF line endings and the document's final newline. Input
 is limited to 192 KiB so every command stays inside the host's time budget.
 

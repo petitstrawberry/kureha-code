@@ -1,5 +1,6 @@
 //! User choices, kept separate from hand-edited theme definitions.
 use kureha_code::theme::{Theme, preset};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Preferences {
@@ -9,6 +10,10 @@ pub(super) struct Preferences {
     pub hide_minimap: bool,
     pub word_wrap: bool,
     pub wrap_at_words: bool,
+    /// Format with the chosen formatter before each save (extension formatters).
+    pub format_on_save: bool,
+    /// Formatter per language id: `"lsp"` or an extension id.
+    pub formatter: BTreeMap<String, String>,
 }
 #[derive(Clone, Debug)]
 pub(super) enum Change {
@@ -18,6 +23,7 @@ pub(super) enum Change {
     Minimap(bool),
     WordWrap(bool),
     WrapAtWords(bool),
+    FormatOnSave(bool),
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -28,6 +34,8 @@ impl Default for Preferences {
             hide_minimap: false,
             word_wrap: true,
             wrap_at_words: true,
+            format_on_save: false,
+            formatter: BTreeMap::new(),
         }
     }
 }
@@ -80,6 +88,25 @@ impl Preferences {
                         .as_bool()
                         .ok_or("hide_minimap must be true or false")?
                 }
+                "format_on_save" => {
+                    result.format_on_save = value
+                        .as_bool()
+                        .ok_or("format_on_save must be true or false")?;
+                }
+                "formatter" => {
+                    let table = value
+                        .as_table()
+                        .ok_or("formatter must be a table of language = formatter")?;
+                    for (language, choice) in table {
+                        let choice = choice
+                            .as_str()
+                            .filter(|c| *c == "lsp" || kureha_code::extensions::valid_id(c))
+                            .ok_or_else(|| {
+                                format!("formatter.{language} must be \"lsp\" or an extension id")
+                            })?;
+                        result.formatter.insert(language.clone(), choice.into());
+                    }
+                }
                 _ => return Err(format!("Unknown settings key: {key}")),
             }
         }
@@ -96,6 +123,7 @@ impl Preferences {
             Change::Minimap(visible) => self.hide_minimap = !visible,
             Change::WordWrap(enabled) => self.word_wrap = *enabled,
             Change::WrapAtWords(enabled) => self.wrap_at_words = *enabled,
+            Change::FormatOnSave(enabled) => self.format_on_save = *enabled,
         }
     }
     pub fn apply(&self, custom: Theme) -> Result<Theme, String> {
@@ -147,5 +175,18 @@ mod tests {
         assert!(!preferences.word_wrap);
         preferences.change(&Change::Color(Some("Nord".into())));
         assert!(!preferences.word_wrap);
+    }
+    #[test]
+    fn formatter_choices_are_validated() {
+        let preferences = Preferences::parse(
+            "format_on_save = true\n[formatter]\njson = \"example.text-tools\"\nrust = \"lsp\"\n",
+        )
+        .unwrap();
+        assert!(preferences.format_on_save);
+        assert_eq!(preferences.formatter["json"], "example.text-tools");
+        assert_eq!(preferences.formatter["rust"], "lsp");
+        assert!(Preferences::parse("format_on_save = 1").is_err());
+        assert!(Preferences::parse("[formatter]\njson = \"Not An Id\"").is_err());
+        assert!(Preferences::parse("formatter = \"lsp\"").is_err());
     }
 }

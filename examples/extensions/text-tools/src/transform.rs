@@ -79,9 +79,21 @@ pub fn trimmed(text: &str, range: Range<usize>) -> Range<usize> {
 }
 
 pub fn json_format(text: &str) -> Result<String, String> {
+    json_format_indented(text, "  ")
+}
+/// Pretty-prints JSON with `indent` per level (spaces or a tab).
+pub fn json_format_indented(text: &str, indent: &str) -> Result<String, String> {
+    use serde::Serialize;
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("not valid JSON: {e}"))?;
-    serde_json::to_string_pretty(&value).map_err(|e| e.to_string())
+    let mut out = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
+    value
+        .serialize(&mut serde_json::Serializer::with_formatter(
+            &mut out, formatter,
+        ))
+        .map_err(|e| e.to_string())?;
+    String::from_utf8(out).map_err(|e| e.to_string())
 }
 pub fn json_minify(text: &str) -> Result<String, String> {
     let value: serde_json::Value =
@@ -324,6 +336,8 @@ mod tests {
         );
         assert_eq!(json_minify(&json_format(source).unwrap()).unwrap(), source);
         assert!(json_format("{,}").unwrap_err().contains("not valid JSON"));
+        assert_eq!(json_format_indented("[1]", "\t").unwrap(), "[\n\t1\n]");
+        assert_eq!(json_format_indented("{}", "    ").unwrap(), "{}");
         assert_eq!(trimmed("  {}\n", 0..5), 2..4);
     }
 

@@ -90,6 +90,137 @@ pub struct LanguageServerContribution {
     pub args: Vec<String>,
 }
 
+/// The key part of a shortcut. Characters are stored in lowercase.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Key {
+    Char(char),
+    F(u8),
+}
+
+/// One key press with modifiers, written like `Primary+Alt+L`.
+///
+/// `Primary` is Command on macOS and Control elsewhere; `Ctrl` is always the
+/// Control key, so on other platforms the two are the same press.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct KeyChord {
+    pub primary: bool,
+    pub control: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub key: Key,
+}
+impl KeyChord {
+    /// Parses one chord. Chords with a second press (`Primary+K Primary+T`)
+    /// are rejected.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        if text.trim().contains(' ') {
+            return Err(format!("`{text}`: key sequences are not supported"));
+        }
+        let mut chord = Self {
+            primary: false,
+            control: false,
+            alt: false,
+            shift: false,
+            key: Key::F(0),
+        };
+        let mut parts = text.split('+').collect::<Vec<_>>();
+        // `Primary++` names the plus key itself.
+        if text.ends_with("++") {
+            parts.truncate(parts.len() - 2);
+            parts.push("+");
+        }
+        let (key, modifiers) = parts
+            .split_last()
+            .filter(|(key, _)| !key.is_empty())
+            .ok_or_else(|| format!("`{text}`: missing key"))?;
+        for modifier in modifiers {
+            let flag = match modifier.to_ascii_lowercase().as_str() {
+                "primary" | "cmd" | "command" => &mut chord.primary,
+                "ctrl" | "control" => &mut chord.control,
+                "alt" | "option" => &mut chord.alt,
+                "shift" => &mut chord.shift,
+                _ => return Err(format!("`{text}`: unknown modifier `{modifier}`")),
+            };
+            if std::mem::replace(flag, true) {
+                return Err(format!("`{text}`: `{modifier}` is repeated"));
+            }
+        }
+        let mut chars = key.chars();
+        chord.key = match (chars.next(), chars.next()) {
+            (Some(c), None) if c.is_ascii_graphic() => Key::Char(c.to_ascii_lowercase()),
+            _ => match key
+                .strip_prefix(['F', 'f'])
+                .and_then(|n| n.parse::<u8>().ok())
+                .filter(|n| (1..=24).contains(n))
+            {
+                Some(n) => Key::F(n),
+                None => return Err(format!("`{text}`: unknown key `{key}`")),
+            },
+        };
+        Ok(chord)
+    }
+    /// The same press with `Primary` resolved for this platform.
+    pub fn normalized(self) -> Self {
+        if cfg!(target_os = "macos") || !self.primary {
+            self
+        } else {
+            Self {
+                primary: false,
+                control: true,
+                ..self
+            }
+        }
+    }
+    /// The display form used by built-in shortcuts, such as `Primary+Alt+L`.
+    pub fn label(&self) -> String {
+        let mut parts = Vec::new();
+        for (on, name) in [
+            (self.primary, "Primary"),
+            (self.control, "Ctrl"),
+            (self.alt, "Alt"),
+            (self.shift, "Shift"),
+        ] {
+            if on {
+                parts.push(name.to_owned());
+            }
+        }
+        parts.push(match self.key {
+            Key::Char(c) => c.to_ascii_uppercase().to_string(),
+            Key::F(n) => format!("F{n}"),
+        });
+        parts.join("+")
+    }
+    /// Extensions get Alt combinations and function keys, with a letter,
+    /// digit or F-key. Most built-in shortcuts use Primary without Alt, so
+    /// this space rarely collides, and plain typing is never taken.
+    pub fn check_for_extension(&self) -> Result<(), String> {
+        match self.key {
+            Key::F(_) => Ok(()),
+            Key::Char(c) if !c.is_ascii_alphanumeric() => Err(format!(
+                "`{}`: extensions may bind letters, digits or F1-F24",
+                self.label()
+            )),
+            Key::Char(_) if !self.alt => Err(format!(
+                "`{}`: extension shortcuts need Alt, or a function key",
+                self.label()
+            )),
+            Key::Char(_) => Ok(()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeybindingContribution {
+    pub command: String,
+    pub key: KeyChord,
+}
+
+/// Formats whole documents of the given languages, on request or on save.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormatterContribution {
+    pub languages: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Contributions {
     pub commands: Vec<CommandContribution>,
@@ -98,6 +229,8 @@ pub struct Contributions {
     pub themes: Vec<PathBuf>,
     pub languages: Vec<LanguageContribution>,
     pub language_servers: Vec<LanguageServerContribution>,
+    pub keybindings: Vec<KeybindingContribution>,
+    pub formatters: Vec<FormatterContribution>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -341,6 +474,8 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, String> {
                 "themes",
                 "languages",
                 "language_servers",
+                "keybindings",
+                "formatters",
             ],
         )?;
         for item in tables(table, "commands")? {
@@ -434,6 +569,42 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, String> {
                     command,
                     args,
                 });
+        }
+        for item in tables(table, "keybindings")? {
+            let context = "[[contributes.keybindings]]";
+            reject_unknown(item, context, &["command", "key"])?;
+            let command = string(item, "command", context)?;
+            if !contributes.commands.iter().any(|c| c.id == command) {
+                return Err(format!(
+                    "{context}: `{command}` is not one of this extension's commands"
+                ));
+            }
+            let key = KeyChord::parse(&string(item, "key", context)?)
+                .map_err(|e| format!("{context}: {e}"))?;
+            key.check_for_extension()
+                .map_err(|e| format!("{context}: {e}"))?;
+            contributes
+                .keybindings
+                .push(KeybindingContribution { command, key });
+        }
+        for item in tables(table, "formatters")? {
+            let context = "[[contributes.formatters]]";
+            reject_unknown(item, context, &["languages"])?;
+            let languages = strings(item, "languages", context)?;
+            if languages.is_empty() {
+                return Err(format!("{context}: `languages` must not be empty"));
+            }
+            if let Some(bad) = languages.iter().find(|l| !valid_id(l)) {
+                return Err(format!("{context}: invalid language id `{bad}`"));
+            }
+            contributes
+                .formatters
+                .push(FormatterContribution { languages });
+        }
+        if wasm.is_none()
+            && !(contributes.keybindings.is_empty() && contributes.formatters.is_empty())
+        {
+            return Err("keybindings and formatters need a `wasm` module in [extension]".into());
         }
     }
 
@@ -595,6 +766,28 @@ impl Registry {
             .find(|language| language.extensions.iter().any(|ext| ext == extension))
             .map(|language| language.id.as_str())
     }
+    /// Extensions able to format `language`, in load order.
+    pub fn formatters(&self, language: &str) -> impl Iterator<Item = &Extension> {
+        self.extensions.iter().filter(move |e| {
+            e.wasm.is_some()
+                && e.manifest
+                    .contributes
+                    .formatters
+                    .iter()
+                    .any(|f| f.languages.iter().any(|l| l == language))
+        })
+    }
+    /// Contributed keybindings as (extension, binding), in load order.
+    pub fn keybindings(&self) -> impl Iterator<Item = (&Extension, &KeybindingContribution)> {
+        self.extensions.iter().flat_map(|extension| {
+            extension
+                .manifest
+                .contributes
+                .keybindings
+                .iter()
+                .map(move |binding| (extension, binding))
+        })
+    }
     /// Launch settings for a language, first contribution wins.
     pub fn language_server(&self, language: &str) -> Option<&LanguageServerContribution> {
         self.extensions
@@ -719,6 +912,91 @@ args = ["--log", "off"]
         assert_eq!(m.contributes.themes, [PathBuf::from("themes/dark.toml")]);
         assert_eq!(m.contributes.languages[0].extensions, ["zig", "zon"]);
         assert_eq!(m.contributes.language_servers[0].args, ["--log", "off"]);
+    }
+
+    #[test]
+    fn key_chords_parse_and_limit_extensions() {
+        let chord = KeyChord::parse("Primary+Alt+l").unwrap();
+        assert_eq!(chord.key, Key::Char('l'));
+        assert!(chord.primary && chord.alt && !chord.shift);
+        assert_eq!(chord.label(), "Primary+Alt+L");
+        assert_eq!(KeyChord::parse("Shift+F12").unwrap().key, Key::F(12));
+        assert_eq!(
+            KeyChord::parse("Ctrl+Shift+\\").unwrap().key,
+            Key::Char('\\')
+        );
+        for bad in [
+            "",
+            "Alt+",
+            "Hyper+X",
+            "Alt+Alt+X",
+            "Alt+Enter",
+            "Primary+K Primary+T",
+            "F25",
+        ] {
+            assert!(KeyChord::parse(bad).is_err(), "{bad}");
+        }
+        assert!(
+            KeyChord::parse("Alt+Shift+S")
+                .unwrap()
+                .check_for_extension()
+                .is_ok()
+        );
+        assert!(KeyChord::parse("F6").unwrap().check_for_extension().is_ok());
+        for refused in ["Primary+S", "Shift+X", "Alt+/", "Ctrl+Shift+P"] {
+            assert!(
+                KeyChord::parse(refused)
+                    .unwrap()
+                    .check_for_extension()
+                    .is_err(),
+                "{refused}"
+            );
+        }
+        let ctrl = KeyChord::parse("Ctrl+Alt+S").unwrap().normalized();
+        let primary = KeyChord::parse("Primary+Alt+S").unwrap().normalized();
+        assert_eq!(ctrl == primary, !cfg!(target_os = "macos"));
+    }
+
+    #[test]
+    fn keybindings_and_formatters_are_validated() {
+        let base = "[extension]\nid='a.b'\nname='A'\nversion='1'\napi=1\nwasm='a.wasm'\n\
+                    [[contributes.commands]]\nid='a.run'\ntitle='Run'\n";
+        let m = parse_manifest(&format!(
+            "{base}[[contributes.keybindings]]\ncommand='a.run'\nkey='Alt+Shift+R'\n\
+             [[contributes.formatters]]\nlanguages=['json']\n"
+        ))
+        .unwrap();
+        assert_eq!(m.contributes.keybindings[0].key.label(), "Alt+Shift+R");
+        assert_eq!(m.contributes.formatters[0].languages, ["json"]);
+        for (extra, needle) in [
+            (
+                "[[contributes.keybindings]]\ncommand='a.other'\nkey='Alt+R'\n",
+                "not one of",
+            ),
+            (
+                "[[contributes.keybindings]]\ncommand='a.run'\nkey='Primary+R'\n",
+                "need Alt",
+            ),
+            (
+                "[[contributes.formatters]]\nlanguages=[]\n",
+                "must not be empty",
+            ),
+            (
+                "[[contributes.formatters]]\nlanguages=['C++']\n",
+                "invalid language",
+            ),
+        ] {
+            let err = parse_manifest(&format!("{base}{extra}")).unwrap_err();
+            assert!(err.contains(needle), "{extra}: {err}");
+        }
+        let no_wasm = base.replace("wasm='a.wasm'\n", "");
+        assert!(
+            parse_manifest(&format!(
+                "{no_wasm}[[contributes.formatters]]\nlanguages=['json']\n"
+            ))
+            .unwrap_err()
+            .contains("need a `wasm` module")
+        );
     }
 
     #[test]

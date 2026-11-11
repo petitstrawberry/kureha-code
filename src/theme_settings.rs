@@ -171,7 +171,7 @@ fn create(path: &std::path::Path) -> std::io::Result<()> {
     }
 }
 
-const SETTINGS_TEMPLATE: &str = "# Theme selections and editor preferences. Changes apply automatically.\n# Omit color_theme to use theme.toml; omit code_theme to follow it.\n# color_theme = \"kureha\"\n# code_theme = \"monokai\"\n# font_size = 14\nhide_minimap = false\nword_wrap = true\nwrap_at_words = true\n";
+const SETTINGS_TEMPLATE: &str = "# Theme selections and editor preferences. Changes apply automatically.\n# Omit color_theme to use theme.toml; omit code_theme to follow it.\n# color_theme = \"kureha\"\n# code_theme = \"monokai\"\n# font_size = 14\nhide_minimap = false\nword_wrap = true\nwrap_at_words = true\nformat_on_save = false\n# Pick a formatter per language: \"lsp\" or an extension id.\n# [formatter]\n# json = \"lsp\"\n";
 fn create_settings(path: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -219,6 +219,7 @@ fn save(path: &std::path::Path, change: &Change) -> Result<(), String> {
         Change::Minimap(visible) => document["hide_minimap"] = toml_edit::value(!visible),
         Change::WordWrap(enabled) => document["word_wrap"] = toml_edit::value(*enabled),
         Change::WrapAtWords(enabled) => document["wrap_at_words"] = toml_edit::value(*enabled),
+        Change::FormatOnSave(enabled) => document["format_on_save"] = toml_edit::value(*enabled),
     }
     let updated = document.to_string();
     Preferences::parse(&updated)?;

@@ -103,6 +103,7 @@ enum ClipboardJob {
 }
 #[derive(Default)]
 struct Runtime {
+    extensions: extension_ui::State,
     window_drag_requested: bool,
     terminal_return_focus: Option<u64>,
     history: location_history::History,
@@ -715,6 +716,11 @@ impl App {
             .get(id)
             .and_then(|doc| doc.path.clone());
         if let Some(path) = path {
+            // The close prompt saves through here too; it must not wait.
+            let closing = self.runtime.lock().unwrap().close.is_some();
+            if !closing && self.format_before_save(id, &path) {
+                return;
+            }
             self.save_to(id, path);
         } else {
             self.picker(DialogPurpose::Save(id));
@@ -1347,8 +1353,12 @@ impl App {
                     )
                 };
                 if exists {
+                    let note = self
+                        .take_save_note(id)
+                        .map(|note| format!(" · {note}"))
+                        .unwrap_or_default();
                     self.status.set(format!(
-                        "Saved {name}{}",
+                        "Saved {name}{}{note}",
                         if clean {
                             ""
                         } else {

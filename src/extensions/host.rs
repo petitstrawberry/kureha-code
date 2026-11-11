@@ -4,7 +4,8 @@
 use super::{
     Registry,
     runtime::{
-        Budgets, CallError, CommandOutcome, Decoration, DocumentSnapshot, MAX_WASM_BYTES, Runtime,
+        Budgets, CallError, CommandOutcome, Decoration, DocumentSnapshot, FormatOptions,
+        MAX_WASM_BYTES, Runtime,
     },
 };
 use std::{
@@ -33,6 +34,13 @@ enum Request {
         document: DocumentSnapshot,
         range: Range<usize>,
     },
+    Format {
+        id: u64,
+        extension: String,
+        language: String,
+        document: DocumentSnapshot,
+        options: FormatOptions,
+    },
 }
 
 #[derive(Debug)]
@@ -45,13 +53,20 @@ pub enum Reply {
         id: u64,
         result: Result<Vec<Decoration>, String>,
     },
+    Format {
+        id: u64,
+        result: Result<CommandOutcome, String>,
+    },
 }
 
 pub struct Host {
     requests: Sender<Request>,
     replies: Mutex<Receiver<Reply>>,
-    next: AtomicU64,
 }
+
+/// Request ids are unique in the process, not just per worker, so callers
+/// can keep one table of pending requests.
+static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 
 enum Slot {
     Ready(Box<Runtime>),
@@ -158,6 +173,26 @@ impl Worker {
                 id,
                 result: self.run(&extension, |runtime| runtime.decorations(document, range)),
             },
+            Request::Format {
+                id,
+                extension,
+                language,
+                document,
+                options,
+            } => {
+                let known = self
+                    .registry
+                    .formatters(&language)
+                    .any(|e| e.manifest.id == extension);
+                let result = if known {
+                    self.run(&extension, |runtime| {
+                        runtime.format(document, &language, options)
+                    })
+                } else {
+                    Err(format!("{extension} does not format {language}"))
+                };
+                Reply::Format { id, result }
+            }
         }
     }
 }
@@ -206,11 +241,10 @@ impl Host {
         Self {
             requests,
             replies: Mutex::new(replies),
-            next: AtomicU64::new(1),
         }
     }
     fn send(&self, request: impl FnOnce(u64) -> Request) -> Option<u64> {
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
         self.requests.send(request(id)).ok().map(|()| id)
     }
     /// Queues a command. `None` if the worker is gone.
@@ -239,6 +273,22 @@ impl Host {
             extension: extension.into(),
             document,
             range,
+        })
+    }
+    /// Queues a whole-document format. `None` if the worker is gone.
+    pub fn format(
+        &self,
+        extension: &str,
+        language: &str,
+        document: DocumentSnapshot,
+        options: FormatOptions,
+    ) -> Option<u64> {
+        self.send(|id| Request::Format {
+            id,
+            extension: extension.into(),
+            language: language.into(),
+            document,
+            options,
         })
     }
     /// Replies that arrived since the last poll. Never blocks.
@@ -308,7 +358,9 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             if let Some(reply) = host.poll().into_iter().find(|reply| match reply {
-                Reply::Command { id: got, .. } | Reply::Decorations { id: got, .. } => *got == id,
+                Reply::Command { id: got, .. }
+                | Reply::Decorations { id: got, .. }
+                | Reply::Format { id: got, .. } => *got == id,
             }) {
                 return reply;
             }

@@ -77,6 +77,13 @@ pub enum Request<'a> {
         document: Document,
         range: Range<usize>,
     },
+    /// Format the whole document. Reply with edits (or none).
+    Format {
+        document: Document,
+        language: &'a str,
+        tab_size: u32,
+        insert_spaces: bool,
+    },
     Other(&'a Value),
 }
 impl<'a> Request<'a> {
@@ -88,6 +95,18 @@ impl<'a> Request<'a> {
                 (Some(id), Some(document)) => Self::Command { id, document },
                 _ => Self::Other(message),
             },
+            Some("format") => {
+                let options = &message["options"];
+                match (document(), message["language"].as_str()) {
+                    (Some(document), Some(language)) => Self::Format {
+                        document,
+                        language,
+                        tab_size: options["tab_size"].as_u64().unwrap_or(4) as u32,
+                        insert_spaces: options["insert_spaces"].as_bool().unwrap_or(true),
+                    },
+                    _ => Self::Other(message),
+                }
+            }
             Some("decorations") => {
                 let range = &message["range"];
                 match (document(), range[0].as_u64(), range[1].as_u64()) {
@@ -124,6 +143,10 @@ impl Reply {
     /// Replaces `range` with `text`, applied as one undo step.
     pub fn edit(range: Range<usize>, text: impl Into<String>) -> Self {
         Self(json!({"edits": [{"start": range.start, "end": range.end, "text": text.into()}]}))
+    }
+    /// A successful reply that changes nothing.
+    pub fn unchanged() -> Self {
+        Self(json!({"edits": []}))
     }
     pub fn with_status(mut self, message: impl Into<String>) -> Self {
         self.0["status"] = Value::String(message.into());

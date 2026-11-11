@@ -96,6 +96,13 @@ pub struct Decoration {
     pub style: DecorationStyle,
 }
 
+/// Indentation the editor would use; the same values sent to language servers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FormatOptions {
+    pub tab_size: u32,
+    pub insert_spaces: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CommandOutcome {
     /// Sorted and non-overlapping, on char boundaries of the snapshot.
@@ -430,6 +437,24 @@ impl Runtime {
             "kind": "command",
             "command": command,
             "document": document.describe(),
+        });
+        let text = document.text.clone();
+        let reply = self.invoke(&message, self.budgets.task, Some(document))?;
+        parse_command_reply(&text, &reply).map_err(CallError::Protocol)
+    }
+
+    /// Formats the whole document as `language`.
+    pub fn format(
+        &mut self,
+        document: DocumentSnapshot,
+        language: &str,
+        options: FormatOptions,
+    ) -> Result<CommandOutcome, CallError> {
+        let message = json!({
+            "kind": "format",
+            "document": document.describe(),
+            "language": language,
+            "options": {"tab_size": options.tab_size, "insert_spaces": options.insert_spaces},
         });
         let text = document.text.clone();
         let reply = self.invoke(&message, self.budgets.task, Some(document))?;

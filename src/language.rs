@@ -106,11 +106,11 @@ pub(super) struct Service {
     chord: Option<Instant>,
 }
 
-fn language(path: &Path) -> Option<&'static str> {
+pub(super) fn language(path: &Path) -> Option<&'static str> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     builtin_language(&extension).or_else(|| {
         // Built-in mappings win so an extension cannot take over `.rs` files.
-        kureha_code::extensions::loaded()?.language_for_extension(&extension)
+        super::extension_ui::registry()?.language_for_extension(&extension)
     })
 }
 fn builtin_language(extension: &str) -> Option<&'static str> {
@@ -1357,6 +1357,10 @@ impl App {
         }
     }
     pub(super) fn format_document(&self) {
+        // An extension chosen for this language formats instead of the server.
+        if self.format_with_extension() {
+            return;
+        }
         self.language_request("textDocument/formatting");
     }
     pub(super) fn find_references(&self) {
