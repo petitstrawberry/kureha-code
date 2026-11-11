@@ -1,0 +1,82 @@
+[extension]
+id = "example.text-tools"
+name = "Text Tools"
+version = "0.1.0"
+api = 1
+wasm = "target/wasm32-unknown-unknown/release/kureha_text_tools.wasm"
+
+[[contributes.commands]]
+id = "text-tools.sort-lines"
+title = "Sort Lines"
+
+[[contributes.commands]]
+id = "text-tools.unique-lines"
+title = "Remove Duplicate Lines"
+
+[[contributes.commands]]
+id = "text-tools.reverse-lines"
+title = "Reverse Lines"
+
+[[contributes.commands]]
+id = "text-tools.trim-trailing"
+title = "Trim Trailing Whitespace"
+
+[[contributes.commands]]
+id = "text-tools.json-format"
+title = "Format JSON"
+
+[[contributes.commands]]
+id = "text-tools.json-minify"
+title = "Minify JSON"
+
+[[contributes.commands]]
+id = "text-tools.case-upper"
+title = "Convert to UPPER CASE"
+
+[[contributes.commands]]
+id = "text-tools.case-lower"
+title = "Convert to lower case"
+
+[[contributes.commands]]
+id = "text-tools.case-title"
+title = "Convert to Title Case"
+
+[[contributes.commands]]
+id = "text-tools.case-snake"
+title = "Convert to snake_case"
+
+[[contributes.commands]]
+id = "text-tools.case-constant"
+title = "Convert to CONSTANT_CASE"
+
+[[contributes.commands]]
+id = "text-tools.case-camel"
+title = "Convert to camelCase"
+
+[[contributes.commands]]
+id = "text-tools.case-pascal"
+title = "Convert to PascalCase"
+
+[[contributes.commands]]
+id = "text-tools.case-kebab"
+title = "Convert to kebab-case"
+
+[[contributes.commands]]
+id = "text-tools.base64-encode"
+title = "Base64 Encode"
+
+[[contributes.commands]]
+id = "text-tools.base64-decode"
+title = "Base64 Decode"
+
+[[contributes.commands]]
+id = "text-tools.url-encode"
+title = "URL Encode"
+
+[[contributes.commands]]
+id = "text-tools.url-decode"
+title = "URL Decode"
+
+[[contributes.commands]]
+id = "text-tools.count"
+title = "Count Lines, Words and Characters"

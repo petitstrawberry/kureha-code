@@ -395,3 +395,82 @@ fn looping_on_host_reads_runs_out_of_fuel() {
     // costs only a few units while the host copies 400 KB.
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
 }
+
+/// Measures Text Tools on its largest accepted input:
+/// `KUREHA_TEST_TEXT_TOOLS_WASM=<path> cargo test --release text_tools_budget -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn text_tools_budget() {
+    let path = std::env::var("KUREHA_TEST_TEXT_TOOLS_WASM")
+        .expect("set KUREHA_TEST_TEXT_TOOLS_WASM to the Text Tools module");
+    let budgets = Budgets::default();
+    let mut runtime = Runtime::new(&std::fs::read(path).unwrap(), budgets).unwrap();
+    let limit = 192 * 1024;
+    let mut lines = String::new();
+    let mut i = 0u64;
+    while lines.len() + 40 < limit {
+        i += 1;
+        lines.push_str(&format!(
+            "line {:08} {}\n",
+            (i * 7919) % 100_003,
+            "x".repeat(i as usize % 17)
+        ));
+    }
+    let mut json = String::from("[");
+    while json.len() + 80 < limit {
+        json.push_str(r#"{"name":"item","value":12.50,"tags":["a","b"],"ok":true},"#);
+    }
+    json.push_str("{}]");
+    let words = "parseHttpResponse userId ".repeat(limit / 26);
+    let cases = [
+        ("text-tools.sort-lines", lines.clone(), false),
+        ("text-tools.unique-lines", lines.clone(), false),
+        ("text-tools.trim-trailing", lines.clone(), false),
+        ("text-tools.json-format", json.clone(), false),
+        ("text-tools.json-minify", pretty_json_below(limit), false),
+        ("text-tools.count", lines.clone(), false),
+        ("text-tools.case-snake", words.clone(), true),
+        ("text-tools.base64-encode", lines.clone(), true),
+        ("text-tools.url-encode", words.clone(), true),
+    ];
+    for (command, text, select) in cases {
+        let mut document = snapshot(&text);
+        if select {
+            document.selection = 0..text.len();
+        }
+        let started = std::time::Instant::now();
+        let outcome = runtime.command(command, document);
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+        let fuel = runtime.last_fuel();
+        println!(
+            "{command:28} {:>4} KiB  fuel {:>11} ({:>5.1}% of task)  {ms:>6.1} ms  {}",
+            text.len() / 1024,
+            fuel,
+            fuel as f64 * 100.0 / budgets.task as f64,
+            match &outcome {
+                Ok(o) => o.status.clone().unwrap_or_default(),
+                Err(e) => format!("ERROR {e}"),
+            }
+        );
+        assert!(outcome.is_ok(), "{command}: {outcome:?}");
+    }
+    let mut big = snapshot(&"a\n".repeat(limit));
+    big.selection = 0..0;
+    assert!(matches!(
+        runtime.command("text-tools.sort-lines", big),
+        Err(CallError::Extension(e)) if e.contains("192 KiB")
+    ));
+}
+/// Pretty-printed JSON just under `limit` bytes.
+fn pretty_json_below(limit: usize) -> String {
+    let item = json!({"name": "item", "value": 12, "tags": ["a", "b"], "ok": true});
+    let mut items = Vec::new();
+    loop {
+        items.push(item.clone());
+        let text = serde_json::to_string_pretty(&items).unwrap();
+        if text.len() + 200 > limit {
+            items.pop();
+            return serde_json::to_string_pretty(&items).unwrap();
+        }
+    }
+}

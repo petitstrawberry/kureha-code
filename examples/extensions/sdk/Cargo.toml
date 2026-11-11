@@ -1,0 +1,10 @@
+[package]
+name = "kureha-extension"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Minimal glue for Kureha Code extensions (API 1)"
+publish = false
+
+[dependencies]
+serde_json = "1"

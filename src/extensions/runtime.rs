@@ -42,7 +42,7 @@ impl Default for Budgets {
         Self {
             activate: 20_000_000,
             query: 2_000_000,
-            task: 100_000_000,
+            task: 1_000_000_000,
         }
     }
 }
@@ -273,6 +273,7 @@ fn kx_host_take(
 
 pub struct Runtime {
     budgets: Budgets,
+    last_fuel: u64,
     store: Store<HostState>,
     memory: Memory,
     alloc: TypedFunc<i32, i32>,
@@ -340,6 +341,7 @@ impl Runtime {
             .map_err(|e| format!("export `kx_call`: {e}"))?;
         let mut runtime = Self {
             budgets,
+            last_fuel: 0,
             store,
             memory,
             alloc,
@@ -350,6 +352,11 @@ impl Runtime {
             .invoke(&json!({"kind": "activate"}), budgets.activate, None)
             .map_err(|e| format!("activate {e}"))?;
         Ok(runtime)
+    }
+
+    /// Fuel the most recent call used, including host-function charges.
+    pub fn last_fuel(&self) -> u64 {
+        self.last_fuel
     }
 
     /// Messages the extension logged so far, oldest first.
@@ -376,6 +383,7 @@ impl Runtime {
         state.document = document;
         state.pending = None;
         let result = self.exchange(&bytes);
+        self.last_fuel = fuel.saturating_sub(self.store.get_fuel().unwrap_or(0));
         let state = self.store.data_mut();
         state.document = None;
         state.pending = None;

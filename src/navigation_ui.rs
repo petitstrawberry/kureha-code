@@ -1991,32 +1991,6 @@ mod tests {
     #[ignore = "needs KUREHA_EXTENSIONS_DIR with the built upper-case example"]
     fn extension_command_end_to_end() {
         use scarlet_ui::prelude::{TextPosition, TextSelection};
-        // With KUREHA_WORKBENCH_PREVIEW set, also save what the window shows.
-        let render = |app: &App, name: &str| {
-            use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
-            let Some(directory) = std::env::var_os("KUREHA_WORKBENCH_PREVIEW") else {
-                return;
-            };
-            let mut pipeline = RenderingPipeline::new();
-            pipeline.set_root(
-                Window::new("Kureha Code", app.content())
-                    .decorated(false)
-                    .size(Size::new(1100.0, 560.0))
-                    .create_element(),
-            );
-            pipeline.layout_initial();
-            let buffer = pipeline.render().expect("workbench paints");
-            let pixels = buffer
-                .data()
-                .chunks_exact(4)
-                .flat_map(|p| [p[2], p[1], p[0]])
-                .collect();
-            image::RgbImage::from_raw(buffer.width(), buffer.height(), pixels)
-                .unwrap()
-                .save(PathBuf::from(directory).join(name))
-                .unwrap();
-            pipeline.teardown();
-        };
         let registry = kureha_code::extensions::registry();
         assert!(registry.errors.is_empty(), "{:?}", registry.errors);
         let text = "hello extension world\nsecond line stays\n";
@@ -2053,7 +2027,7 @@ mod tests {
             "ext:example.upper-case:upper-case.selection"
         );
         app.nav.selected.set(Some(index));
-        render(&app, "extension-palette.png");
+        render_preview(&app, "extension-palette.png");
         let started = Instant::now();
         assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
         println!("status after Enter: {}", app.status.get());
@@ -2073,8 +2047,127 @@ mod tests {
         );
         assert_eq!(document(), "HELLO EXTENSION WORLD\nsecond line stays\n");
         assert_eq!(app.status.get(), "Upper-cased 21 characters");
-        render(&app, "extension-applied.png");
+        render_preview(&app, "extension-applied.png");
         app.undo(false);
         assert_eq!(document(), text);
+    }
+    /// With KUREHA_WORKBENCH_PREVIEW set, saves what the window shows as PNG.
+    fn render_preview(app: &App, name: &str) {
+        use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
+        let Some(directory) = std::env::var_os("KUREHA_WORKBENCH_PREVIEW") else {
+            return;
+        };
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new("Kureha Code", app.content())
+                .decorated(false)
+                .size(Size::new(1100.0, 560.0))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        let buffer = pipeline.render().expect("workbench paints");
+        let pixels = buffer
+            .data()
+            .chunks_exact(4)
+            .flat_map(|p| [p[2], p[1], p[0]])
+            .collect();
+        image::RgbImage::from_raw(buffer.width(), buffer.height(), pixels)
+            .unwrap()
+            .save(PathBuf::from(directory).join(name))
+            .unwrap();
+        pipeline.teardown();
+    }
+    /// Runs one palette command by its label and waits for the document to change.
+    fn run_palette_command(app: &App, query: &str, label: &str, preview: Option<&str>) {
+        let mut palette = primary();
+        palette.shift = true;
+        assert!(app.navigation_key(KeyCode::Char('p'), palette));
+        app.nav.query.set(query.into());
+        app.poll_navigation();
+        let rows = app.nav.rows.get();
+        let index = rows
+            .iter()
+            .position(|row| row.label == label)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} not in {:?}",
+                    rows.iter().map(|r| &r.label).collect::<Vec<_>>()
+                )
+            });
+        app.nav.selected.set(Some(index));
+        if let Some(name) = preview {
+            render_preview(app, name);
+        }
+        let id = app.document_id();
+        let before = app
+            .bindings(id)
+            .unwrap()
+            .document
+            .get()
+            .as_str()
+            .to_string();
+        let started = Instant::now();
+        assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
+        while app.bindings(id).unwrap().document.get().as_str() == before {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "{label}: no edit; status: {}",
+                app.status.get()
+            );
+            std::thread::sleep(Duration::from_millis(5));
+            app.poll_extensions();
+        }
+    }
+    /// Text Tools through the real palette. Needs the built example under
+    /// `KUREHA_EXTENSIONS_DIR`; see `examples/extensions/text-tools`.
+    #[test]
+    #[ignore = "needs KUREHA_EXTENSIONS_DIR with the built text-tools example"]
+    fn text_tools_end_to_end() {
+        use scarlet_ui::prelude::{TextPosition, TextSelection};
+        let registry = kureha_code::extensions::registry();
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let source = "{\"name\":\"kureha\",\"version\":1.10,\"tags\":[\"editor\",\"wasm\"]}\n";
+        let app = app_with_text(source);
+        let id = app.document_id();
+        let document = || {
+            app.bindings(id)
+                .unwrap()
+                .document
+                .get()
+                .as_str()
+                .to_string()
+        };
+        // No selection: the whole document is reformatted, final newline kept.
+        run_palette_command(
+            &app,
+            "format json",
+            "Text Tools: Format JSON",
+            Some("text-tools-palette.png"),
+        );
+        assert_eq!(
+            document(),
+            "{\n  \"name\": \"kureha\",\n  \"version\": 1.10,\n  \"tags\": [\n    \"editor\",\n    \"wasm\"\n  ]\n}\n"
+        );
+        assert_eq!(app.status.get(), "Reformatted JSON");
+        render_preview(&app, "text-tools-json.png");
+        // A selected key converts to camelCase.
+        let text = document();
+        let key = text.find("version").unwrap();
+        app.bindings(id).unwrap().selection.set(TextSelection {
+            anchor: TextPosition::new(text.find("name").unwrap()),
+            caret: TextPosition::new(text.find("name").unwrap() + 4),
+        });
+        run_palette_command(
+            &app,
+            "constant",
+            "Text Tools: Convert to CONSTANT_CASE",
+            None,
+        );
+        assert!(document().contains("\"NAME\""));
+        assert!(document()[key..].starts_with("version"));
+        render_preview(&app, "text-tools-case.png");
+        app.undo(false);
+        app.undo(false);
+        assert_eq!(document(), source);
     }
 }

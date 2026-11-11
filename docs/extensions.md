@@ -324,7 +324,8 @@ kx_host_take(ptr: u32, len: u32) -> i32   // 保留中の返事を拡張のメ�
 - WASMは専用スレッド `extension-host` だけで動く。UIは要求を送り、`poll_extensions` で返事を受け取る。
   拡張は最初に使われたときにインスタンス化して `activate` を送る。
 - 1回の呼び出しごとにfuelを設定する。既定値は `Budgets::default()`(起動 2000万、
-  クエリ 200万、タスク 1億)。メモリは64 MiB、`.wasm` は16 MiB、メッセージは1 MiBまで。
+  クエリ 200万、タスク 10億)。メモリは64 MiB、`.wasm` は16 MiB、メッセージは1 MiBまで。
+  タスクは当初1億にしたが、Text Toolsで192 KiBのJSON整形が2.7億を使ったため10億に上げた。
 - ホスト関数の処理もfuelで払わせる(1回1万 + 読み書きしたバイト数×4)。払えなければ予算超過になる。
   これがないと、拡張が `read` を繰り返すだけでワーカーを占有できてしまう。
 - 予算超過やトラップで止まったインスタンスは、状態が壊れている可能性があるので捨てて次回作り直す。
@@ -343,10 +344,22 @@ kx_host_take(ptr: u32, len: u32) -> i32   // 保留中の返事を拡張のメ�
 
 計測(Apple Silicon、macOS、リリースビルド)。
 
-- 空ループで約230万fuel/ms(`cargo test --release fuel_throughput -- --ignored --nocapture`)。
-  既定値ではクエリ約0.9 ms、タスク約43 ms、起動約9 ms に相当する。空ループはfuelあたりの
-  時間が最も短い場合なので、これは下限。メモリ操作や呼び出し、ホスト関数が多いと同じfuelでも長くかかる。
-- 下の例の拡張で100 KBの選択範囲を大文字にすると、1回約1.4 ms(ホストとの往復、JSON、編集の検証を含む)。
+- fuelは命令の数え方で決まり、プラットフォームによらず同じ値になる。予算に対する余裕(fuelの割合)は
+  Scarletでも変わらず、変わるのは実時間だけ。
+- 1 msあたりのfuelは処理で違う。空ループは約230万fuel/ms(`fuel_throughput`)、Text Toolsの実際の
+  コマンドは約450万〜970万fuel/ms。空ループから時間を見積もると長めに出る。
+- 既定のタスク予算(10億)は、このMacで約0.1〜0.2秒に当たる。
+- upper-caseの例で100 KBの選択範囲を大文字にすると、1回約1.3 ms。
+- Text Toolsの入力上限(192 KiB)での各コマンドは次のとおり(`text_tools_budget`)。
+
+| コマンド | fuel | タスク予算に対して | 時間 |
+| --- | --- | --- | --- |
+| Convert to snake_case(184 KiB) | 4.99億 | 50% | 63 ms |
+| Format JSON | 2.72億 | 27% | 57 ms |
+| Minify JSON | 1.53億 | 15% | 30 ms |
+| URL Encode(184 KiB) | 1.01億 | 10% | 16 ms |
+| Sort Lines | 0.84億 | 8% | 17 ms |
+| Trim Trailing Whitespace / Count / Base64 Encode | 0.47億〜0.49億 | 5% | 5〜10 ms |
 
 **Scarlet実機での計測はまだで、段階2の関門(予算内に収まるか)は未確認。** 予算の値はその結果で見直す。
 
@@ -355,13 +368,31 @@ kx_host_take(ptr: u32, len: u32) -> i32   // 保留中の返事を拡張のメ�
 選択範囲が大文字になり1回のundoで戻ることを確かめる。`KUREHA_WORKBENCH_PREVIEW` を指定すると画面をPNGで保存する。
 macOSのデバッグビルドで、Enterから編集の適用まで初回読み込み込みで約25 ms。
 
-例: `examples/extensions/upper-case` は選択範囲を大文字にする拡張を、ABIを直接使ってRustで書いたもの。
+例とSDK(どれも本体のビルド、`Cargo.lock`、謝辞、CI、`nix build` の対象外):
+
+- `examples/extensions/sdk`(`kureha-extension`): ABIの糊だけを切り出した最小のSDK。
+  バッファのエクスポート、`kx_host` の2段階呼び出し、JSONの読み書きを隠し、`export!(handler)` で
+  エクスポートを生成する。FFIは `wasm32` のときだけ有効なので、変換処理はネイティブでテストできる。
+- `examples/extensions/text-tools`: 実用向けの例。行の並べ替え・重複削除・反転、行末空白の削除、
+  JSONの整形・圧縮(キー順と数値の表記を保つ)、大文字小文字や snake_case などの変換、
+  Base64・URLのエンコードとデコード、行数・単語数・文字数。行のコマンドは選択行(なければ文書全体)、
+  変換系は選択範囲だけに効く。CRLFと末尾の改行を保ち、入力は192 KiBまで。
+- `examples/extensions/upper-case`: 最小の例。選択範囲を大文字にする。
+
+`examples/extensions/upper-case` は選択範囲を大文字にする拡張で、SDKを使って書いている。
 `cargo test real_guest -- --ignored` に `KUREHA_TEST_EXTENSION_WASM` を渡すと、ビルド済みの
 モジュールをランタイムに通して確かめられる。
 
+実アプリの経路では `text_tools_end_to_end` も同様に、コマンドパレットからJSONの整形と
+CONSTANT_CASEへの変換を実行し、2回のundoで元に戻ることを確かめる。
+
+今のAPIでできないこと: 拡張のコマンドにキー割り当てを付けること(コマンドパレットからしか呼べない)、
+時刻・乱数(UUIDや日時の挿入)、ファイルやプロセスへのアクセス、拡張ごとの設定、装飾の描画。
+
 ### 次にやること
 
+- 拡張のコマンドへのキー割り当て(`contributes.keybindings`)。実用上いちばん効く。
 - Scarlet実機でのfuel計測と、予算の見直し。
 - `decorations` の結果をエディタに描く(見えている範囲だけ問い合わせ、版でキャッシュ)。
 - 拡張一覧と読み込みエラーを見られる画面(コマンドパレットの項目から開く)。
-- Rust向けSDKクレート(上の例のエクスポートと `kx_host` の呼び出しを隠す)。
+- SDKの公開とバージョン管理(今は例の中にある最小版)。
