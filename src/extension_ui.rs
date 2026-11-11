@@ -103,6 +103,9 @@ pub(super) struct State {
     pending: HashMap<u64, Pending>,
     /// Messages to append to the next "Saved" status of a document.
     save_notes: HashMap<DocumentId, String>,
+    /// Saves that format-on-save could not start because another file
+    /// operation or a dialog was active; retried from the poll loop.
+    queued_saves: Vec<(DocumentId, PathBuf)>,
     lsp_save_noted: bool,
     keys_reported: bool,
 }
@@ -566,7 +569,7 @@ impl App {
                     self.status.set(format!("Formatted with {name}"));
                     None
                 } else {
-                    Some("not formatted because the document changed".to_owned())
+                    Some("not formatted because the editor or document changed".to_owned())
                 }
             }
             Err(error) => {
@@ -578,11 +581,47 @@ impl App {
             if let Some(note) = note {
                 self.note_save(pending.document, note);
             }
-            self.save_to(pending.document, path.clone());
+            self.deferred_save(pending.document, path.clone());
+        }
+    }
+    /// Runs a save that format-on-save held back. `save_to` does nothing while
+    /// another file operation or a dialog is active, so wait for those.
+    fn deferred_save(&self, document: DocumentId, path: PathBuf) {
+        let busy = {
+            let mut rt = self.runtime.lock().unwrap();
+            let busy = rt.job.is_some() || rt.dialog.is_some();
+            if busy
+                && !rt
+                    .extensions
+                    .queued_saves
+                    .iter()
+                    .any(|(id, _)| *id == document)
+            {
+                rt.extensions.queued_saves.push((document, path.clone()));
+            }
+            busy
+        };
+        if busy {
+            self.status
+                .set("Saving after the current file operation finishes…".into());
+        } else {
+            self.save_to(document, path);
         }
     }
 
     pub(super) fn poll_extensions(&self) {
+        // Held-back saves start one at a time once nothing else is in progress.
+        let queued = {
+            let mut rt = self.runtime.lock().unwrap();
+            if rt.job.is_none() && rt.dialog.is_none() && !rt.extensions.queued_saves.is_empty() {
+                Some(rt.extensions.queued_saves.remove(0))
+            } else {
+                None
+            }
+        };
+        if let Some((document, path)) = queued {
+            self.save_to(document, path);
+        }
         // Format-on-save that ran out of time saves now; its late reply is dropped.
         let now = Instant::now();
         let expired = self.pending(|map| {
@@ -606,7 +645,7 @@ impl App {
                     pending.document,
                     format!("{} took too long; saved without formatting", pending.label),
                 );
-                self.save_to(pending.document, path);
+                self.deferred_save(pending.document, path);
             }
         }
         if let Some(table) = key_table() {
@@ -830,7 +869,10 @@ mod tests {
         }
     }
     fn idle(app: &App) -> bool {
-        app.runtime.lock().unwrap().job.is_none() && app.pending(|map| map.is_empty())
+        let rt = app.runtime.lock().unwrap();
+        rt.job.is_none()
+            && rt.extensions.pending.is_empty()
+            && rt.extensions.queued_saves.is_empty()
     }
     fn text(app: &App, id: DocumentId) -> String {
         app.bindings(id)
@@ -991,6 +1033,116 @@ mod tests {
             text(app, other) == "formatted\nother\n"
         });
         assert_eq!(text(&app, id), "body\n");
+    }
+
+    /// Format-on-save finishing while another save runs still saves later.
+    fn save_waits_for_a_busy_file_operation(name: &str, timeout: Duration) {
+        let dir = install(name, timeout);
+        let app = App::with_document();
+        app.preferences.update(|p| p.format_on_save = true);
+        let other = open(&app, &dir.join("b.txt"), "other\n");
+        let path = dir.join("a.ok");
+        let id = open(&app, &path, "body\n");
+        app.save();
+        // Another save holds the file operation slot until `poll` reads it.
+        app.save_to(other, dir.join("b.txt"));
+        assert!(app.runtime.lock().unwrap().job.is_some());
+        let until = Instant::now() + Duration::from_secs(30);
+        while !app.pending(|map| map.is_empty()) {
+            assert!(Instant::now() < until, "status: {}", app.status.get());
+            app.poll_extensions();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        eprintln!(
+            "after reply: {} / {:?} / active {:?} id {id}",
+            app.status.get(),
+            text(&app, id),
+            app.active_id()
+        );
+        assert_eq!(app.runtime.lock().unwrap().extensions.queued_saves.len(), 1);
+        wait(&app, "queued save", |app| {
+            idle(app) && app.status.get().starts_with("Saved a.ok")
+        });
+        // Starting the other save counts as navigation, so the edits are
+        // discarded like late language server edits; the save still happens.
+        let reason = if timeout.is_zero() {
+            "took too long"
+        } else {
+            "not formatted"
+        };
+        assert!(app.status.get().contains(reason), "{}", app.status.get());
+        assert_eq!(text(&app, id), "body\n");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "body\n");
+    }
+
+    #[test]
+    fn format_on_save_waits_for_another_save_to_finish() {
+        save_waits_for_a_busy_file_operation("busy", FORMAT_ON_SAVE_TIMEOUT);
+    }
+
+    #[test]
+    fn format_on_save_timeout_waits_for_another_save_to_finish() {
+        save_waits_for_a_busy_file_operation("busy-timeout", Duration::ZERO);
+    }
+
+    /// The real route: window events reach the focused editor, the binding
+    /// runs, and the text the platform sends after Alt+Shift+K is not typed.
+    #[test]
+    fn alt_shortcut_from_the_window_runs_the_command_and_types_nothing() {
+        use scarlet_ui::{
+            Event,
+            event::{KeyEvent, MouseButton, MouseEvent},
+            pipeline::RenderingPipeline,
+            prelude::*,
+        };
+        let _dir = install("window-keys", FORMAT_ON_SAVE_TIMEOUT);
+        let (app, id) = app_with("body\n");
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new("Kureha Code", app.content())
+                .decorated(false)
+                .size(Size::new(1100.0, 700.0))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        // Click into the editor text so it has keyboard focus.
+        let (x, y) = (700, 140);
+        pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
+            button: MouseButton::Left,
+            click_count: 1,
+            x,
+            y,
+        }));
+        pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonReleased {
+            button: MouseButton::Left,
+            click_count: 1,
+            x,
+            y,
+        }));
+        let mut modifiers = KeyModifiers::empty();
+        modifiers.alt = true;
+        modifiers.shift = true;
+        let key = KeyCode::Char('K');
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+            keycode: key,
+            modifiers,
+        }));
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c: '\u{f8ff}' }));
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Released {
+            keycode: key,
+            modifiers,
+        }));
+        let until = Instant::now() + Duration::from_secs(30);
+        while !text(&app, id).starts_with("formatted") {
+            assert!(Instant::now() < until, "status: {}", app.status.get());
+            app.poll_extensions();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(text(&app, id), "formatted\nbody\n");
+        // An ordinary key afterwards still types, so focus was the editor's.
+        pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c: 'x' }));
+        assert!(text(&app, id).contains('x'), "{:?}", text(&app, id));
+        pipeline.teardown();
     }
 
     #[test]
