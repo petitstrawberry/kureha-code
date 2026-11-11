@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Build Scarlet apps, assemble checksum-pinned bundles, and publish releases."""
+"""Build Scarlet and desktop apps, assemble checksum-pinned bundles, and publish releases.
+
+Scarlet archives and bundle.toml are what Scarlet images pin. Desktop packages
+(macOS, Linux) ride in the same release and checksum file but never enter
+bundle.toml, so adding them leaves the Scarlet side unchanged.
+"""
 import argparse
 import gzip
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import platform as host_platform
 import re
 import shutil
 import struct
@@ -12,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "petitstrawberry/kureha-code"
@@ -19,6 +26,19 @@ TARGETS = {"aarch64-unknown-scarlet": ("aarch64", 183),
            "riscv64gc-unknown-scarlet": ("riscv64", 243)}
 APP_PATH = "applications/kureha-code.app"
 EXECUTABLE = APP_PATH + "/bin/kureha-code"
+# Desktop builds: release name -> (Appcoat platform, architecture).
+DESKTOP = {"macos-aarch64": ("macos", "aarch64"),
+           "linux-x86_64": ("linux", "x86_64"),
+           "linux-aarch64": ("linux", "aarch64")}
+MACOS_APP = "Kureha Code.app"
+MACOS_EXECUTABLE = MACOS_APP + "/Contents/MacOS/kureha-code"
+LINUX_DIR = "kureha-code"
+LINUX_EXECUTABLE = LINUX_DIR + "/bin/kureha-code"
+# A portable Linux binary uses the distribution's loader, never a Nix store path.
+LINUX_ELF = {"x86_64": (62, "/lib64/ld-linux-x86-64.so.2"),
+             "aarch64": (183, "/lib/ld-linux-aarch64.so.1")}
+MACHO_ARM64 = 0x0100000C
+NIX_STORE = b"/nix/store"
 
 
 def sha(path):
@@ -80,6 +100,144 @@ def verify_archive(path, target):
             raise ValueError("invalid Scarlet app descriptor")
 
 
+def write_tar(stage, top, archive_path):
+    """Write `top` (inside `stage`) with normalized metadata and gzip headers."""
+    with archive_path.open("wb") as stream:
+        with gzip.GzipFile(fileobj=stream, mode="wb", filename="", mtime=0) as gz:
+            with tarfile.open(fileobj=gz, mode="w") as archive:
+                for path in [top, *sorted(top.rglob("*"))]:
+                    if path.is_symlink() or not (path.is_dir() or path.is_file()):
+                        raise ValueError("unsupported app file: " + str(path))
+                    info = archive.gettarinfo(str(path), arcname=path.relative_to(stage).as_posix())
+                    info.uid = info.gid = info.mtime = 0
+                    info.uname = info.gname = ""
+                    info.mode = 0o755 if path.is_dir() or path.stat().st_mode & 0o111 else 0o644
+                    if path.is_file():
+                        with path.open("rb") as payload:
+                            archive.addfile(info, payload)
+                    else:
+                        archive.addfile(info)
+
+
+def linux_executable(data, arch):
+    """Check a desktop Linux ELF and return the newest glibc version it needs."""
+    machine, loader = LINUX_ELF[arch]
+    if (len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01" or data[7] not in (0, 3)
+            or struct.unpack_from("<H", data, 18)[0] != machine):
+        raise ValueError(f"expected a {arch} Linux ELF")
+    phoff, = struct.unpack_from("<Q", data, 32)
+    phentsize, phnum = struct.unpack_from("<HH", data, 54)
+    interpreter = None
+    for index in range(phnum):
+        offset = phoff + index * phentsize
+        if offset + 56 > len(data):
+            raise ValueError("truncated ELF program headers")
+        if struct.unpack_from("<I", data, offset)[0] == 3:  # PT_INTERP
+            start, = struct.unpack_from("<Q", data, offset + 8)
+            size, = struct.unpack_from("<Q", data, offset + 32)
+            interpreter = data[start:start + size].rstrip(b"\0").decode(errors="replace")
+    if interpreter != loader:
+        raise ValueError(f"Linux executable uses loader {interpreter!r}, expected {loader}")
+    versions = [tuple(map(int, v)) for v in re.findall(rb"GLIBC_(\d+)\.(\d+)", data)]
+    return "%d.%d" % max(versions) if versions else None
+
+
+def macos_executable(data):
+    if len(data) < 8 or data[:4] != b"\xcf\xfa\xed\xfe" \
+            or struct.unpack_from("<I", data, 4)[0] != MACHO_ARM64:
+        raise ValueError("expected an arm64 Mach-O executable")
+
+
+def verify_desktop_archive(path, name):
+    """Check layout, architecture and the absence of Nix store paths."""
+    platform, arch = DESKTOP[name]
+    top, executable = (MACOS_APP, MACOS_EXECUTABLE) if platform == "macos" else (LINUX_DIR, LINUX_EXECUTABLE)
+    files = {}
+    if platform == "macos":
+        with zipfile.ZipFile(path) as archive:
+            for info in archive.infolist():
+                files[info.filename.rstrip("/")] = (
+                    info.is_dir(), (info.external_attr >> 16) & 0o777,
+                    None if info.is_dir() else archive.read(info))
+    else:
+        with tarfile.open(path, "r:gz") as archive:
+            for member in archive:
+                if not (member.isfile() or member.isdir()):
+                    raise ValueError("invalid desktop archive member: " + member.name)
+                data = archive.extractfile(member).read() if member.isfile() else None
+                files[member.name] = (member.isdir(), member.mode, data)
+    for entry, (_, _, data) in files.items():
+        relative = PurePosixPath(entry)
+        if (relative.is_absolute() or ".." in relative.parts or str(relative) != entry
+                or not (entry == top or entry.startswith(top + "/"))):
+            raise ValueError("invalid desktop archive member: " + entry)
+        if data is not None and NIX_STORE in data:
+            raise ValueError("desktop package refers to the Nix store: " + entry)
+    if executable not in files or files[executable][2] is None:
+        raise ValueError("desktop archive lacks " + executable)
+    _, mode, data = files[executable]
+    if not mode & 0o111:
+        raise ValueError("desktop executable lacks executable permissions")
+    if platform == "macos":
+        macos_executable(data)
+        return None
+    return linux_executable(data, arch)
+
+
+def desktop_archive_name(name, version):
+    return f"kureha-code-{name}-{version}." + ("zip" if DESKTOP[name][0] == "macos" else "tar.gz")
+
+
+def build_desktop(name, version, output, artifact=None):
+    """Package a desktop build for this host; cross builds are not supported."""
+    version_tag(version)
+    platform, arch = DESKTOP[name]
+    host = ({"darwin": "macos", "linux": "linux"}.get(sys.platform),
+            {"arm64": "aarch64", "amd64": "x86_64"}.get(host_platform.machine().lower(),
+                                                          host_platform.machine().lower()))
+    if host != (platform, arch):
+        raise ValueError(f"{name} must be built on {platform}/{arch}, not {host[0]}/{host[1]}")
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True))
+    output.mkdir(parents=True, exist_ok=False)
+    try:
+        archive_path = output / desktop_archive_name(name, version)
+        with tempfile.TemporaryDirectory(prefix="kureha-desktop-") as temporary:
+            stage = Path(temporary)
+            top = stage / (MACOS_APP if platform == "macos" else LINUX_DIR)
+            command = [sys.executable, str(ROOT / "scripts/package.py"), "--platform", platform,
+                       "--output", str(top)]
+            if artifact:
+                command.extend(["--artifact", str(artifact.resolve(strict=True))])
+            subprocess.run(command, cwd=ROOT, check=True)
+            if platform == "macos":
+                subprocess.run(["codesign", "--verify", "--deep", "--strict", str(top)], check=True)
+                for path in sorted(top.rglob("*")):
+                    if path.is_file() and path.read_bytes()[:4] == b"\xcf\xfa\xed\xfe":
+                        links = subprocess.check_output(["otool", "-L", str(path)], text=True)
+                        if "/nix/store" in links:
+                            raise ValueError("macOS package links the Nix store: " + path.name)
+                # No resource forks or extended attributes: the zip holds the bundle only.
+                subprocess.run(["ditto", "-c", "-k", "--norsrc", "--noextattr", "--noacl",
+                                "--keepParent", str(top), str(archive_path)], check=True)
+            else:
+                write_tar(stage, top, archive_path)
+        glibc = verify_desktop_archive(archive_path, name)
+        record = {
+            "version": version, "name": name, "platform": platform, "arch": arch,
+            "revision": revision, "dirty": dirty, "external_artifact": artifact is not None,
+            "archive": archive_path.name, "sha256": sha(archive_path),
+            "cargo_lock_sha256": sha(ROOT / "Cargo.lock"),
+            "flake_lock_sha256": sha(ROOT / "flake.lock"),
+        }
+        if glibc:
+            record["glibc"] = glibc
+        write_json(output / f"desktop-{name}.json", record)
+    except BaseException:
+        shutil.rmtree(output)
+        raise
+
+
 def build(target, version, output, artifact=None):
     version_tag(version)
     arch = TARGETS[target][0]
@@ -96,23 +254,9 @@ def build(target, version, output, artifact=None):
             if artifact:
                 command.extend(["--artifact", str(artifact.resolve(strict=True))])
             subprocess.run(command, cwd=ROOT, check=True)
-            # Normalize metadata and gzip headers; include the complete .app,
-            # including Appcoat resources and notices, under its runtime path.
-            with archive_path.open("wb") as stream:
-                with gzip.GzipFile(fileobj=stream, mode="wb", filename="", mtime=0) as gz:
-                    with tarfile.open(fileobj=gz, mode="w") as archive:
-                        for path in [app, *sorted(app.rglob("*"))]:
-                            if path.is_symlink() or not (path.is_dir() or path.is_file()):
-                                raise ValueError("unsupported app file: " + str(path))
-                            info = archive.gettarinfo(str(path), arcname=path.relative_to(stage).as_posix())
-                            info.uid = info.gid = info.mtime = 0
-                            info.uname = info.gname = ""
-                            info.mode = 0o755 if path.is_dir() or path.stat().st_mode & 0o111 else 0o644
-                            if path.is_file():
-                                with path.open("rb") as payload:
-                                    archive.addfile(info, payload)
-                            else:
-                                archive.addfile(info)
+            # Include the complete .app, with Appcoat resources and notices,
+            # under its runtime path.
+            write_tar(stage, app, archive_path)
         verify_archive(archive_path, target)
         write_json(output / f"{arch}.json", {
             "version": version, "target": target, "arch": arch,
@@ -126,7 +270,7 @@ def build(target, version, output, artifact=None):
         raise
 
 
-def assemble(inputs, version, output):
+def assemble(inputs, version, output, desktop=False):
     version_tag(version)
     records = []
     for target, (arch, _) in TARGETS.items():
@@ -137,11 +281,22 @@ def assemble(inputs, version, output):
             raise ValueError("release input mismatch: " + arch)
         verify_archive(inputs / name, target)
         records.append(record)
+    desktop_records = []
+    for name, (platform, arch) in DESKTOP.items() if desktop else ():
+        record = json.loads((inputs / f"desktop-{name}.json").read_text())
+        archive = desktop_archive_name(name, version)
+        if (record["name"] != name or record["platform"] != platform or record["arch"] != arch
+                or record["version"] != version or record["archive"] != archive
+                or record["sha256"] != sha(inputs / archive)):
+            raise ValueError("release input mismatch: " + name)
+        if verify_desktop_archive(inputs / archive, name) != record.get("glibc"):
+            raise ValueError("release input mismatch: " + name)
+        desktop_records.append(record)
     for key in ("revision", "cargo_lock_sha256", "flake_lock_sha256"):
-        if len({record[key] for record in records}) != 1:
+        if len({record[key] for record in records + desktop_records}) != 1:
             raise ValueError("architecture builds disagree on " + key)
     output.mkdir(parents=True, exist_ok=False)
-    for record in records:
+    for record in records + desktop_records:
         shutil.copyfile(inputs / record["archive"], output / record["archive"])
     checksums = ", ".join(f'{record["arch"]} = "sha256:{record["sha256"]}"' for record in records)
     url = f"https://github.com/{REPOSITORY}/releases/download/{version}/kureha-code-{{arch}}-{version}.tar.gz"
@@ -151,7 +306,10 @@ def assemble(inputs, version, output):
         '[[layers]]\nkind = "archive"\n'
         f'url = "{url}"\nsha256 = {{ {checksums} }}\n'
         'format = "tar-gz"\nto = "/"\n')
-    write_json(output / "release.json", {"version": version, "builds": records})
+    manifest = {"version": version, "builds": records}
+    if desktop:
+        manifest["desktop"] = desktop_records
+    write_json(output / "release.json", manifest)
     (output / "SHA256SUMS").write_text("".join(
         f"{sha(path)}  {path.name}\n" for path in sorted(output.iterdir())))
 
@@ -170,8 +328,17 @@ def verify_release(directory):
                 raise ValueError("invalid archive name")
             shutil.copyfile(directory / name, inputs / name)
             write_json(inputs / f"{record['arch']}.json", record)
+        desktop = "desktop" in release
+        for record in release.get("desktop", []):
+            if record.get("name") not in DESKTOP:
+                raise ValueError("invalid desktop build")
+            name = desktop_archive_name(record["name"], version)
+            if record["archive"] != name:
+                raise ValueError("invalid archive name")
+            shutil.copyfile(directory / name, inputs / name)
+            write_json(inputs / f"desktop-{record['name']}.json", record)
         expected = Path(temporary) / "expected"
-        assemble(inputs, version, expected)
+        assemble(inputs, version, expected, desktop)
         actual_files = {path.name for path in directory.iterdir()}
         if actual_files != {path.name for path in expected.iterdir()}:
             raise ValueError("unexpected release files")
@@ -181,17 +348,36 @@ def verify_release(directory):
     return release
 
 
+def release_notes(release):
+    scarlet = ("**Scarlet**: native AArch64 and RISC-V64 apps and a checksum-pinned `bundle.toml`. "
+               "Requires Scarlet's SWS and installed SGFX driver. Shared graphics libraries are provided by the OS.")
+    if "desktop" not in release:
+        return scarlet
+    glibc = max((tuple(map(int, r["glibc"].split("."))) for r in release["desktop"] if r.get("glibc")),
+                default=None)
+    linux_glibc = f" glibc {glibc[0]}.{glibc[1]} or newer." if glibc else ""
+    return "\n\n".join([
+        scarlet,
+        "**macOS** (Apple silicon): `kureha-code-macos-aarch64-*.zip`. The app is ad-hoc signed, "
+        "not notarized: after unzipping, run `xattr -dr com.apple.quarantine \"Kureha Code.app\"` "
+        "or allow it in System Settings > Privacy & Security.",
+        "**Linux** (x86_64, AArch64): `kureha-code-linux-*.tar.gz`; run `kureha-code/bin/kureha-code`." + linux_glibc +
+        " Install Fontconfig and the graphics stack from your distribution: Vulkan or OpenGL drivers, "
+        "plus Wayland/xkbcommon or X11 libraries.",
+        "Verify downloads with `SHA256SUMS`.",
+    ])
+
+
 def publish(directory, prerelease):
     release = verify_release(directory)
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if any(record["revision"] != revision or record["dirty"] or record["external_artifact"]
-           for record in release["builds"]):
+           for record in release["builds"] + release.get("desktop", [])):
         raise ValueError("publish requires clean source builds matching the checkout")
     version = release["version"]
     command = ["gh", "release", "create", version, "--repo", REPOSITORY, "--target", revision,
-               "--title", "Kureha Code for Scarlet " + version,
-               "--notes", "Native AArch64 and RISC-V64 apps and a checksum-pinned Scarlet bundle. "
-               "Requires Scarlet's SWS and installed SGFX driver. Shared graphics libraries are provided by the OS."]
+               "--title", ("Kureha Code " if "desktop" in release else "Kureha Code for Scarlet ") + version,
+               "--notes", release_notes(release)]
     if prerelease:
         command.append("--prerelease")
     # gh release create fails if this tag already has a release. Never replace assets.
@@ -218,10 +404,16 @@ def main(argv=None):
     builder.add_argument("--version", required=True)
     builder.add_argument("--output", type=Path, required=True)
     builder.add_argument("--artifact", type=Path, help="Package an existing binary for local validation only")
+    desktop = commands.add_parser("build-desktop")
+    desktop.add_argument("--name", choices=DESKTOP, required=True)
+    desktop.add_argument("--version", required=True)
+    desktop.add_argument("--output", type=Path, required=True)
+    desktop.add_argument("--artifact", type=Path, help="Package an existing binary for local validation only")
     assembler = commands.add_parser("assemble")
     assembler.add_argument("--inputs", type=Path, required=True)
     assembler.add_argument("--version", required=True)
     assembler.add_argument("--output", type=Path, required=True)
+    assembler.add_argument("--desktop", action="store_true", help="Require and include the desktop builds")
     verifier = commands.add_parser("verify")
     verifier.add_argument("--artifacts", type=Path, required=True)
     publisher = commands.add_parser("publish")
@@ -230,8 +422,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "build":
         build(args.target, args.version, args.output.resolve(), args.artifact)
+    elif args.command == "build-desktop":
+        build_desktop(args.name, args.version, args.output.resolve(), args.artifact)
     elif args.command == "assemble":
-        assemble(args.inputs.resolve(), args.version, args.output.resolve())
+        assemble(args.inputs.resolve(), args.version, args.output.resolve(), args.desktop)
     elif args.command == "verify":
         verify_release(args.artifacts.resolve())
     else:
@@ -241,6 +435,7 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, KeyError, subprocess.CalledProcessError, tarfile.TarError) as error:
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError, tarfile.TarError,
+            zipfile.BadZipFile) as error:
         print(f"scarlet-release: {error}", file=sys.stderr)
         sys.exit(1)

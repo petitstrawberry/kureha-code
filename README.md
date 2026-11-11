@@ -61,6 +61,33 @@ are never overwritten. This helper writes to `dist/macos/Kureha Code.app` or
 to Applications. On Linux, run `bin/kureha-code` inside the generated directory;
 desktop launchers need its `bin` on `PATH` and `share` on `XDG_DATA_DIRS`.
 
+## Releases
+
+Each release carries the Scarlet apps and desktop packages for macOS and Linux.
+
+| Platform | Asset | Notes |
+| --- | --- | --- |
+| macOS (Apple silicon) | `kureha-code-macos-aarch64-<tag>.zip` | Ad-hoc signed, not notarized: after unzipping, run `xattr -dr com.apple.quarantine "Kureha Code.app"` or allow it in System Settings → Privacy & Security |
+| Linux x86_64 / AArch64 | `kureha-code-linux-<arch>-<tag>.tar.gz` | Run `kureha-code/bin/kureha-code`. Needs the glibc version in the release notes, Fontconfig, Vulkan or OpenGL drivers and Wayland/xkbcommon or X11 libraries from the distribution |
+| Scarlet | see below | Installed into images through `bundle.toml` |
+
+Desktop packages are built outside Nix on GitHub-hosted runners (macOS 15,
+Ubuntu 22.04) with a pinned stable Rust and the flake's Appcoat revision, so
+they use the system loader and libraries. The build refuses packages that refer
+to `/nix/store`, Linux binaries with another dynamic loader, wrong architectures
+and macOS bundles whose signature does not verify. `release.json` records each
+build's source revision, and Linux builds also record the newest glibc symbol
+version they need. Desktop assets are listed in `SHA256SUMS` but never in
+`bundle.toml`, so Scarlet images are unaffected.
+
+```sh
+python3 scripts/release-scarlet.py build-desktop --name linux-x86_64 \
+  --version local --output artifacts/desktop
+```
+
+Names are `macos-aarch64`, `linux-x86_64` and `linux-aarch64`; each must be built
+on that platform. `assemble --desktop` requires all three.
+
 ## Scarlet releases
 
 The Scarlet CD workflow uses the pinned toolchain and Appcoat from this flake.
@@ -74,11 +101,11 @@ Each release includes:
 - `kureha-code-aarch64-<tag>.tar.gz` and `kureha-code-riscv64-<tag>.tar.gz`
 - `bundle.toml`, with release URLs and an architecture-keyed SHA-256 table
 - `release.json`, recording the source revision and Cargo/Nix lockfile hashes
-- `SHA256SUMS`, covering both archives and the manifests
+- `SHA256SUMS`, covering both archives, the desktop packages and the manifests
 
-Changes on `main` automatically publish a uniquely named Scarlet prerelease.
+Changes on `main` automatically publish a uniquely named prerelease.
 Pushing a `v*` tag publishes a regular release. Pull requests build and verify
-both architectures without publishing. The **Build and release Scarlet apps**
+all Scarlet and desktop targets without publishing. The **Build and release apps**
 workflow also supports manual runs with an optional fresh tag and a `publish`
 switch. Existing release assets are never overwritten.
 

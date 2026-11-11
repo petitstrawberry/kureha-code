@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import tomllib
 import unittest
+import zipfile
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -161,6 +162,129 @@ class ScarletReleaseTests(unittest.TestCase):
         self.assertEqual(commands.call_count, 2)
         self.assertEqual((checkout / "platforms/scarlet/bundle.toml").read_bytes(),
                          (output / "bundle.toml").read_bytes())
+
+
+def linux_elf(machine, loader, extra=b""):
+    """A minimal ELF64 with one PT_INTERP program header."""
+    interp = loader.encode() + b"\0"
+    data = bytearray(120)
+    data[:8] = b"\x7fELF\x02\x01\x01\x00"
+    struct.pack_into("<HH", data, 16, 3, machine)
+    struct.pack_into("<Q", data, 32, 64)  # e_phoff
+    struct.pack_into("<HH", data, 54, 56, 1)  # e_phentsize, e_phnum
+    struct.pack_into("<I", data, 64, 3)  # PT_INTERP
+    struct.pack_into("<Q", data, 72, 120)  # p_offset
+    struct.pack_into("<Q", data, 96, len(interp))  # p_filesz
+    return bytes(data) + interp + b"GLIBC_2.17\0GLIBC_2.34\0GLIBC_2.4\0" + extra
+
+
+class DesktopReleaseTests(ScarletReleaseTests):
+    """Desktop packages share the release and checksums but never bundle.toml."""
+
+    def setUp(self):
+        super().setUp()
+        for name in release.DESKTOP:
+            self.make_desktop(name)
+
+    def make_desktop(self, name, executable=None, mode=0o755, revision="a" * 40, extra=None):
+        platform, arch = release.DESKTOP[name]
+        archive = self.inputs / release.desktop_archive_name(name, self.version)
+        if platform == "macos":
+            data = executable or b"\xcf\xfa\xed\xfe" + struct.pack("<I", release.MACHO_ARM64) + bytes(24)
+            with zipfile.ZipFile(archive, "w") as stream:
+                for entry, payload, entry_mode in [
+                        (release.MACOS_EXECUTABLE, data, mode),
+                        (release.MACOS_APP + "/Contents/Info.plist", b"<plist/>", 0o644),
+                        *(extra or [])]:
+                    info = zipfile.ZipInfo(entry)
+                    info.external_attr = (0o100000 | entry_mode) << 16
+                    stream.writestr(info, payload)
+        else:
+            machine, loader = release.LINUX_ELF[arch]
+            data = executable or linux_elf(machine, loader)
+            with tarfile.open(archive, "w:gz") as stream:
+                for entry, payload, entry_mode in [
+                        (release.LINUX_EXECUTABLE, data, mode),
+                        (release.LINUX_DIR + "/share/applications/kureha-code.desktop", b"[Desktop Entry]\n", 0o644),
+                        *(extra or [])]:
+                    info = tarfile.TarInfo(entry)
+                    info.size, info.mode = len(payload), entry_mode
+                    stream.addfile(info, io.BytesIO(payload))
+        record = {"version": self.version, "name": name, "platform": platform, "arch": arch,
+                  "revision": revision, "dirty": False, "external_artifact": False,
+                  "archive": archive.name, "sha256": release.sha(archive),
+                  "cargo_lock_sha256": "b" * 64, "flake_lock_sha256": "c" * 64}
+        glibc = release.verify_desktop_archive(archive, name)
+        if platform == "linux":
+            record["glibc"] = glibc
+        release.write_json(self.inputs / f"desktop-{name}.json", record)
+
+    def assemble(self, desktop=True):
+        output = self.root / ("release" if desktop else "scarlet-only")
+        release.assemble(self.inputs, self.version, output, desktop)
+        return output
+
+    def test_desktop_packages_join_the_release_but_not_the_bundle(self):
+        output = self.assemble()
+        release.verify_release(output)
+        scarlet_only = self.assemble(desktop=False)
+        self.assertEqual((output / "bundle.toml").read_bytes(),
+                         (scarlet_only / "bundle.toml").read_bytes())
+        sums = (output / "SHA256SUMS").read_text()
+        manifest = json.loads((output / "release.json").read_text())
+        self.assertEqual([r["name"] for r in manifest["desktop"]], list(release.DESKTOP))
+        for name in release.DESKTOP:
+            archive = release.desktop_archive_name(name, self.version)
+            self.assertIn(f"{release.sha(output / archive)}  {archive}", sums)
+            self.assertNotIn(archive, (output / "bundle.toml").read_text())
+        self.assertEqual(manifest["desktop"][1]["glibc"], "2.34")
+        notes = release.release_notes(manifest)
+        self.assertIn("glibc 2.34 or newer", notes)
+        self.assertIn("xattr -dr com.apple.quarantine", notes)
+
+    def test_nix_store_paths_and_foreign_loaders_are_rejected(self):
+        machine, loader = release.LINUX_ELF["aarch64"]
+        for executable, message in [
+                (linux_elf(machine, "/nix/store/abc-glibc/lib/ld-linux-aarch64.so.1"), "Nix store"),
+                (linux_elf(machine, "/lib/ld-musl-aarch64.so.1"), "loader"),
+                (linux_elf(62, "/lib64/ld-linux-x86-64.so.2"), "aarch64 Linux ELF"),
+                (linux_elf(machine, loader, extra=b"/nix/store/xyz-libfoo"), "Nix store")]:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    self.make_desktop("linux-aarch64", executable=executable)
+        with self.assertRaisesRegex(ValueError, "Nix store"):
+            self.make_desktop("macos-aarch64", extra=[
+                (release.MACOS_APP + "/Contents/Frameworks/libfoo.dylib", b"/nix/store/q-foo", 0o644)])
+        with self.assertRaisesRegex(ValueError, "arm64 Mach-O"):
+            self.make_desktop("macos-aarch64", executable=b"\xcf\xfa\xed\xfe" + bytes(28))
+
+    def test_desktop_layout_and_permissions_are_checked(self):
+        with self.assertRaisesRegex(ValueError, "executable permissions"):
+            self.make_desktop("linux-x86_64", mode=0o644)
+        with self.assertRaisesRegex(ValueError, "invalid desktop archive member"):
+            self.make_desktop("macos-aarch64", extra=[("../escape", b"x", 0o644)])
+
+    def test_desktop_builds_must_match_the_scarlet_source(self):
+        self.make_desktop("linux-x86_64", revision="d" * 40)
+        with self.assertRaisesRegex(ValueError, "disagree on revision"):
+            self.assemble()
+
+    def test_missing_desktop_build_is_rejected(self):
+        (self.inputs / "desktop-macos-aarch64.json").unlink()
+        with self.assertRaises(OSError):
+            self.assemble()
+
+    def test_dirty_desktop_build_cannot_be_published(self):
+        path = self.inputs / "desktop-linux-aarch64.json"
+        record = json.loads(path.read_text())
+        record["dirty"] = True
+        release.write_json(path, record)
+        output = self.assemble()
+        with patch.object(release.subprocess, "check_output", return_value="a" * 40), \
+                patch.object(release.subprocess, "run") as run:
+            with self.assertRaisesRegex(ValueError, "clean source builds"):
+                release.publish(output, prerelease=True)
+            run.assert_not_called()
 
 
 if __name__ == "__main__":
