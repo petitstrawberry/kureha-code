@@ -966,7 +966,9 @@ mod tests {
 
     #[test]
     fn format_on_save_times_out_and_drops_the_late_reply() {
-        let dir = install("timeout", Duration::from_millis(20));
+        // A zero timeout expires on the first poll, before any reply is read,
+        // so the outcome does not depend on how fast the formatter runs.
+        let dir = install("timeout", Duration::ZERO);
         let app = App::with_document();
         app.preferences.update(|p| p.format_on_save = true);
         let path = dir.join("a.slow");
@@ -981,19 +983,13 @@ mod tests {
             app.status.get()
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "body\n");
-        // Let the slow reply arrive; it must not edit the saved document.
-        let host = running_host().unwrap();
-        let until = Instant::now() + Duration::from_secs(30);
-        loop {
-            let replies = host.poll();
-            if !replies.is_empty() {
-                assert!(replies.iter().all(|r| matches!(r, Reply::Format { .. })));
-                break;
-            }
-            assert!(Instant::now() < until, "slow formatter never answered");
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        app.poll_extensions();
+        // Replies come back in order, so once a later format has finished the
+        // slow reply has been read and dropped without touching the document.
+        let other = open(&app, &dir.join("b.ok"), "other\n");
+        app.format_document();
+        wait(&app, "later format", |app| {
+            text(app, other) == "formatted\nother\n"
+        });
         assert_eq!(text(&app, id), "body\n");
     }
 
