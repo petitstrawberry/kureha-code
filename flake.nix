@@ -14,7 +14,7 @@
       url = "github:petitstrawberry/appcoat/3ddff8882449d82ce4c8829d538b0157b5ff0096";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    scarlet-rust-toolchain.url = "github:petitstrawberry/scarlet-rust-nix/2b4ddd555389a8c53806bbc2586440b2662c38dd";
+    scarlet-rust-toolchain.url = "github:petitstrawberry/scarlet-rust-nix/815e2e998de8ef814130c73af3ee2a5e63168e15";
   };
 
   outputs = { nixpkgs, scarlet-rust-toolchain, appcoat, ... }:

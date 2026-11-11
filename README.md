@@ -61,16 +61,68 @@ are never overwritten. This helper writes to `dist/macos/Kureha Code.app` or
 to Applications. On Linux, run `bin/kureha-code` inside the generated directory;
 desktop launchers need its `bin` on `PATH` and `share` on `XDG_DATA_DIRS`.
 
-For Scarlet, package an executable built for your image
-before using the [Scarlet bundle](platforms/scarlet/bundle.toml):
+## Scarlet releases
+
+The Scarlet CD workflow uses the pinned toolchain and Appcoat from this flake.
+It builds `aarch64-unknown-scarlet` and `riscv64gc-unknown-scarlet` with Cargo,
+then packages each complete `.app` into a separate `.tar.gz`. Image composition
+downloads and extracts these archives; it does not build the application.
+The graphics driver and shared runtime libraries are supplied by Scarlet.
+
+Each release includes:
+
+- `kureha-code-aarch64-<tag>.tar.gz` and `kureha-code-riscv64-<tag>.tar.gz`
+- `bundle.toml`, with release URLs and an architecture-keyed SHA-256 table
+- `release.json`, recording the source revision and Cargo/Nix lockfile hashes
+- `SHA256SUMS`, covering both archives and the manifests
+
+Changes on `main` automatically publish a uniquely named Scarlet prerelease.
+Pushing a `v*` tag publishes a regular release. Pull requests build and verify
+both architectures without publishing. The **Build and release Scarlet apps**
+workflow also supports manual runs with an optional fresh tag and a `publish`
+switch. Existing release assets are never overwritten.
+
+After publishing, CD downloads and verifies the assets again. For `main`
+builds it then commits the generated `platforms/scarlet/bundle.toml`; this file
+is created by the first successful publication. Bundle-only updates do not
+trigger another build. Consumers pin that bundle commit:
+
+```toml
+[[images.rootfs.layers]]
+kind = "bundle"
+source = { git = "https://github.com/petitstrawberry/kureha-code.git", rev = "<published-bundle-commit>" }
+bundle = "platforms/scarlet/bundle.toml"
+```
+
+Alternatively, download the release's `bundle.toml`, commit it to the consuming
+project, and reference it with a local bundle layer. Both ways install the app
+at `/applications/kureha-code.app` using only `kind = "archive"`.
+
+To reproduce the CD build locally, choose a new output directory for each step:
+
+```sh
+nix develop --command python3 scripts/release-scarlet.py build \
+  --target aarch64-unknown-scarlet --version scarlet-local --output artifacts/aarch64
+nix develop --command python3 scripts/release-scarlet.py build \
+  --target riscv64gc-unknown-scarlet --version scarlet-local --output artifacts/riscv64
+mkdir artifacts/inputs
+cp artifacts/aarch64/* artifacts/riscv64/* artifacts/inputs/
+python3 scripts/release-scarlet.py assemble \
+  --inputs artifacts/inputs --version scarlet-local --output artifacts/release
+python3 scripts/release-scarlet.py verify --artifacts artifacts/release
+```
+
+For local packaging of an existing executable, the original helper remains available:
 
 ```sh
 python3 scripts/package.py --platform scarlet --target aarch64-unknown-scarlet \
   --artifact /path/to/scarlet/kureha-code
 ```
 
-`riscv64gc-unknown-scarlet` is also accepted. The bundle consumes the resulting
-`dist/scarlet/kureha-code.app`; build it for the architecture of your image.
+`riscv64gc-unknown-scarlet` is also accepted. This writes a local `.app` directory;
+the release tooling creates the archive and bundle used for image composition.
+`release-scarlet.py build --artifact` can exercise packaging with a prebuilt
+binary, but such builds cannot be published by the release command.
 
 ## Configuration
 

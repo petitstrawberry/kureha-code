@@ -1,6 +1,6 @@
 {
   "generator": "cargo-about",
-  "cargo_lock_sha256": "1dda756ee3fef6b24b26f63ef7751f23bd74e27d91488df209ac7d784c9bf5d0",
+  "cargo_lock_sha256": "2bfdb115cba425b72e4012d9f5ced5abdda4f287be83f8deaafeadcd15cb63a5",
   "entries": [
     {
       "name": "ab_glyph",
@@ -2199,6 +2199,15 @@
       ],
       "source": "https://github.com/PolyMeilex/sctk-adwaita",
       "license": "MIT"
+    },
+    {
+      "name": "self_cell",
+      "version": "1.3.0",
+      "texts": [
+        1
+      ],
+      "source": "https://github.com/Voultapher/self_cell",
+      "license": "Apache-2.0"
     },
     {
       "name": "semver",
