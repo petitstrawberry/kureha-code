@@ -1206,3 +1206,64 @@ fn extension_language_servers_need_the_users_grant() {
     assert_eq!(args, ["-c", "true"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[cfg(unix)]
+#[test]
+fn an_ungranted_extension_server_explains_itself_and_starts_after_the_grant() {
+    use kureha_code::extensions::{Registry, host::Host, runtime::Budgets};
+    let dir = std::env::temp_dir().join(format!("kureha-extension-lsp-app-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("extensions/zig")).unwrap();
+    std::fs::write(
+        dir.join("extensions/zig/extension.toml"),
+        "[extension]\nid='test.zig'\nname='Zig'\nversion='1'\napi=1\n\
+         [capabilities]\nprocess=['sh']\n\
+         [[contributes.languages]]\nid='zig'\nextensions=['zig']\n\
+         [[contributes.language_servers]]\nlanguage='zig'\ncommand='sh'\nargs=['-c', 'sleep 30']\n",
+    )
+    .unwrap();
+    let registry: &'static Registry = Box::leak(Box::new(Registry::load(&dir.join("extensions"))));
+    assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+    let host: &'static Host = Box::leak(Box::new(Host::start(
+        registry,
+        Budgets::default(),
+        Default::default(),
+    )));
+    crate::extension_ui::use_test_extensions(registry, host);
+    let path = dir.join("main.zig");
+    std::fs::write(&path, "const x = 1;\n").unwrap();
+    let app = App::with_document();
+    let id = {
+        let mut rt = app.runtime.lock().unwrap();
+        rt.explorer.root = Some(dir.clone());
+        rt.workspace.open(path.clone(), "const x = 1;\n")
+    };
+    app.activate(id);
+    let wait_for = |what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !app.language_status.get().contains(what) {
+            assert!(
+                Instant::now() < deadline,
+                "status: {}",
+                app.language_status.get()
+            );
+            app.poll_language();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    // Opening the file does not start the server; the status says how to allow it.
+    wait_for("needs your permission to run `sh`");
+    assert!(
+        app.language_status
+            .get()
+            .contains("Extensions: Allow test.zig to Run sh")
+    );
+    let extension = &registry.extensions[0];
+    app.set_process_permission(extension, "sh", true);
+    assert!(app.status.get().contains("Restart the language server"));
+    app.restart_language_server();
+    // Started by absolute path, but shown by name.
+    wait_for("zig: starting sh…");
+    app.restart_language_server(); // Stops the server.
+    let _ = std::fs::remove_dir_all(&dir);
+}

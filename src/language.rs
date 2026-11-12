@@ -175,9 +175,9 @@ fn command(language: &str) -> Result<(String, Vec<String>), String> {
     }
     // Extensions come after the user's own configuration but before defaults.
     if let Some((extension, server)) =
-        kureha_code::extensions::loaded().and_then(|r| r.language_server_entry(language))
+        super::extension_ui::registry().and_then(|r| r.language_server_entry(language))
     {
-        return extension_server(extension, server, process::grants());
+        return extension_server(extension, server, super::extension_ui::process_grants());
     }
     Ok(match language {
         "rust" => ("rust-analyzer".into(), vec![]),
@@ -528,8 +528,13 @@ impl Service {
             let root = root.to_owned();
             let cwd = root.clone();
             let lang = language.to_string();
+            // Servers may be started by absolute path; show the program's name.
             let label = command(language)
-                .map(|(program, _)| program)
+                .map(|(program, _)| {
+                    Path::new(&program)
+                        .file_name()
+                        .map_or(program.clone(), |name| name.to_string_lossy().into_owned())
+                })
                 .unwrap_or_else(|_| language.into());
             let config = command(language);
             let started = thread::Builder::new()
