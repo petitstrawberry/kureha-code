@@ -605,6 +605,13 @@ fn processes_run_in_the_document_or_workspace_folder() {
         pwd(&mut state, Some("workspace")),
         workspace.canonicalize().unwrap()
     );
+    // An unsaved document without a folder still gets an existing directory.
+    state.document = Some(DocumentSnapshot {
+        path: PathBuf::new(),
+        workspace: None,
+        ..snapshot("")
+    });
+    assert!(pwd(&mut state, None).is_dir());
     let _ = std::fs::remove_dir_all(&base);
 }
 

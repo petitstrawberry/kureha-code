@@ -237,10 +237,13 @@ fn process_directory(document: Option<&DocumentSnapshot>, place: &str) -> Option
         "workspace" => [workspace(), folder()],
         _ => [folder(), workspace()],
     };
+    // Unsaved documents without an open folder run in the home directory, or
+    // the temporary directory where there is none (build sandboxes, services).
     candidates
         .into_iter()
         .flatten()
         .chain(std::env::home_dir())
+        .chain([std::env::temp_dir()])
         .find(|dir| dir.is_dir())
 }
 

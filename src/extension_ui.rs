@@ -367,7 +367,8 @@ impl App {
         self.status.set(if allow {
             format!(
                 "Allowed {name} ({id}) to run {program}. It can run {program} with any \
-                 arguments, with your permissions.{}",
+                 arguments, with your permissions, and {program} may load code from the \
+                 project it runs in.{}",
                 if serves {
                     " Restart the language server to start it."
                 } else {
