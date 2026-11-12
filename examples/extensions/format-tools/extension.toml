@@ -1,0 +1,22 @@
+[extension]
+id = "example.format-tools"
+name = "Format Tools"
+version = "0.1.0"
+api = 1
+wasm = "target/wasm32-unknown-unknown/release/kureha_format_tools.wasm"
+
+# The extension asks for these; each one runs only after you allow it with
+# "Extensions: Allow example.format-tools to Run <program>".
+[capabilities]
+process = ["ruff", "prettier", "clang-format"]
+
+[[contributes.formatters]]
+languages = [
+  "python",
+  "javascript",
+  "javascriptreact",
+  "typescript",
+  "typescriptreact",
+  "c",
+  "cpp",
+]

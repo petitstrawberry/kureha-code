@@ -21,6 +21,7 @@ use std::{
     thread,
 };
 mod editing_ui;
+mod extension_ui;
 mod groups;
 mod hover;
 mod language;
@@ -102,6 +103,7 @@ enum ClipboardJob {
 }
 #[derive(Default)]
 struct Runtime {
+    extensions: extension_ui::State,
     window_drag_requested: bool,
     terminal_return_focus: Option<u64>,
     history: location_history::History,
@@ -714,6 +716,11 @@ impl App {
             .get(id)
             .and_then(|doc| doc.path.clone());
         if let Some(path) = path {
+            // The close prompt saves through here too; it must not wait.
+            let closing = self.runtime.lock().unwrap().close.is_some();
+            if !closing && self.format_before_save(id, &path) {
+                return;
+            }
             self.save_to(id, path);
         } else {
             self.picker(DialogPurpose::Save(id));
@@ -1346,8 +1353,12 @@ impl App {
                     )
                 };
                 if exists {
+                    let note = self
+                        .take_save_note(id)
+                        .map(|note| format!(" · {note}"))
+                        .unwrap_or_default();
                     self.status.set(format!(
-                        "Saved {name}{}",
+                        "Saved {name}{}{note}",
                         if clean {
                             ""
                         } else {
@@ -1571,6 +1582,10 @@ impl Application for App {
         self.poll_clipboard();
         self.poll_language();
         self.poll_language_interactions();
+        if let Some(report) = kureha_code::extensions::take_load_report() {
+            self.status.set(report);
+        }
+        self.poll_extensions();
         if kureha_code::syntax::poll() {
             self.syntax_revision
                 .update(|revision| *revision = revision.wrapping_add(1));
@@ -1578,6 +1593,7 @@ impl Application for App {
     }
 }
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    kureha_code::extensions::preload();
     let mut app = App::new();
     app.apply_theme(app.theme.get());
     app.start_theme_settings();

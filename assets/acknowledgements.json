@@ -1,6 +1,6 @@
 {
   "generator": "cargo-about",
-  "cargo_lock_sha256": "2bfdb115cba425b72e4012d9f5ced5abdda4f287be83f8deaafeadcd15cb63a5",
+  "cargo_lock_sha256": "b6e9ee81b1496f520a1a47474c05bf84fa06a63f96ac172d7c5e34e7e98eabbe",
   "entries": [
     {
       "name": "ab_glyph",
@@ -42,7 +42,7 @@
       "name": "aho-corasick",
       "version": "1.1.5",
       "texts": [
-        138
+        139
       ],
       "source": "https://github.com/BurntSushi/aho-corasick",
       "license": "MIT"
@@ -141,7 +141,7 @@
       "name": "base64",
       "version": "0.23.1",
       "texts": [
-        152
+        153
       ],
       "source": "https://github.com/marshallpierce/rust-base64",
       "license": "MIT"
@@ -150,7 +150,7 @@
       "name": "bincode",
       "version": "1.3.3",
       "texts": [
-        157
+        158
       ],
       "source": "https://github.com/servo/bincode",
       "license": "MIT"
@@ -224,7 +224,7 @@
       "license": "See attribution",
       "source": "",
       "texts": [
-        171
+        172
       ]
     },
     {
@@ -258,7 +258,7 @@
       "name": "byteorder-lite",
       "version": "0.1.0",
       "texts": [
-        138
+        139
       ],
       "source": "https://github.com/image-rs/byteorder-lite",
       "license": "MIT"
@@ -339,7 +339,7 @@
       "name": "color_quant",
       "version": "1.1.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/image-rs/color_quant.git",
       "license": "MIT"
@@ -348,7 +348,7 @@
       "name": "combine",
       "version": "4.6.9",
       "texts": [
-        140
+        141
       ],
       "source": "https://github.com/Marwes/combine",
       "license": "MIT"
@@ -420,7 +420,7 @@
       "name": "crossbeam-utils",
       "version": "0.8.23",
       "texts": [
-        149
+        150
       ],
       "source": "https://github.com/crossbeam-rs/crossbeam",
       "license": "MIT"
@@ -504,7 +504,7 @@
       "license": "MIT",
       "source": "https://github.com/dracula/dracula-theme",
       "texts": [
-        166
+        167
       ]
     },
     {
@@ -655,7 +655,7 @@
       "name": "foldhash",
       "version": "0.1.5",
       "texts": [
-        162
+        163
       ],
       "source": "https://github.com/orlp/foldhash",
       "license": "Zlib"
@@ -664,7 +664,7 @@
       "name": "foldhash",
       "version": "0.2.0",
       "texts": [
-        162
+        163
       ],
       "source": "https://github.com/orlp/foldhash",
       "license": "Zlib"
@@ -781,7 +781,7 @@
       "name": "gif",
       "version": "0.14.2",
       "texts": [
-        142
+        143
       ],
       "source": "https://github.com/image-rs/image-gif",
       "license": "MIT"
@@ -873,7 +873,7 @@
       "license": "MIT",
       "source": "https://github.com/morhetz/gruvbox/tree/ef8864bb42bf244f0295d1c5a403b27e3d139695",
       "texts": [
-        167
+        168
       ]
     },
     {
@@ -990,7 +990,7 @@
       "license": "MIT AND OFL-1.1",
       "source": "https://github.com/ryanoasis/nerd-fonts",
       "texts": [
-        163
+        164
       ]
     },
     {
@@ -1215,7 +1215,7 @@
       "license": "OFL-1.1",
       "source": "https://github.com/coz-m/MPLUS_FONTS",
       "texts": [
-        164
+        165
       ]
     },
     {
@@ -1231,7 +1231,7 @@
       "name": "memchr",
       "version": "2.8.3",
       "texts": [
-        138
+        139
       ],
       "source": "https://github.com/BurntSushi/memchr",
       "license": "MIT"
@@ -1278,7 +1278,7 @@
       "license": "MIT",
       "source": "https://github.com/microsoft/vscode",
       "texts": [
-        168
+        169
       ]
     },
     {
@@ -1350,7 +1350,7 @@
       "license": "MIT",
       "source": "https://github.com/nordtheme/nord",
       "texts": [
-        169
+        170
       ]
     },
     {
@@ -1359,7 +1359,7 @@
       "license": "OFL-1.1",
       "source": "https://github.com/notofonts/noto-cjk",
       "texts": [
-        165
+        166
       ]
     },
     {
@@ -1546,7 +1546,7 @@
       "name": "orbclient",
       "version": "0.3.55",
       "texts": [
-        143
+        144
       ],
       "source": "https://gitlab.redox-os.org/redox-os/orbclient",
       "license": "MIT"
@@ -1564,7 +1564,7 @@
       "name": "os_pipe",
       "version": "1.2.3",
       "texts": [
-        155
+        156
       ],
       "source": "https://github.com/oconnor663/os_pipe.rs",
       "license": "MIT"
@@ -1798,7 +1798,7 @@
       "name": "quick-xml",
       "version": "0.41.0",
       "texts": [
-        158
+        159
       ],
       "source": "https://github.com/tafia/quick-xml",
       "license": "MIT"
@@ -1807,7 +1807,7 @@
       "name": "quick-xml",
       "version": "0.42.0",
       "texts": [
-        145
+        146
       ],
       "source": "https://github.com/tafia/quick-xml",
       "license": "MIT"
@@ -1943,7 +1943,7 @@
       "name": "roxmltree",
       "version": "0.21.1",
       "texts": [
-        148
+        149
       ],
       "source": "https://github.com/RazrFalcon/roxmltree",
       "license": "MIT"
@@ -2033,7 +2033,7 @@
       "name": "same-file",
       "version": "1.0.6",
       "texts": [
-        147
+        148
       ],
       "source": "https://github.com/BurntSushi/same-file",
       "license": "MIT"
@@ -2330,7 +2330,7 @@
       "name": "shlex",
       "version": "2.0.1",
       "texts": [
-        141
+        142
       ],
       "source": "https://github.com/comex/rust-shlex",
       "license": "MIT"
@@ -2384,7 +2384,7 @@
       "name": "slotmap",
       "version": "1.1.1",
       "texts": [
-        161
+        162
       ],
       "source": "https://github.com/orlp/slotmap",
       "license": "Zlib"
@@ -2431,8 +2431,17 @@
       "license": "MIT",
       "source": "https://github.com/altercation/solarized",
       "texts": [
-        170
+        171
       ]
+    },
+    {
+      "name": "spin",
+      "version": "0.9.9",
+      "texts": [
+        137
+      ],
+      "source": "https://github.com/mvdnes/spin-rs.git",
+      "license": "MIT"
     },
     {
       "name": "spirv",
@@ -2564,7 +2573,7 @@
       "name": "termcolor",
       "version": "1.4.1",
       "texts": [
-        138
+        139
       ],
       "source": "https://github.com/BurntSushi/termcolor",
       "license": "MIT"
@@ -2789,7 +2798,7 @@
       "name": "unicode-bidi-mirroring",
       "version": "0.4.0",
       "texts": [
-        150
+        151
       ],
       "source": "https://github.com/RazrFalcon/unicode-bidi-mirroring",
       "license": "MIT"
@@ -2798,7 +2807,7 @@
       "name": "unicode-ccc",
       "version": "0.4.0",
       "texts": [
-        150
+        151
       ],
       "source": "https://github.com/RazrFalcon/unicode-ccc",
       "license": "MIT"
@@ -2808,7 +2817,7 @@
       "version": "1.0.27",
       "texts": [
         129,
-        159
+        160
       ],
       "source": "https://github.com/dtolnay/unicode-ident",
       "license": "MIT AND Unicode-3.0"
@@ -2827,7 +2836,7 @@
       "version": "0.1.5",
       "texts": [
         31,
-        160
+        161
       ],
       "source": "https://github.com/unicode-rs/unicode-properties",
       "license": "MIT AND Unicode-3.0"
@@ -2917,7 +2926,7 @@
       "name": "version_check",
       "version": "0.9.5",
       "texts": [
-        156
+        157
       ],
       "source": "https://github.com/SergioBenitez/version_check",
       "license": "MIT"
@@ -2926,7 +2935,7 @@
       "name": "vt100",
       "version": "0.16.2",
       "texts": [
-        144
+        145
       ],
       "source": "https://github.com/doy/vt100-rust",
       "license": "MIT"
@@ -2944,7 +2953,7 @@
       "name": "walkdir",
       "version": "2.5.0",
       "texts": [
-        138
+        139
       ],
       "source": "https://github.com/BurntSushi/walkdir",
       "license": "MIT"
@@ -3010,6 +3019,51 @@
         21
       ],
       "source": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared",
+      "license": "MIT"
+    },
+    {
+      "name": "wasmi",
+      "version": "2.0.0",
+      "texts": [
+        119
+      ],
+      "source": "https://github.com/wasmi-labs/wasmi",
+      "license": "MIT"
+    },
+    {
+      "name": "wasmi_collections",
+      "version": "2.0.0",
+      "texts": [
+        119
+      ],
+      "source": "https://github.com/wasmi-labs/wasmi",
+      "license": "MIT"
+    },
+    {
+      "name": "wasmi_core",
+      "version": "2.0.0",
+      "texts": [
+        119
+      ],
+      "source": "https://github.com/wasmi-labs/wasmi",
+      "license": "MIT"
+    },
+    {
+      "name": "wasmi_ir",
+      "version": "2.0.0",
+      "texts": [
+        119
+      ],
+      "source": "https://github.com/wasmi-labs/wasmi",
+      "license": "MIT"
+    },
+    {
+      "name": "wasmparser",
+      "version": "0.228.0",
+      "texts": [
+        119
+      ],
+      "source": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser",
       "license": "MIT"
     },
     {
@@ -3124,7 +3178,7 @@
       "name": "weezl",
       "version": "0.1.12",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/image-rs/weezl",
       "license": "MIT"
@@ -3169,7 +3223,7 @@
       "name": "winapi-util",
       "version": "0.1.11",
       "texts": [
-        147
+        148
       ],
       "source": "https://github.com/BurntSushi/winapi-util",
       "license": "MIT"
@@ -3520,7 +3574,7 @@
       "name": "xkbcommon-dl",
       "version": "0.4.2",
       "texts": [
-        151
+        152
       ],
       "source": "https://github.com/rust-windowing/xkbcommon-dl",
       "license": "MIT"
@@ -3538,7 +3592,7 @@
       "name": "xml-rs",
       "version": "0.8.29",
       "texts": [
-        137
+        138
       ],
       "source": "https://github.com/kornelski/xml-rs",
       "license": "MIT"
@@ -3547,7 +3601,7 @@
       "name": "yaml-rust",
       "version": "0.4.5",
       "texts": [
-        139
+        140
       ],
       "source": "https://github.com/chyh1990/yaml-rust",
       "license": "MIT"
@@ -3556,7 +3610,7 @@
       "name": "yeslogic-fontconfig-sys",
       "version": "6.0.1",
       "texts": [
-        154
+        155
       ],
       "source": "https://github.com/yeslogic/fontconfig-rs",
       "license": "MIT"
@@ -3745,6 +3799,7 @@
     "The MIT License\n\nCopyright 2015 Google Inc. All rights reserved.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n",
     "The MIT License\n\nCopyright 2015 The Fancy Regex Authors.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n",
     "The MIT License (MIT)\n\nCopyright (c) 2013 Nicolas Silva\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the \"Software\"), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software is furnished to do so,\nsubject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS\nFOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR\nCOPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER\nIN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN\nCONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n",
+    "The MIT License (MIT)\n\nCopyright (c) 2014 Mathijs van de Nes\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
     "The MIT License (MIT)\n\nCopyright (c) 2014 Vladimir Matveev\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
     "The MIT License (MIT)\n\nCopyright (c) 2015 Andrew Gallant\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n",
     "The MIT License (MIT)\n\nCopyright (c) 2015 Chen Yuheng\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",

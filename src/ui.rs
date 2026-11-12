@@ -684,6 +684,10 @@ impl App {
                     if keys.code_edit_key(*keycode, *modifiers) {
                         return true;
                     }
+                    // Only while the code editor has focus, after built-in keys.
+                    if keys.extension_key(*keycode, *modifiers) {
+                        return true;
+                    }
                     if modifiers.primary() {
                         match keycode {
                             KeyCode::Char('z' | 'Z') => keys.undo(modifiers.shift),

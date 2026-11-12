@@ -28,6 +28,14 @@ enum Mode {
 enum Action {
     File(PathBuf),
     Command(&'static str),
+    /// Extension id and command id; kept apart from built-in ids.
+    ExtensionCommand(&'static str, &'static str),
+    /// Grants (`true`) or withdraws a program for an extension.
+    ExtensionPermission(
+        &'static kureha_code::extensions::Extension,
+        &'static str,
+        bool,
+    ),
     Theme(kureha_code::theme::Theme),
 }
 #[derive(Clone, Debug)]
@@ -83,6 +91,10 @@ pub(crate) struct Navigation {
     pub(super) row_inputs: super::ui::RowInputs,
 }
 impl Navigation {
+    /// Marks the current key press as a shortcut so its Alt text is dropped.
+    pub(super) fn swallow_shortcut_text(&self) {
+        self.shortcut_text.store(true, Ordering::Relaxed);
+    }
     /// Some backends emit printable text after an Alt shortcut key press.
     /// Consume only that press's text, never the next ordinary key press.
     pub(super) fn capture_shortcut_text(&self, event: &Event) -> bool {
@@ -199,7 +211,7 @@ macro_rules! command {
         }
     };
 }
-const COMMANDS: &[CommandDescriptor] = &[
+pub(super) const COMMANDS: &[CommandDescriptor] = &[
     command!(
         "markdown-refresh",
         "Markdown: Refresh Preview",
@@ -555,6 +567,17 @@ impl App {
                 .filter(|(id, _)| *id != "kureha")
                 .filter_map(|(id, _)| preset(id)),
         );
+        // Not loaded yet means the worker is still reading; show presets only.
+        if let Some(registry) = kureha_code::extensions::loaded() {
+            for (_, theme) in registry.themes() {
+                if !choices
+                    .iter()
+                    .any(|c| c.name().eq_ignore_ascii_case(theme.name()))
+                {
+                    choices.push(theme.clone());
+                }
+            }
+        }
         let mut rows = choices
             .into_iter()
             .map(|choice| {
@@ -850,15 +873,83 @@ impl App {
         match mode {
             Mode::Closed => {}
             Mode::Commands => {
-                let rows = navigation::filter_commands(COMMANDS, &query, VISIBLE_RESULTS)
+                // Extension commands are listed once the registry has loaded.
+                let contributed = super::extension_ui::registry()
+                    .map(|registry| {
+                        registry
+                            .extensions
+                            .iter()
+                            .filter(|e| e.wasm.is_some())
+                            .flat_map(|e| {
+                                e.manifest.contributes.commands.iter().map(move |c| (e, c))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                // Then the grants for programs extensions declare.
+                let permissions = super::extension_ui::permission_commands();
+                let mut commands: Vec<CommandDescriptor> = COMMANDS.to_vec();
+                commands.extend(
+                    contributed
+                        .iter()
+                        .map(|(extension, command)| CommandDescriptor {
+                            id: command.id.as_str(),
+                            label: command.title.as_str(),
+                            keywords: extension.manifest.name.as_str(),
+                            shortcut: "",
+                        }),
+                );
+                commands.extend(permissions.iter().map(|permission| CommandDescriptor {
+                    id: "extension-permission",
+                    label: &permission.label,
+                    keywords: &permission.keywords,
+                    shortcut: "",
+                }));
+                let rows = navigation::filter_commands(&commands, &query, VISIBLE_RESULTS)
                     .into_iter()
-                    .map(|hit| {
-                        let command = COMMANDS[hit.command_index];
-                        Row {
-                            label: command.label.into(),
-                            detail: shortcut(command.shortcut),
-                            key: command.id.into(),
-                            action: Action::Command(command.id),
+                    .map(|hit| match hit.command_index.checked_sub(COMMANDS.len()) {
+                        None => {
+                            let command = COMMANDS[hit.command_index];
+                            Row {
+                                label: command.label.into(),
+                                detail: shortcut(command.shortcut),
+                                key: command.id.into(),
+                                action: Action::Command(command.id),
+                            }
+                        }
+                        Some(index) if index < contributed.len() => {
+                            let (extension, command) = contributed[index];
+                            let id = extension.manifest.id.as_str();
+                            Row {
+                                label: format!("{}: {}", extension.manifest.name, command.title),
+                                detail: super::extension_ui::extension_shortcut(id, &command.id)
+                                    .map(|key| shortcut(&key))
+                                    .unwrap_or_default(),
+                                key: format!("ext:{id}:{}", command.id),
+                                action: Action::ExtensionCommand(id, command.id.as_str()),
+                            }
+                        }
+                        Some(index) => {
+                            let permission = &permissions[index - contributed.len()];
+                            Row {
+                                label: permission.label.clone(),
+                                detail: if permission.allow {
+                                    "Runs with your permissions".into()
+                                } else {
+                                    String::new()
+                                },
+                                key: format!(
+                                    "perm:{}:{}:{}",
+                                    permission.extension.manifest.id,
+                                    permission.program,
+                                    permission.allow
+                                ),
+                                action: Action::ExtensionPermission(
+                                    permission.extension,
+                                    permission.program,
+                                    permission.allow,
+                                ),
+                            }
                         }
                     })
                     .collect::<Vec<_>>();
@@ -1055,6 +1146,12 @@ impl App {
         match row.action {
             Action::File(path) => self.open(path),
             Action::Command(id) => self.execute_navigation_command(id),
+            Action::ExtensionCommand(extension, command) => {
+                self.run_extension_command(extension, command)
+            }
+            Action::ExtensionPermission(extension, program, allow) => {
+                self.set_process_permission(extension, program, allow)
+            }
             Action::Theme(theme) => {
                 self.apply_theme(theme);
                 if let Some(name) = selected_theme {
@@ -1931,5 +2028,423 @@ mod tests {
             assert!(ids.contains(required));
         }
         assert!(navigation::filter_commands(COMMANDS, "split", 10).len() >= 2);
+    }
+    /// Drives the real palette, worker and an installed extension. Build the
+    /// example, point `KUREHA_EXTENSIONS_DIR` at a folder containing it, and run
+    /// `cargo test --bin kureha-code extension_command_end_to_end -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs KUREHA_EXTENSIONS_DIR with the built upper-case example"]
+    fn extension_command_end_to_end() {
+        use scarlet_ui::prelude::{TextPosition, TextSelection};
+        let registry = kureha_code::extensions::registry();
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let text = "hello extension world\nsecond line stays\n";
+        let app = app_with_text(text);
+        let id = app.document_id();
+        let document = || {
+            app.bindings(id)
+                .unwrap()
+                .document
+                .get()
+                .as_str()
+                .to_string()
+        };
+        app.bindings(id).unwrap().selection.set(TextSelection {
+            anchor: TextPosition::new(0),
+            caret: TextPosition::new("hello extension world".len()),
+        });
+        let mut palette = primary();
+        palette.shift = true;
+        assert!(app.navigation_key(KeyCode::Char('p'), palette));
+        app.nav.query.set("upper".into());
+        app.poll_navigation();
+        let rows = app.nav.rows.get();
+        println!(
+            "palette rows for `upper`: {:?}",
+            rows.iter().map(|r| &r.label).collect::<Vec<_>>()
+        );
+        let index = rows
+            .iter()
+            .position(|row| row.label == "Upper Case: Upper-case Selection")
+            .expect("the extension command is listed");
+        assert_eq!(
+            rows[index].key,
+            "ext:example.upper-case:upper-case.selection"
+        );
+        app.nav.selected.set(Some(index));
+        render_preview(&app, "extension-palette.png");
+        let started = Instant::now();
+        assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
+        println!("status after Enter: {}", app.status.get());
+        while document() == text {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "no edit; status: {}",
+                app.status.get()
+            );
+            std::thread::sleep(Duration::from_millis(5));
+            app.poll_extensions();
+        }
+        println!(
+            "applied after {:.1} ms (includes first-use instantiation); status: {}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            app.status.get()
+        );
+        assert_eq!(document(), "HELLO EXTENSION WORLD\nsecond line stays\n");
+        assert_eq!(app.status.get(), "Upper-cased 21 characters");
+        render_preview(&app, "extension-applied.png");
+        app.undo(false);
+        assert_eq!(document(), text);
+    }
+    /// With KUREHA_WORKBENCH_PREVIEW set, saves what the window shows as PNG.
+    fn render_preview(app: &App, name: &str) {
+        use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
+        let Some(directory) = std::env::var_os("KUREHA_WORKBENCH_PREVIEW") else {
+            return;
+        };
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new("Kureha Code", app.content())
+                .decorated(false)
+                .size(Size::new(1100.0, 560.0))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        let buffer = pipeline.render().expect("workbench paints");
+        let pixels = buffer
+            .data()
+            .chunks_exact(4)
+            .flat_map(|p| [p[2], p[1], p[0]])
+            .collect();
+        image::RgbImage::from_raw(buffer.width(), buffer.height(), pixels)
+            .unwrap()
+            .save(PathBuf::from(directory).join(name))
+            .unwrap();
+        pipeline.teardown();
+    }
+    /// Runs one palette command by its label and waits for the document to change.
+    fn run_palette_command(app: &App, query: &str, label: &str, preview: Option<&str>) {
+        let mut palette = primary();
+        palette.shift = true;
+        assert!(app.navigation_key(KeyCode::Char('p'), palette));
+        app.nav.query.set(query.into());
+        app.poll_navigation();
+        let rows = app.nav.rows.get();
+        let index = rows
+            .iter()
+            .position(|row| row.label == label)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} not in {:?}",
+                    rows.iter().map(|r| &r.label).collect::<Vec<_>>()
+                )
+            });
+        app.nav.selected.set(Some(index));
+        if let Some(name) = preview {
+            render_preview(app, name);
+        }
+        let id = app.document_id();
+        let before = app
+            .bindings(id)
+            .unwrap()
+            .document
+            .get()
+            .as_str()
+            .to_string();
+        let started = Instant::now();
+        assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
+        while app.bindings(id).unwrap().document.get().as_str() == before {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "{label}: no edit; status: {}",
+                app.status.get()
+            );
+            std::thread::sleep(Duration::from_millis(5));
+            app.poll_extensions();
+        }
+    }
+    /// Text Tools through the real palette. Needs the built example under
+    /// `KUREHA_EXTENSIONS_DIR`; see `examples/extensions/text-tools`.
+    #[test]
+    #[ignore = "needs KUREHA_EXTENSIONS_DIR with the built text-tools example"]
+    fn text_tools_end_to_end() {
+        use scarlet_ui::prelude::{TextPosition, TextSelection};
+        let registry = kureha_code::extensions::registry();
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let json = "{\"name\":\"kureha\",\"version\":1.10,\"tags\":[\"editor\",\"wasm\"]}";
+        let source = format!("Config:\n{json}\nend\n");
+        let app = app_with_text(&source);
+        let id = app.document_id();
+        let document = || {
+            app.bindings(id)
+                .unwrap()
+                .document
+                .get()
+                .as_str()
+                .to_string()
+        };
+        // JSON inside another document: only the selected JSON is formatted.
+        let start = source.find('{').unwrap();
+        app.bindings(id).unwrap().selection.set(TextSelection {
+            anchor: TextPosition::new(start),
+            caret: TextPosition::new(start + json.len() + 1),
+        });
+        run_palette_command(
+            &app,
+            "format selection json",
+            "Text Tools: Format Selection as JSON",
+            Some("text-tools-palette.png"),
+        );
+        assert_eq!(
+            document(),
+            "Config:\n{\n  \"name\": \"kureha\",\n  \"version\": 1.10,\n  \"tags\": [\n    \"editor\",\n    \"wasm\"\n  ]\n}\nend\n"
+        );
+        assert_eq!(app.status.get(), "Formatted the selection as JSON");
+        // Whole JSON files go through Code: Format Document instead.
+        let mut palette = primary();
+        palette.shift = true;
+        assert!(app.navigation_key(KeyCode::Char('p'), palette));
+        app.nav.query.set("format json".into());
+        app.poll_navigation();
+        assert!(
+            !app.nav
+                .rows
+                .get()
+                .iter()
+                .any(|row| row.label == "Text Tools: Format JSON")
+        );
+        app.close_navigation();
+        render_preview(&app, "text-tools-json.png");
+        // A selected key converts to camelCase.
+        let text = document();
+        let key = text.find("version").unwrap();
+        app.bindings(id).unwrap().selection.set(TextSelection {
+            anchor: TextPosition::new(text.find("name").unwrap()),
+            caret: TextPosition::new(text.find("name").unwrap() + 4),
+        });
+        run_palette_command(
+            &app,
+            "constant",
+            "Text Tools: Convert to CONSTANT_CASE",
+            None,
+        );
+        assert!(document().contains("\"NAME\""));
+        assert!(document()[key..].starts_with("version"));
+        render_preview(&app, "text-tools-case.png");
+        app.undo(false);
+        app.undo(false);
+        assert_eq!(document(), source);
+    }
+    /// Format Document, format-on-save and a keybinding, all served by the
+    /// built Text Tools example. Needs it under `KUREHA_EXTENSIONS_DIR`.
+    #[test]
+    #[ignore = "needs KUREHA_EXTENSIONS_DIR with the built text-tools example"]
+    fn text_tools_formatter_and_keys_end_to_end() {
+        use scarlet_ui::prelude::{TextPosition, TextSelection};
+        let registry = kureha_code::extensions::registry();
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let dir = std::env::temp_dir().join(format!("kureha-text-tools-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("data.json");
+        let source = "{\"b\":[1,2],\"a\":1.10}\n";
+        std::fs::write(&path, source).unwrap();
+        let app = App::with_document();
+        let id = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .open(path.clone(), source);
+        app.activate(id);
+        let document = || {
+            app.bindings(id)
+                .unwrap()
+                .document
+                .get()
+                .as_str()
+                .to_string()
+        };
+        // The built-in command routes to the extension chosen for JSON.
+        run_palette_command(&app, "format document", "Code: Format Document", None);
+        let formatted = "{\n    \"b\": [\n        1,\n        2\n    ],\n    \"a\": 1.10\n}\n";
+        assert_eq!(document(), formatted);
+        assert_eq!(app.status.get(), "Formatted with Text Tools");
+        render_preview(&app, "text-tools-format-document.png");
+        // Format-on-save writes the formatted text.
+        app.undo(false);
+        app.preferences.update(|p| p.format_on_save = true);
+        app.save();
+        let until = Instant::now() + Duration::from_secs(10);
+        while !app.status.get().starts_with("Saved") {
+            assert!(Instant::now() < until, "status: {}", app.status.get());
+            std::thread::sleep(Duration::from_millis(5));
+            app.poll_extensions();
+            app.poll();
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), formatted);
+        // Alt+Shift+S sorts the selected lines through the keybinding.
+        app.bindings(id).unwrap().selection.set(TextSelection {
+            anchor: TextPosition::new(formatted.find("\"b\"").unwrap()),
+            caret: TextPosition::new(formatted.find("\"a\"").unwrap() + 3),
+        });
+        let mut alt_shift = KeyModifiers::empty();
+        alt_shift.alt = true;
+        alt_shift.shift = true;
+        assert!(app.extension_key(KeyCode::Char('S'), alt_shift));
+        while document() == formatted {
+            assert!(Instant::now() < until, "status: {}", app.status.get());
+            std::thread::sleep(Duration::from_millis(5));
+            app.poll_extensions();
+        }
+        assert_eq!(app.status.get(), "Sorted lines");
+        // The palette shows the shortcut next to the command.
+        let mut palette = primary();
+        palette.shift = true;
+        assert!(app.navigation_key(KeyCode::Char('p'), palette));
+        app.nav.query.set("sort lines".into());
+        app.poll_navigation();
+        let row = app
+            .nav
+            .rows
+            .get()
+            .into_iter()
+            .find(|row| row.label == "Text Tools: Sort Lines")
+            .unwrap();
+        assert_eq!(row.detail, shortcut("Alt+Shift+S"));
+        render_preview(&app, "text-tools-shortcut.png");
+    }
+
+    /// Format Tools formats Python with `ruff`, once the user allows it.
+    /// Needs `KUREHA_EXTENSIONS_DIR` with the built example and `ruff` on PATH;
+    /// see `examples/extensions/format-tools`.
+    #[test]
+    #[ignore = "needs KUREHA_EXTENSIONS_DIR with the built format-tools example and ruff on PATH"]
+    fn format_tools_end_to_end() {
+        let registry = kureha_code::extensions::registry();
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let extension = registry
+            .extensions
+            .iter()
+            .find(|e| e.manifest.id == "example.format-tools")
+            .expect("Format Tools is installed");
+        let dir = std::env::temp_dir().join(format!("kureha-format-tools-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app.py");
+        let source = "x=1\nif x :\n  print( 'a' )\n";
+        std::fs::write(&path, source).unwrap();
+        let app = App::with_document();
+        let id = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .open(path.clone(), source);
+        app.activate(id);
+        let document = || {
+            app.bindings(id)
+                .unwrap()
+                .document
+                .get()
+                .as_str()
+                .to_string()
+        };
+        let wait_for = |what: &str| {
+            let until = Instant::now() + Duration::from_secs(10);
+            while !app.status.get().contains(what) {
+                assert!(Instant::now() < until, "status: {}", app.status.get());
+                std::thread::sleep(Duration::from_millis(5));
+                app.poll_extensions();
+            }
+        };
+        // Declared but not allowed: nothing runs, and the status names the
+        // palette command that allows it.
+        app.execute_navigation_command("format-document");
+        wait_for("Extensions: Allow example.format-tools to Run ruff");
+        assert_eq!(document(), source);
+
+        app.set_process_permission(extension, "ruff", true);
+        run_palette_command(&app, "format document", "Code: Format Document", None);
+        assert_eq!(document(), "x = 1\nif x:\n    print(\"a\")\n");
+        assert_eq!(app.status.get(), "Formatted with Format Tools");
+        render_preview(&app, "format-tools-python.png");
+
+        // A syntax error leaves the text alone and shows the tool's message.
+        app.edit(
+            id,
+            &crate::EditDelta {
+                replaced_range: 0..0,
+                inserted: "def (:\n".into(),
+            },
+        );
+        let broken = document();
+        app.execute_navigation_command("format-document");
+        wait_for("ruff:");
+        assert_eq!(document(), broken);
+
+        // Withdrawing the grant applies at once.
+        app.set_process_permission(extension, "ruff", false);
+        app.execute_navigation_command("format-document");
+        wait_for("needs your permission");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn palette_lists_and_applies_process_permissions() {
+        use kureha_code::extensions::{Registry, host::Host, runtime::Budgets};
+        let dir =
+            std::env::temp_dir().join(format!("kureha-palette-permissions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("tool")).unwrap();
+        std::fs::write(
+            dir.join("tool/extension.toml"),
+            "[extension]\nid='test.tool'\nname='Tool'\nversion='1'\napi=1\n\
+             [capabilities]\nprocess=['cat', 'sh']\n",
+        )
+        .unwrap();
+        let registry: &'static Registry = Box::leak(Box::new(Registry::load(&dir)));
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let host: &'static Host = Box::leak(Box::new(Host::start(
+            registry,
+            Budgets::default(),
+            Default::default(),
+        )));
+        super::super::extension_ui::use_test_extensions(registry, host);
+        let app = App::with_document();
+        let mut palette = primary();
+        palette.shift = true;
+        let rows = |query: &str| {
+            assert!(app.navigation_key(KeyCode::Char('p'), palette));
+            app.nav.query.set(query.into());
+            app.poll_navigation();
+            app.nav.rows.get()
+        };
+
+        let listed = rows("Allow test.tool");
+        let index = listed
+            .iter()
+            .position(|row| row.label == "Extensions: Allow test.tool to Run sh")
+            .expect("each declared program has an Allow entry");
+        assert_eq!(listed[index].key, "perm:test.tool:sh:true");
+        assert_eq!(listed[index].detail, "Runs with your permissions");
+        app.nav.selected.set(Some(index));
+        assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
+        assert!(
+            app.status
+                .get()
+                .starts_with("Allowed Tool (test.tool) to run sh."),
+            "{}",
+            app.status.get()
+        );
+        assert_eq!(
+            app.preferences.get().allow_process["test.tool"],
+            ["sh".to_string()].into()
+        );
+
+        let labels: Vec<_> = rows("test.tool").into_iter().map(|row| row.label).collect();
+        assert!(labels.contains(&"Extensions: Stop test.tool Running sh".to_string()));
+        assert!(labels.contains(&"Extensions: Allow test.tool to Run cat".to_string()));
+        assert!(!labels.contains(&"Extensions: Allow test.tool to Run sh".to_string()));
+        app.close_navigation();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,6 +1,7 @@
 pub mod editing;
 pub mod editor;
 pub mod explorer;
+pub mod extensions;
 pub mod files;
 pub mod fonts;
 pub mod navigation;

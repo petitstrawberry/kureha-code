@@ -1,0 +1,20 @@
+[package]
+name = "kureha-text-tools"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kureha-extension = { path = "../sdk" }
+# Keep key order and the exact text of numbers when reformatting JSON.
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+serde = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

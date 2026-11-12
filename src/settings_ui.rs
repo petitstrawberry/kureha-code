@@ -7,6 +7,7 @@ pub(super) struct Settings {
     page: State<usize>,
     word_wrap: State<bool>,
     wrap_mode: State<usize>,
+    format_on_save: State<bool>,
     license: State<usize>,
     query: State<String>,
     rows: State<Vec<usize>>,
@@ -23,6 +24,7 @@ impl Settings {
             page: state(0),
             word_wrap: state(true),
             wrap_mode: state(0),
+            format_on_save: state(false),
             license: state(0),
             query: state(String::new()),
             rows: state(Vec::new()),
@@ -40,6 +42,9 @@ impl Settings {
     pub(super) fn sync_preferences(&self, preferences: &preferences::Preferences) {
         if self.word_wrap.get() != preferences.word_wrap {
             self.word_wrap.set(preferences.word_wrap);
+        }
+        if self.format_on_save.get() != preferences.format_on_save {
+            self.format_on_save.set(preferences.format_on_save);
         }
         let mode = usize::from(!preferences.wrap_at_words);
         if self.wrap_mode.get() != mode {
@@ -274,6 +279,7 @@ impl App {
         let minimap_app = self.clone();
         let wrap_app = self.clone();
         let wrap_mode_app = self.clone();
+        let format_app = self.clone();
         let file_app = self.clone();
         let custom_app = self.clone();
         let button = |label: String| {
@@ -322,6 +328,13 @@ impl App {
                         .width(190.0)
                         .enabled(preferences.word_wrap)
                         .on_change(move |mode| wrap_mode_app.change_preferences(Change::WrapAtWords(mode == 0))),
+                }.spacing(12.0),
+            }.alignment(Alignment::Leading).spacing(6.0),
+            vstack! {
+                label("Format on save"),
+                hstack! {
+                Toggle::new(self.settings_ui.format_on_save.clone())
+                    .on_change(move |enabled| format_app.change_preferences(Change::FormatOnSave(enabled))),
                 }.spacing(12.0),
             }.alignment(Alignment::Leading).spacing(6.0),
             vstack! {
@@ -454,7 +467,8 @@ mod tests {
             Point::new(0.0, 0.0),
             &mut points,
         );
-        assert_eq!(points.len(), 2);
+        // Word wrap, format on save, minimap.
+        assert_eq!(points.len(), 3);
         for (index, point) in points.iter().enumerate() {
             let (x, y) = (point.x as i32, point.y as i32);
             pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
@@ -469,10 +483,10 @@ mod tests {
                 x,
                 y,
             }));
-            if index == 0 {
-                assert!(!app.preferences.get().word_wrap);
-            } else {
-                assert!(app.preferences.get().hide_minimap);
+            match index {
+                0 => assert!(!app.preferences.get().word_wrap),
+                1 => assert!(app.preferences.get().format_on_save),
+                _ => assert!(app.preferences.get().hide_minimap),
             }
             pipeline
                 .element_tree_mut()
@@ -484,6 +498,8 @@ mod tests {
         app.change_preferences(Change::WordWrap(true));
         app.change_preferences(Change::WrapAtWords(false));
         app.change_preferences(Change::Minimap(true));
+        app.change_preferences(Change::FormatOnSave(false));
+        assert!(!app.settings_ui.format_on_save.get());
         assert!(app.settings_ui.word_wrap.get());
         assert_eq!(app.settings_ui.wrap_mode.get(), 1);
         assert!(app.minimap_visible.get());

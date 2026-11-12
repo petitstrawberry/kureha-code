@@ -647,11 +647,11 @@ fn fuzzy(chars: &[SearchChar], query: &[char]) -> Option<(i64, Vec<Range<usize>>
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CommandDescriptor {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub keywords: &'static str,
-    pub shortcut: &'static str,
+pub struct CommandDescriptor<'a> {
+    pub id: &'a str,
+    pub label: &'a str,
+    pub keywords: &'a str,
+    pub shortcut: &'a str,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandMatch {
@@ -660,7 +660,7 @@ pub struct CommandMatch {
 }
 /// Pure command filtering; callbacks and enabled state belong to the app.
 pub fn filter_commands(
-    commands: &[CommandDescriptor],
+    commands: &[CommandDescriptor<'_>],
     query: &str,
     limit: usize,
 ) -> Vec<CommandMatch> {

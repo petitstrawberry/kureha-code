@@ -75,7 +75,7 @@
             pname = "kureha-code-unwrapped";
             version = manifest.package.version;
             inherit src;
-            cargoHash = "sha256-wx5M+eoggcb1ZrrtIb8bERD/LsTmlFDL2rXxITEszQw=";
+            cargoHash = "sha256-2w/gUNrcEpaDLYQ7x5MSgtyXaM2gG0uKiJLtO8o9Bu8=";
             nativeBuildInputs = [ pkgs.pkg-config ];
             nativeCheckInputs = [ pkgs.python3 ];
             # Transport and Markdown tests use local loopback servers.

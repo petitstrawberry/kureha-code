@@ -1,5 +1,6 @@
 //! LSP workbench integration. All process I/O belongs to the transport workers.
 use super::*;
+use kureha_code::extensions::process;
 use kureha_code::lsp::{self, Client, Event as LspEvent};
 use serde_json::{Value, json};
 use std::result::Result;
@@ -106,8 +107,15 @@ pub(super) struct Service {
     chord: Option<Instant>,
 }
 
-fn language(path: &Path) -> Option<&'static str> {
-    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+pub(super) fn language(path: &Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    builtin_language(&extension).or_else(|| {
+        // Built-in mappings win so an extension cannot take over `.rs` files.
+        super::extension_ui::registry()?.language_for_extension(&extension)
+    })
+}
+fn builtin_language(extension: &str) -> Option<&'static str> {
+    match extension {
         "rs" => Some("rust"),
         "py" | "pyi" => Some("python"),
         "js" | "mjs" | "cjs" => Some("javascript"),
@@ -165,6 +173,12 @@ fn command(language: &str) -> Result<(String, Vec<String>), String> {
             return Ok((program.into(), args));
         }
     }
+    // Extensions come after the user's own configuration but before defaults.
+    if let Some((extension, server)) =
+        super::extension_ui::registry().and_then(|r| r.language_server_entry(language))
+    {
+        return extension_server(extension, server, super::extension_ui::process_grants());
+    }
     Ok(match language {
         "rust" => ("rust-analyzer".into(), vec![]),
         "python" => ("pylsp".into(), vec![]),
@@ -175,6 +189,26 @@ fn command(language: &str) -> Result<(String, Vec<String>), String> {
         "c" | "cpp" => ("clangd".into(), vec![]),
         _ => return Err("No language server configured".into()),
     })
+}
+/// An extension's language server runs only with the user's grant, like any
+/// other program an extension starts, and is found in absolute PATH entries.
+fn extension_server(
+    extension: &kureha_code::extensions::Extension,
+    server: &kureha_code::extensions::LanguageServerContribution,
+    grants: &process::Grants,
+) -> Result<(String, Vec<String>), String> {
+    let (id, program) = (extension.manifest.id.as_str(), server.command.as_str());
+    if !grants.allows(id, program) {
+        return Err(format!(
+            "{} ({id}) provides the {} language server and {}",
+            extension.manifest.name,
+            server.language,
+            process::permission_hint(id, program)
+        ));
+    }
+    let path = process::resolve(program, std::env::var_os("PATH").as_deref())
+        .ok_or_else(|| format!("`{program}` was not found on PATH"))?;
+    Ok((path.to_string_lossy().into_owned(), server.args.clone()))
 }
 fn session_key(language: &str, root: &Path) -> String {
     format!("{language}:{}", root.display())
@@ -494,8 +528,13 @@ impl Service {
             let root = root.to_owned();
             let cwd = root.clone();
             let lang = language.to_string();
+            // Servers may be started by absolute path; show the program's name.
             let label = command(language)
-                .map(|(program, _)| program)
+                .map(|(program, _)| {
+                    Path::new(&program)
+                        .file_name()
+                        .map_or(program.clone(), |name| name.to_string_lossy().into_owned())
+                })
                 .unwrap_or_else(|_| language.into());
             let config = command(language);
             let started = thread::Builder::new()
@@ -1044,11 +1083,13 @@ impl App {
                         };
                         drop(rt);
                         match edits {
-                            Ok(edits) => self.apply_language_edits(
-                                &guard,
-                                &edits,
-                                if is_rename { "Rename" } else { "Format" },
-                            ),
+                            Ok(edits) => {
+                                self.apply_language_edits(
+                                    &guard,
+                                    &edits,
+                                    if is_rename { "Rename" } else { "Format" },
+                                );
+                            }
                             Err(error) => {
                                 self.status.set(error);
                                 self.dismiss_language_panel();
@@ -1342,6 +1383,10 @@ impl App {
         }
     }
     pub(super) fn format_document(&self) {
+        // An extension chosen for this language formats instead of the server.
+        if self.format_with_extension() {
+            return;
+        }
         self.language_request("textDocument/formatting");
     }
     pub(super) fn find_references(&self) {
@@ -1395,9 +1440,38 @@ impl App {
         self.dismiss_language_panel();
         self.language_send("textDocument/rename", None, None, false, Some(&name));
     }
-    fn apply_language_edits(&self, guard: &Guard, edits: &[Value], label: &str) {
+    /// Applies byte-offset edits computed against `text` at `revision`, through
+    /// the same stale-result checks as language server edits.
+    pub(super) fn apply_offset_edits(
+        &self,
+        id: DocumentId,
+        revision: u64,
+        navigation: u64,
+        text: &str,
+        edits: &[(std::ops::Range<usize>, String)],
+        label: &str,
+    ) -> bool {
+        let values = edits
+            .iter()
+            .map(|(range, inserted)| {
+                json!({
+                    "range": {"start": position(text, range.start), "end": position(text, range.end)},
+                    "newText": inserted,
+                })
+            })
+            .collect::<Vec<_>>();
+        let guard = Guard {
+            id,
+            revision,
+            caret: 0,
+            navigation,
+        };
+        self.apply_language_edits(&guard, &values, label)
+    }
+    /// Returns whether the edits were applied.
+    fn apply_language_edits(&self, guard: &Guard, edits: &[Value], label: &str) -> bool {
         let Some(id) = self.active_id() else {
-            return;
+            return false;
         };
         if id != guard.id
             || !self.editable(id)
@@ -1406,21 +1480,21 @@ impl App {
             self.status.set(format!(
                 "{label} discarded because the active editor changed"
             ));
-            return;
+            return false;
         }
         let Some(bindings) = self.bindings(id) else {
-            return;
+            return false;
         };
         let selection = bindings.selection.get();
         let mut rt = self.runtime.lock().unwrap();
         let Some(doc) = rt.workspace.get_mut(id) else {
-            return;
+            return false;
         };
         if doc.editor.revision() != guard.revision {
             drop(rt);
             self.status
                 .set(format!("{label} discarded because the document changed"));
-            return;
+            return false;
         }
         let original = doc.editor.document.as_str();
         match prepare_edits(&original, edits, selection) {
@@ -1428,7 +1502,7 @@ impl App {
                 if original[plan.edit.replaced_range.clone()] == plan.edit.inserted {
                     drop(rt);
                     self.status.set(format!("{label}: no changes needed"));
-                    return;
+                    return false;
                 }
                 doc.editor.moved(selection);
                 doc.editor.edit_plan(&plan);
@@ -1439,10 +1513,12 @@ impl App {
                 self.changed();
                 self.status
                     .set(format!("{label} applied · Undo restores the previous text"));
+                true
             }
             Err(error) => {
                 drop(rt);
                 self.status.set(error);
+                false
             }
         }
     }

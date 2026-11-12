@@ -15,8 +15,12 @@ toml_edit = "0.22"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
 syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
 floem-editor-core = { git = "https://github.com/lapce/floem", rev = "31fa8f444c37f4c314f47d88c23ffdbc25f2ab53" }
+# Extension runtime. Interpreted everywhere so the same package runs on Scarlet.
+wasmi = { version = "2.0.0", default-features = false, features = ["std", "validate", "auto-dispatch"] }
 
 [target.'cfg(target_os = "scarlet")'.dependencies]
+# Loop dispatch avoids relying on sibling-call optimisation on Scarlet stacks.
+wasmi = { version = "2.0.0", default-features = false, features = ["std", "validate", "portable-dispatch"] }
 scarlet_os = { package = "scarlet-os", git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3ac8c97289a28599bac22fca4ac26a5f9ca", default-features = false, features = ["std"] }
 scarlet_sys = { package = "scarlet-sys", git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3ac8c97289a28599bac22fca4ac26a5f9ca" }
 scarlet-fs = { git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3ac8c97289a28599bac22fca4ac26a5f9ca" }
@@ -28,6 +32,10 @@ scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "322
 
 [target.'cfg(all(unix, not(target_os = "scarlet")))'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+# Test fixtures are written as WebAssembly text.
+wat = "1"
 
 [build-dependencies]
 toml = "0.8"
