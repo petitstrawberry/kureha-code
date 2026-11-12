@@ -2,13 +2,14 @@
 """Build Scarlet and desktop apps, assemble checksum-pinned bundles, and publish releases.
 
 Scarlet archives and bundle.toml are what Scarlet images pin. Desktop packages
-(macOS, Linux) ride in the same release and checksum file but never enter
-bundle.toml, so adding them leaves the Scarlet side unchanged.
+(a macOS disk image, Linux tarballs) ride in the same release and checksum file
+but never enter bundle.toml, so adding them leaves the Scarlet side unchanged.
 """
 import argparse
 import gzip
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import platform as host_platform
 import re
@@ -18,7 +19,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import zipfile
+import time
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "petitstrawberry/kureha-code"
@@ -40,6 +42,19 @@ LINUX_ELF = {"x86_64": (62, "/lib64/ld-linux-x86-64.so.2"),
              "aarch64": (183, "/lib/ld-linux-aarch64.so.1")}
 MACHO_ARM64 = 0x0100000C
 NIX_STORE = b"/nix/store"
+MACOS_VOLUME = "Kureha Code"
+NOTARY_WAIT_SECONDS = 1800
+# Apple's own tools check the result. `nix develop` puts Nix stand-ins (such as
+# xcbuild's xcrun) on PATH and points DEVELOPER_DIR/SDKROOT at the Nix SDK.
+APPLE_TOOLS = {"codesign": "/usr/bin/codesign", "hdiutil": "/usr/bin/hdiutil",
+               "spctl": "/usr/sbin/spctl", "xcrun": "/usr/bin/xcrun"}
+
+
+class MacSigning(NamedTuple):
+    """Developer ID certificate (.p12 and its password file) and the notary API key JSON."""
+    p12: Path
+    password: Path
+    notary_key: Path
 
 
 def sha(path):
@@ -179,35 +194,25 @@ def macos_executable(data):
         raise ValueError("expected an arm64 Mach-O executable")
 
 
-def verify_desktop_archive(path, name):
-    """Check layout, architecture and the absence of Nix store paths."""
+def check_desktop_files(files, name):
+    """Check layout, architecture and the absence of Nix store paths.
+
+    `files` maps package paths to (is_dir, mode, data). Returns the glibc
+    version a Linux executable needs, or None for macOS.
+    """
     platform, arch = DESKTOP[name]
     top, executable = (MACOS_APP, MACOS_EXECUTABLE) if platform == "macos" else (LINUX_DIR, LINUX_EXECUTABLE)
-    files = {}
-    if platform == "macos":
-        with zipfile.ZipFile(path) as archive:
-            for info in archive.infolist():
-                files[info.filename.rstrip("/")] = (
-                    info.is_dir(), (info.external_attr >> 16) & 0o777,
-                    None if info.is_dir() else archive.read(info))
-    else:
-        with tarfile.open(path, "r:gz") as archive:
-            for member in archive:
-                if not (member.isfile() or member.isdir()):
-                    raise ValueError("invalid desktop archive member: " + member.name)
-                data = archive.extractfile(member).read() if member.isfile() else None
-                files[member.name] = (member.isdir(), member.mode, data)
     for entry, (_, _, data) in files.items():
         relative = PurePosixPath(entry)
         if (relative.is_absolute() or ".." in relative.parts or str(relative) != entry
                 or not (entry == top or entry.startswith(top + "/"))):
-            raise ValueError("invalid desktop archive member: " + entry)
+            raise ValueError("invalid desktop package entry: " + entry)
         # The Linux executable is checked structurally instead (see linux_executable).
         linux_binary = platform == "linux" and entry == executable
         if data is not None and NIX_STORE in data and not linux_binary:
             raise ValueError("desktop package refers to the Nix store: " + entry)
     if executable not in files or files[executable][2] is None:
-        raise ValueError("desktop archive lacks " + executable)
+        raise ValueError("desktop package lacks " + executable)
     _, mode, data = files[executable]
     if not mode & 0o111:
         raise ValueError("desktop executable lacks executable permissions")
@@ -217,12 +222,169 @@ def verify_desktop_archive(path, name):
     return linux_executable(data, arch)
 
 
+def tree_files(root, top):
+    """Read `root/top` like an archive: {relative path: (is_dir, mode, data)}."""
+    files = {}
+    for path in [root / top, *sorted((root / top).rglob("*"))]:
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink() or not (path.is_dir() or path.is_file()):
+            raise ValueError("invalid desktop package entry: " + relative)
+        files[relative] = (path.is_dir(), path.lstat().st_mode & 0o777,
+                           None if path.is_dir() else path.read_bytes())
+    return files
+
+
+def udif_image(path):
+    """Check the UDIF trailer. The image contents are verified on macOS when it is built."""
+    with path.open("rb") as stream:
+        if stream.seek(0, os.SEEK_END) < 512:
+            raise ValueError("expected a UDIF disk image: " + path.name)
+        stream.seek(-512, os.SEEK_END)
+        trailer = stream.read(512)
+    if trailer[:4] != b"koly" or struct.unpack_from(">II", trailer, 4) != (4, 512):
+        raise ValueError("expected a UDIF disk image: " + path.name)
+
+
+def verify_desktop_archive(path, name):
+    """Check a desktop asset on any host; return the glibc a Linux build needs."""
+    if DESKTOP[name][0] == "macos":
+        udif_image(path)
+        return None
+    files = {}
+    with tarfile.open(path, "r:gz") as archive:
+        for member in archive:
+            if not (member.isfile() or member.isdir()):
+                raise ValueError("invalid desktop package entry: " + member.name)
+            data = archive.extractfile(member).read() if member.isfile() else None
+            files[member.name] = (member.isdir(), member.mode, data)
+    return check_desktop_files(files, name)
+
+
 def desktop_archive_name(name, version):
-    return f"kureha-code-{name}-{version}." + ("zip" if DESKTOP[name][0] == "macos" else "tar.gz")
+    return f"kureha-code-{name}-{version}." + ("dmg" if DESKTOP[name][0] == "macos" else "tar.gz")
 
 
-def build_desktop(name, version, output, artifact=None):
-    """Package a desktop build for this host inside `nix develop`; no cross builds."""
+def apple(tool, *args, capture=False):
+    """Run one of Apple's tools without the Nix SDK settings; return its output if captured."""
+    env = {key: value for key, value in os.environ.items() if key not in ("DEVELOPER_DIR", "SDKROOT")}
+    result = subprocess.run([APPLE_TOOLS[tool], *map(str, args)], env=env, check=True,
+                            text=True, capture_output=capture)
+    return (result.stdout or "") + (result.stderr or "")
+
+
+def signing_pem(signing, directory):
+    """Convert the Developer ID .p12 to PEM: rcodesign cannot read AES-encrypted PKCS#12."""
+    pem = directory / "developer-id.pem"
+    for legacy in ([], ["-legacy"]):  # Older exports use RC2/3DES, which OpenSSL 3 calls legacy.
+        result = subprocess.run(["openssl", "pkcs12", *legacy, "-in", str(signing.p12), "-clcerts",
+                                 "-nodes", "-passin", "file:" + str(signing.password), "-out", str(pem)],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            return pem
+    detail = result.stderr.strip().splitlines()
+    raise ValueError("cannot read the Developer ID certificate" + (": " + detail[-1] if detail else ""))
+
+
+def macos_sign_command(path, pem=None):
+    """rcodesign arguments: hardened runtime always; Developer ID adds a secure timestamp."""
+    command = ["rcodesign", "-C", "/dev/null", "sign"]
+    if pem is None:
+        command += ["--code-signature-flags", "runtime"]  # ad-hoc
+    elif path.suffix == ".app":
+        # Requires a Developer ID certificate and a timestamp; enables the hardened runtime.
+        command += ["--for-notarization", "--pem-file", str(pem)]
+    else:
+        command += ["--pem-file", str(pem)]
+    return [*command, str(path)]
+
+
+def notary_command(image, notary_key):
+    """Submit, wait for Apple's verdict and staple the ticket to the disk image."""
+    return ["rcodesign", "-C", "/dev/null", "notary-submit", "--api-key-file", str(notary_key),
+            "--staple", "--max-wait-seconds", str(NOTARY_WAIT_SECONDS), str(image)]
+
+
+def create_disk_image(source, image):
+    for attempt in range(3):  # hdiutil sometimes reports "Resource busy" on CI runners.
+        try:
+            apple("hdiutil", "create", "-volname", MACOS_VOLUME, "-srcfolder", source, "-fs", "HFS+",
+                  "-format", "UDZO", "-imagekey", "zlib-level=9", image)
+            return
+        except subprocess.CalledProcessError:
+            image.unlink(missing_ok=True)
+            if attempt == 2:
+                raise
+            time.sleep(5)
+
+
+def verify_macos_image(image, name, notarized):
+    """Mount the image read-only and check it with Apple's tools."""
+    apple("hdiutil", "verify", "-quiet", image)
+    if notarized:
+        apple("codesign", "--verify", "--strict", "--verbose=2", image)
+        apple("xcrun", "stapler", "validate", image)
+        apple("spctl", "--assess", "--type", "open", "--context", "context:primary-signature",
+              "--verbose=2", image)
+    with tempfile.TemporaryDirectory(prefix="kureha-image-") as temporary:
+        volume = Path(temporary) / "volume"
+        volume.mkdir()
+        apple("hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen", "-quiet",
+              "-mountpoint", volume, image)
+        try:
+            link = volume / "Applications"
+            if ({path.name for path in volume.iterdir()} != {MACOS_APP, "Applications"}
+                    or not link.is_symlink() or os.readlink(link) != "/Applications"):
+                raise ValueError("disk image must hold only the app and an Applications link")
+            check_desktop_files(tree_files(volume, MACOS_APP), name)
+            app = volume / MACOS_APP
+            for path in sorted(app.rglob("*")):
+                if path.is_file() and path.read_bytes()[:4] == b"\xcf\xfa\xed\xfe":
+                    links = subprocess.check_output(["otool", "-L", str(path)], text=True)
+                    if "/nix/store" in links:
+                        raise ValueError("macOS package links the Nix store: " + path.name)
+            apple("codesign", "--verify", "--deep", "--strict", "--verbose=2", app)
+            details = apple("codesign", "--display", "--verbose=2", app, capture=True)
+            flags = re.search(r"flags=0x[0-9a-f]+\(([^)]*)\)", details)
+            if not flags or "runtime" not in flags.group(1).split(","):
+                raise ValueError("macOS app lacks the hardened runtime")
+            if notarized:
+                if ("Authority=Developer ID Application:" not in details or "Timestamp=" not in details
+                        or "TeamIdentifier=not set" in details):
+                    raise ValueError("macOS app lacks a timestamped Developer ID signature")
+                apple("spctl", "--assess", "--type", "execute", "--verbose=2", app)
+            elif "Signature=adhoc" not in details:
+                raise ValueError("expected an ad-hoc signature without notarization")
+        finally:
+            for flags in ([], [], ["-force"]):
+                try:
+                    apple("hdiutil", "detach", "-quiet", *flags, volume)
+                    break
+                except subprocess.CalledProcessError:
+                    time.sleep(2)
+            else:
+                print(f"scarlet-release: could not detach {volume}", file=sys.stderr)
+
+
+def package_macos(image_root, image, name, signing):
+    """Sign the staged app, image it beside an Applications link, then notarize and staple."""
+    app = image_root / MACOS_APP
+    with tempfile.TemporaryDirectory(prefix="kureha-signing-") as private:
+        pem = signing_pem(signing, Path(private)) if signing else None
+        subprocess.run(macos_sign_command(app, pem), check=True)
+        (image_root / "Applications").symlink_to("/Applications")
+        create_disk_image(image_root, image)
+        if pem:
+            subprocess.run(macos_sign_command(image, pem), check=True)
+            subprocess.run(notary_command(image, signing.notary_key), check=True)
+    verify_macos_image(image, name, notarized=signing is not None)
+
+
+def build_desktop(name, version, output, artifact=None, signing=None):
+    """Package a desktop build for this host inside `nix develop`; no cross builds.
+
+    With `signing`, the macOS app and image are signed with Developer ID,
+    notarized and stapled; without it they are ad-hoc signed.
+    """
     version_tag(version)
     platform, arch = DESKTOP[name]
     host = ({"darwin": "macos", "linux": "linux"}.get(sys.platform),
@@ -230,6 +392,8 @@ def build_desktop(name, version, output, artifact=None):
                                                           host_platform.machine().lower()))
     if host != (platform, arch):
         raise ValueError(f"{name} must be built on {platform}/{arch}, not {host[0]}/{host[1]}")
+    if signing and platform != "macos":
+        raise ValueError("signing credentials apply only to macOS")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True))
     output.mkdir(parents=True, exist_ok=False)
@@ -237,22 +401,16 @@ def build_desktop(name, version, output, artifact=None):
         archive_path = output / desktop_archive_name(name, version)
         with tempfile.TemporaryDirectory(prefix="kureha-desktop-") as temporary:
             stage = Path(temporary)
-            top = stage / (MACOS_APP if platform == "macos" else LINUX_DIR)
+            # The macOS image holds exactly what `stage/image` holds.
+            top = stage / "image" / MACOS_APP if platform == "macos" else stage / LINUX_DIR
+            top.parent.mkdir(exist_ok=True)
             command = [sys.executable, str(ROOT / "scripts/package.py"), "--platform", platform,
                        "--output", str(top)]
             if artifact:
                 command.extend(["--artifact", str(artifact.resolve(strict=True))])
             subprocess.run(command, cwd=ROOT, check=True)
             if platform == "macos":
-                subprocess.run(["codesign", "--verify", "--deep", "--strict", str(top)], check=True)
-                for path in sorted(top.rglob("*")):
-                    if path.is_file() and path.read_bytes()[:4] == b"\xcf\xfa\xed\xfe":
-                        links = subprocess.check_output(["otool", "-L", str(path)], text=True)
-                        if "/nix/store" in links:
-                            raise ValueError("macOS package links the Nix store: " + path.name)
-                # No resource forks or extended attributes: the zip holds the bundle only.
-                subprocess.run(["ditto", "-c", "-k", "--norsrc", "--noextattr", "--noacl",
-                                "--keepParent", str(top), str(archive_path)], check=True)
+                package_macos(top.parent, archive_path, name, signing)
             else:
                 # Run on the distribution's loader and libraries, not Nix's.
                 subprocess.run(["patchelf", "--set-interpreter", LINUX_ELF[arch][1], "--remove-rpath",
@@ -268,6 +426,9 @@ def build_desktop(name, version, output, artifact=None):
         }
         if glibc:
             record["glibc"] = glibc
+        if platform == "macos":
+            record["signature"] = "developer-id" if signing else "ad-hoc"
+            record["notarized"] = signing is not None
         write_json(output / f"desktop-{name}.json", record)
     except BaseException:
         shutil.rmtree(output)
@@ -326,6 +487,10 @@ def assemble(inputs, version, output, desktop=False):
                 or record["sha256"] != sha(inputs / archive)):
             raise ValueError("release input mismatch: " + name)
         if verify_desktop_archive(inputs / archive, name) != record.get("glibc"):
+            raise ValueError("release input mismatch: " + name)
+        # Developer ID builds are always notarized; others are ad-hoc signed.
+        if platform == "macos" and (record.get("signature"), record.get("notarized")) not in (
+                ("developer-id", True), ("ad-hoc", False)):
             raise ValueError("release input mismatch: " + name)
         desktop_records.append(record)
     for key in ("revision", "cargo_lock_sha256", "flake_lock_sha256"):
@@ -392,11 +557,16 @@ def release_notes(release):
     glibc = max((tuple(map(int, r["glibc"].split("."))) for r in release["desktop"] if r.get("glibc")),
                 default=None)
     linux_glibc = f" glibc {glibc[0]}.{glibc[1]} or newer." if glibc else ""
+    notarized = any(r.get("notarized") for r in release["desktop"] if r["platform"] == "macos")
+    macos = ("**macOS** (Apple silicon): `kureha-code-macos-aarch64-*.dmg`. "
+             "Open it and drag Kureha Code to Applications. ")
+    macos += ("Signed with Developer ID and notarized by Apple." if notarized else
+              "This build is ad-hoc signed and not notarized: after copying it, run "
+              "`xattr -dr com.apple.quarantine \"/Applications/Kureha Code.app\"` "
+              "or allow it in System Settings > Privacy & Security.")
     return "\n\n".join([
         scarlet,
-        "**macOS** (Apple silicon): `kureha-code-macos-aarch64-*.zip`. The app is ad-hoc signed, "
-        "not notarized: after unzipping, run `xattr -dr com.apple.quarantine \"Kureha Code.app\"` "
-        "or allow it in System Settings > Privacy & Security.",
+        macos,
         "**Linux** (x86_64, AArch64): `kureha-code-linux-*.tar.gz`; run `kureha-code/bin/kureha-code`." + linux_glibc +
         " Install Fontconfig and the graphics stack from your distribution: Vulkan or OpenGL drivers, "
         "plus Wayland/xkbcommon or X11 libraries.",
@@ -445,6 +615,11 @@ def main(argv=None):
     desktop.add_argument("--version", required=True)
     desktop.add_argument("--output", type=Path, required=True)
     desktop.add_argument("--artifact", type=Path, help="Package an existing binary for local validation only")
+    desktop.add_argument("--p12-file", type=Path,
+                         help="macOS: Developer ID Application certificate; signs, notarizes and staples")
+    desktop.add_argument("--p12-password-file", type=Path, help="macOS: file holding the .p12 password")
+    desktop.add_argument("--notary-api-key-file", type=Path,
+                         help="macOS: App Store Connect key JSON from `rcodesign encode-app-store-connect-api-key`")
     assembler = commands.add_parser("assemble")
     assembler.add_argument("--inputs", type=Path, required=True)
     assembler.add_argument("--version", required=True)
@@ -459,7 +634,11 @@ def main(argv=None):
     if args.command == "build":
         build(args.target, args.version, args.output.resolve(), args.artifact)
     elif args.command == "build-desktop":
-        build_desktop(args.name, args.version, args.output.resolve(), args.artifact)
+        credentials = (args.p12_file, args.p12_password_file, args.notary_api_key_file)
+        if any(credentials) and not all(credentials):
+            parser.error("--p12-file, --p12-password-file and --notary-api-key-file go together")
+        signing = MacSigning(*(path.resolve(strict=True) for path in credentials)) if all(credentials) else None
+        build_desktop(args.name, args.version, args.output.resolve(), args.artifact, signing)
     elif args.command == "assemble":
         assemble(args.inputs.resolve(), args.version, args.output.resolve(), args.desktop)
     elif args.command == "verify":
@@ -471,7 +650,6 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, KeyError, subprocess.CalledProcessError, tarfile.TarError,
-            zipfile.BadZipFile) as error:
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError, tarfile.TarError) as error:
         print(f"scarlet-release: {error}", file=sys.stderr)
         sys.exit(1)

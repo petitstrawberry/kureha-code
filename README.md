@@ -67,7 +67,7 @@ Each release carries the Scarlet apps and desktop packages for macOS and Linux.
 
 | Platform | Asset | Notes |
 | --- | --- | --- |
-| macOS (Apple silicon) | `kureha-code-macos-aarch64-<tag>.zip` | Ad-hoc signed, not notarized: after unzipping, run `xattr -dr com.apple.quarantine "Kureha Code.app"` or allow it in System Settings → Privacy & Security |
+| macOS (Apple silicon) | `kureha-code-macos-aarch64-<tag>.dmg` | Open it and drag Kureha Code to Applications. Signed with Developer ID and notarized when the repository has the signing secrets below; otherwise ad-hoc signed, and the release notes give the quarantine workaround |
 | Linux x86_64 / AArch64 | `kureha-code-linux-<arch>-<tag>.tar.gz` | Run `kureha-code/bin/kureha-code`. Needs the glibc version in the release notes, Fontconfig, Vulkan or OpenGL drivers and Wayland/xkbcommon or X11 libraries from the distribution |
 | Scarlet | see below | Installed into images through `bundle.toml` |
 
@@ -78,9 +78,19 @@ library search paths removed, so they run outside Nix; they need the glibc
 named in the release notes (2.39 with the current nixpkgs, e.g. Ubuntu 24.04,
 Debian 13 or Fedora 40 and newer). The build refuses Linux binaries with another
 loader, a library search path or a library named by path, wrong architectures,
-other files that mention `/nix/store`, and macOS bundles that link the Nix store
-or whose signature does not verify. `release.json` records each build's source
-revision and the Linux glibc requirement. Desktop assets are listed in
+and other files that mention `/nix/store`.
+
+The macOS app is signed with [rcodesign](https://github.com/indygreg/apple-platform-rs)
+from the flake, always with the hardened runtime, and put in a disk image beside
+an `Applications` link. With Developer ID credentials the app and image are
+signed with a secure timestamp, notarized and stapled. The macOS runner then
+mounts the image and checks it with Apple's own tools (`codesign`, `stapler`,
+`spctl`): only the app and the link, no Nix store references or links, an arm64
+executable, the hardened runtime, and Gatekeeper acceptance when notarized. Other
+hosts can only check the UDIF trailer and the checksum recorded by that job.
+
+`release.json` records each build's source revision, the Linux glibc requirement
+and whether the macOS image is notarized. Desktop assets are listed in
 `SHA256SUMS` but never in `bundle.toml`, so Scarlet images are unaffected.
 
 ```sh
@@ -89,7 +99,30 @@ nix develop --command python3 scripts/release-scarlet.py build-desktop \
 ```
 
 Names are `macos-aarch64`, `linux-x86_64` and `linux-aarch64`; each must be built
-on that platform. `assemble --desktop` requires all three.
+on that platform. `assemble --desktop` requires all three. For a notarized local
+macOS build, add `--p12-file`, `--p12-password-file` and `--notary-api-key-file`.
+
+### macOS signing secrets
+
+CI notarizes when the repository has all three secrets (or none, for ad-hoc
+builds; a partial set fails the job):
+
+- `MACOS_CERTIFICATE_P12`: a base64-encoded *Developer ID Application*
+  certificate with its private key, exported as `.p12`
+- `MACOS_CERTIFICATE_PASSWORD`: the password of that `.p12`
+- `MACOS_NOTARY_API_KEY`: an App Store Connect API key (Developer role or
+  higher) encoded as JSON by rcodesign
+
+```sh
+base64 -i DeveloperID.p12 | gh secret set MACOS_CERTIFICATE_P12
+gh secret set MACOS_CERTIFICATE_PASSWORD
+nix shell --inputs-from . nixpkgs#rcodesign --command rcodesign \
+  encode-app-store-connect-api-key <issuer-id> <key-id> AuthKey_<key-id>.p8 \
+  | gh secret set MACOS_NOTARY_API_KEY
+```
+
+Either PKCS#12 encoding works: the build converts the certificate with OpenSSL,
+because rcodesign cannot read AES-encrypted `.p12` files.
 
 ## Scarlet releases
 

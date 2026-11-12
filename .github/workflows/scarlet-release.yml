@@ -152,6 +152,29 @@ jobs:
           key: desktop-${{ matrix.name }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
           restore-keys: |
             desktop-${{ matrix.name }}-
+      # With all three secrets the macOS image is signed with Developer ID,
+      # notarized and stapled; with none it is ad-hoc signed (e.g. fork PRs).
+      - name: Prepare macOS signing credentials
+        if: runner.os == 'macOS'
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_API_KEY: ${{ secrets.MACOS_NOTARY_API_KEY }}
+        run: |
+          if [ -z "$CERTIFICATE$CERTIFICATE_PASSWORD$NOTARY_API_KEY" ]; then
+            echo "::warning::No macOS signing secrets; the disk image will be ad-hoc signed and not notarized"
+            exit 0
+          fi
+          if [ -z "$CERTIFICATE" ] || [ -z "$CERTIFICATE_PASSWORD" ] || [ -z "$NOTARY_API_KEY" ]; then
+            echo "::error::Set all of MACOS_CERTIFICATE_P12, MACOS_CERTIFICATE_PASSWORD and MACOS_NOTARY_API_KEY, or none"
+            exit 1
+          fi
+          credentials="$RUNNER_TEMP/macos-signing"
+          mkdir -m 700 "$credentials"
+          printf '%s' "$CERTIFICATE" | base64 --decode > "$credentials/developer-id.p12"
+          printf '%s' "$CERTIFICATE_PASSWORD" > "$credentials/password"
+          printf '%s' "$NOTARY_API_KEY" > "$credentials/notary-api-key.json"
+          echo "MACOS_SIGNING=$credentials" >> "$GITHUB_ENV"
       # The same flake toolchain and Appcoat as the Scarlet builds. Linux
       # binaries are then pointed at the system loader (see build-desktop).
       - name: Build and package desktop app
@@ -159,8 +182,17 @@ jobs:
           NAME: ${{ matrix.name }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
+          signing=()
+          if [ -n "${MACOS_SIGNING:-}" ]; then
+            signing=(--p12-file "$MACOS_SIGNING/developer-id.p12"
+                     --p12-password-file "$MACOS_SIGNING/password"
+                     --notary-api-key-file "$MACOS_SIGNING/notary-api-key.json")
+          fi
           nix develop --accept-flake-config --command python3 scripts/release-scarlet.py build-desktop \
-            --name "$NAME" --version "$VERSION" --output artifacts/desktop-build
+            --name "$NAME" --version "$VERSION" --output artifacts/desktop-build "${signing[@]}"
+      - name: Remove macOS signing credentials
+        if: always() && env.MACOS_SIGNING != ''
+        run: rm -rf "$MACOS_SIGNING"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.name }}

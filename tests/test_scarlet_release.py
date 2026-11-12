@@ -9,7 +9,7 @@ import tarfile
 import tempfile
 import tomllib
 import unittest
-import zipfile
+import unittest.mock
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -207,19 +207,14 @@ class DesktopReleaseTests(ScarletReleaseTests):
         for name in release.DESKTOP:
             self.make_desktop(name)
 
-    def make_desktop(self, name, executable=None, mode=0o755, revision="a" * 40, extra=None):
+    def make_desktop(self, name, executable=None, mode=0o755, revision="a" * 40, extra=None,
+                     signature="ad-hoc", notarized=False, image=None):
         platform, arch = release.DESKTOP[name]
         archive = self.inputs / release.desktop_archive_name(name, self.version)
         if platform == "macos":
-            data = executable or b"\xcf\xfa\xed\xfe" + struct.pack("<I", release.MACHO_ARM64) + bytes(24)
-            with zipfile.ZipFile(archive, "w") as stream:
-                for entry, payload, entry_mode in [
-                        (release.MACOS_EXECUTABLE, data, mode),
-                        (release.MACOS_APP + "/Contents/Info.plist", b"<plist/>", 0o644),
-                        *(extra or [])]:
-                    info = zipfile.ZipInfo(entry)
-                    info.external_attr = (0o100000 | entry_mode) << 16
-                    stream.writestr(info, payload)
+            # Contents are checked on macOS at build time (see macos_app below);
+            # elsewhere only the UDIF trailer can be read.
+            archive.write_bytes(udif_image() if image is None else image)
         else:
             machine, loader = release.LINUX_ELF[arch]
             data = executable or linux_elf(machine, loader)
@@ -238,6 +233,8 @@ class DesktopReleaseTests(ScarletReleaseTests):
         glibc = release.verify_desktop_archive(archive, name)
         if platform == "linux":
             record["glibc"] = glibc
+        else:
+            record["signature"], record["notarized"] = signature, notarized
         release.write_json(self.inputs / f"desktop-{name}.json", record)
 
     def assemble(self, desktop=True):
@@ -259,9 +256,30 @@ class DesktopReleaseTests(ScarletReleaseTests):
             self.assertIn(f"{release.sha(output / archive)}  {archive}", sums)
             self.assertNotIn(archive, (output / "bundle.toml").read_text())
         self.assertEqual(manifest["desktop"][1]["glibc"], "2.39")
+        self.assertTrue(manifest["desktop"][0]["archive"].endswith(".dmg"))
         notes = release.release_notes(manifest)
         self.assertIn("glibc 2.39 or newer", notes)
+        self.assertIn("kureha-code-macos-aarch64-*.dmg", notes)
         self.assertIn("xattr -dr com.apple.quarantine", notes)
+
+    def test_notarized_builds_drop_the_quarantine_workaround(self):
+        self.make_desktop("macos-aarch64", signature="developer-id", notarized=True)
+        notes = release.release_notes(json.loads((self.assemble() / "release.json").read_text()))
+        self.assertIn("notarized by Apple", notes)
+        self.assertNotIn("xattr", notes)
+
+    def test_macos_signature_record_must_be_consistent(self):
+        for signature, notarized in (("developer-id", False), ("ad-hoc", True), (None, None)):
+            with self.subTest(signature=signature):
+                self.make_desktop("macos-aarch64", signature=signature, notarized=notarized)
+                with self.assertRaisesRegex(ValueError, "input mismatch: macos"):
+                    self.assemble()
+
+    def test_macos_asset_must_be_a_disk_image(self):
+        for image in (b"PK\x03\x04" + bytes(600), b"koly", udif_image(version=3)):
+            with self.subTest(image=image[:8]):
+                with self.assertRaisesRegex(ValueError, "UDIF disk image"):
+                    self.make_desktop("macos-aarch64", image=image)
 
     def test_linux_binaries_must_run_on_the_system_loader_and_libraries(self):
         machine, loader = release.LINUX_ELF["aarch64"]
@@ -284,18 +302,42 @@ class DesktopReleaseTests(ScarletReleaseTests):
             self.make_desktop("linux-aarch64", extra=[
                 (release.LINUX_DIR + "/share/kureha.desktop", b"Exec=/nix/store/x/bin/kureha-code", 0o644)])
 
-    def test_macos_packages_must_not_mention_the_nix_store(self):
+    def macos_app(self, executable=None, mode=0o755, extra=()):
+        """An app tree as mounted from the disk image, checked like an archive."""
+        volume = self.root / "volume"
+        shutil.rmtree(volume, ignore_errors=True)
+        data = executable or b"\xcf\xfa\xed\xfe" + struct.pack("<I", release.MACHO_ARM64) + bytes(24)
+        for entry, payload, entry_mode in [(release.MACOS_EXECUTABLE, data, mode),
+                                           (release.MACOS_APP + "/Contents/Info.plist", b"<plist/>", 0o644),
+                                           *extra]:
+            path = volume / entry
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+            path.chmod(entry_mode)
+        return release.check_desktop_files(release.tree_files(volume, release.MACOS_APP), "macos-aarch64")
+
+    def test_macos_apps_must_not_mention_the_nix_store(self):
+        self.assertIsNone(self.macos_app())
         with self.assertRaisesRegex(ValueError, "Nix store"):
-            self.make_desktop("macos-aarch64", extra=[
+            self.macos_app(extra=[
                 (release.MACOS_APP + "/Contents/Frameworks/libfoo.dylib", b"/nix/store/q-foo", 0o644)])
         with self.assertRaisesRegex(ValueError, "arm64 Mach-O"):
-            self.make_desktop("macos-aarch64", executable=b"\xcf\xfa\xed\xfe" + bytes(28))
+            self.macos_app(executable=b"\xcf\xfa\xed\xfe" + bytes(28))
+        with self.assertRaisesRegex(ValueError, "executable permissions"):
+            self.macos_app(mode=0o644)
+
+    def test_macos_apps_cannot_contain_links(self):
+        self.macos_app()
+        (self.root / "volume" / release.MACOS_APP / "Contents/Resources").mkdir()
+        (self.root / "volume" / release.MACOS_APP / "Contents/Resources/link").symlink_to("/etc/passwd")
+        with self.assertRaisesRegex(ValueError, "invalid desktop package entry"):
+            release.tree_files(self.root / "volume", release.MACOS_APP)
 
     def test_desktop_layout_and_permissions_are_checked(self):
         with self.assertRaisesRegex(ValueError, "executable permissions"):
             self.make_desktop("linux-x86_64", mode=0o644)
-        with self.assertRaisesRegex(ValueError, "invalid desktop archive member"):
-            self.make_desktop("macos-aarch64", extra=[("../escape", b"x", 0o644)])
+        with self.assertRaisesRegex(ValueError, "invalid desktop package entry"):
+            self.make_desktop("linux-x86_64", extra=[("../escape", b"x", 0o644)])
 
     def test_desktop_builds_must_match_the_scarlet_source(self):
         self.make_desktop("linux-x86_64", revision="d" * 40)
@@ -318,6 +360,65 @@ class DesktopReleaseTests(ScarletReleaseTests):
             with self.assertRaisesRegex(ValueError, "clean source builds"):
                 release.publish(output, prerelease=True)
             run.assert_not_called()
+
+
+class MacSigningTests(unittest.TestCase):
+    """Signing and notarization commands; the services themselves run only in CI."""
+
+    def test_developer_id_signs_for_notarization_and_ad_hoc_keeps_the_hardened_runtime(self):
+        app, image, pem = Path("stage/image/Kureha Code.app"), Path("out/k.dmg"), Path("p/id.pem")
+        self.assertEqual(release.macos_sign_command(app, pem),
+                         ["rcodesign", "-C", "/dev/null", "sign", "--for-notarization",
+                          "--pem-file", str(pem), str(app)])
+        self.assertEqual(release.macos_sign_command(image, pem)[4:], ["--pem-file", str(pem), str(image)])
+        self.assertEqual(release.macos_sign_command(app)[4:], ["--code-signature-flags", "runtime", str(app)])
+        notary = release.notary_command(image, Path("key.json"))
+        self.assertIn("--staple", notary)
+        self.assertEqual(notary[notary.index("--api-key-file") + 1], "key.json")
+        self.assertEqual(notary[-1], str(image))
+
+    def test_certificates_in_either_pkcs12_encoding_are_converted(self):
+        signing = release.MacSigning(Path("id.p12"), Path("password"), Path("key.json"))
+        failed = unittest.mock.Mock(returncode=1, stderr="error:0308010C:unsupported RC2-40-CBC\n")
+        converted = unittest.mock.Mock(returncode=0, stderr="")
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(release.subprocess, "run", side_effect=[failed, converted]) as run:
+            pem = release.signing_pem(signing, Path(directory))
+        self.assertEqual(pem.name, "developer-id.pem")
+        first, second = (call.args[0] for call in run.call_args_list)
+        self.assertNotIn("-legacy", first)
+        self.assertEqual(second[:3], ["openssl", "pkcs12", "-legacy"])
+        self.assertIn("file:password", second)  # never the password itself
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(release.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(ValueError, "cannot read the Developer ID certificate: .*RC2"):
+                release.signing_pem(signing, Path(directory))
+
+    def test_signing_credentials_go_together_and_only_for_macos(self):
+        with self.assertRaises(SystemExit), patch("sys.stderr"):
+            release.main(["build-desktop", "--name", "macos-aarch64", "--version", "local",
+                          "--output", "unused", "--p12-file", "id.p12"])
+        signing = release.MacSigning(Path("a"), Path("b"), Path("c"))
+        with patch.object(release.sys, "platform", "linux"), \
+                patch.object(release.host_platform, "machine", return_value="x86_64"):
+            with self.assertRaisesRegex(ValueError, "only to macOS"):
+                release.build_desktop("linux-x86_64", "local", Path("unused"), signing=signing)
+
+    def test_apple_tools_run_without_the_nix_sdk(self):
+        with patch.dict(release.os.environ, {"DEVELOPER_DIR": "/nix/store/sdk", "SDKROOT": "/nix/store/sdk/x"}), \
+                patch.object(release.subprocess, "run", return_value=unittest.mock.Mock(stdout="out", stderr="")) as run:
+            self.assertEqual(release.apple("xcrun", "stapler", "validate", Path("k.dmg"), capture=True), "out")
+        command, env = run.call_args.args[0], run.call_args.kwargs["env"]
+        self.assertEqual(command, ["/usr/bin/xcrun", "stapler", "validate", "k.dmg"])
+        self.assertNotIn("DEVELOPER_DIR", env)
+        self.assertNotIn("SDKROOT", env)
+
+
+def udif_image(version=4):
+    trailer = bytearray(512)
+    trailer[:4] = b"koly"
+    struct.pack_into(">II", trailer, 4, version, 512)
+    return b"compressed image data" + bytes(trailer)
 
 
 if __name__ == "__main__":
