@@ -1,5 +1,6 @@
 //! LSP workbench integration. All process I/O belongs to the transport workers.
 use super::*;
+use kureha_code::extensions::process;
 use kureha_code::lsp::{self, Client, Event as LspEvent};
 use serde_json::{Value, json};
 use std::result::Result;
@@ -173,10 +174,10 @@ fn command(language: &str) -> Result<(String, Vec<String>), String> {
         }
     }
     // Extensions come after the user's own configuration but before defaults.
-    if let Some(server) =
-        kureha_code::extensions::loaded().and_then(|r| r.language_server(language))
+    if let Some((extension, server)) =
+        kureha_code::extensions::loaded().and_then(|r| r.language_server_entry(language))
     {
-        return Ok((server.command.clone(), server.args.clone()));
+        return extension_server(extension, server, process::grants());
     }
     Ok(match language {
         "rust" => ("rust-analyzer".into(), vec![]),
@@ -188,6 +189,26 @@ fn command(language: &str) -> Result<(String, Vec<String>), String> {
         "c" | "cpp" => ("clangd".into(), vec![]),
         _ => return Err("No language server configured".into()),
     })
+}
+/// An extension's language server runs only with the user's grant, like any
+/// other program an extension starts, and is found in absolute PATH entries.
+fn extension_server(
+    extension: &kureha_code::extensions::Extension,
+    server: &kureha_code::extensions::LanguageServerContribution,
+    grants: &process::Grants,
+) -> Result<(String, Vec<String>), String> {
+    let (id, program) = (extension.manifest.id.as_str(), server.command.as_str());
+    if !grants.allows(id, program) {
+        return Err(format!(
+            "{} ({id}) provides the {} language server and {}",
+            extension.manifest.name,
+            server.language,
+            process::permission_hint(id, program)
+        ));
+    }
+    let path = process::resolve(program, std::env::var_os("PATH").as_deref())
+        .ok_or_else(|| format!("`{program}` was not found on PATH"))?;
+    Ok((path.to_string_lossy().into_owned(), server.args.clone()))
 }
 fn session_key(language: &str, root: &Path) -> String {
     format!("{language}:{}", root.display())

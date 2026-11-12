@@ -792,7 +792,8 @@ impl Registry {
     }
     /// Launch settings for a language, first contribution wins.
     pub fn language_server(&self, language: &str) -> Option<&LanguageServerContribution> {
-        self.language_server_entry(language).map(|(_, server)| server)
+        self.language_server_entry(language)
+            .map(|(_, server)| server)
     }
     /// The language server for `language` with the extension that provides it.
     pub fn language_server_entry(

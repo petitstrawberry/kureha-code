@@ -1168,3 +1168,41 @@ fn unopened_reference_selection_survives_file_worker_navigation_generation() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn extension_language_servers_need_the_users_grant() {
+    let dir = std::env::temp_dir().join(format!("kureha-extension-lsp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("zig")).unwrap();
+    std::fs::write(
+        dir.join("zig/extension.toml"),
+        "[extension]\nid='test.zig'\nname='Zig'\nversion='1'\napi=1\n\
+         [capabilities]\nprocess=['sh']\n\
+         [[contributes.languages]]\nid='zig'\nextensions=['zig']\n\
+         [[contributes.language_servers]]\nlanguage='zig'\ncommand='sh'\nargs=['-c', 'true']\n",
+    )
+    .unwrap();
+    let registry = kureha_code::extensions::Registry::load(&dir);
+    assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+    let (extension, server) = registry.language_server_entry("zig").unwrap();
+    let grants = process::Grants::default();
+    let error = extension_server(extension, server, &grants).unwrap_err();
+    assert!(
+        error.contains("Extensions: Allow test.zig to Run sh"),
+        "{error}"
+    );
+    grants.replace(
+        [("test.zig".to_string(), ["sh".to_string()].into())]
+            .into_iter()
+            .collect(),
+    );
+    let (program, args) = extension_server(extension, server, &grants).unwrap();
+    // Started by absolute path, never looked up again from the workspace.
+    assert!(
+        Path::new(&program).is_absolute() && program.ends_with("/sh"),
+        "{program}"
+    );
+    assert_eq!(args, ["-c", "true"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

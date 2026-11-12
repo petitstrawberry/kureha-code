@@ -220,6 +220,41 @@ fn save(path: &std::path::Path, change: &Change) -> Result<(), String> {
         Change::WordWrap(enabled) => document["word_wrap"] = toml_edit::value(*enabled),
         Change::WrapAtWords(enabled) => document["wrap_at_words"] = toml_edit::value(*enabled),
         Change::FormatOnSave(enabled) => document["format_on_save"] = toml_edit::value(*enabled),
+        Change::AllowProcess {
+            extension,
+            program,
+            allowed,
+        } => {
+            let extensions = document
+                .entry("extensions")
+                .or_insert_with(toml_edit::table)
+                .as_table_mut()
+                .ok_or("extensions must be a table")?;
+            extensions.set_implicit(true);
+            let grants = extensions
+                .entry("allow_process")
+                .or_insert_with(toml_edit::table)
+                .as_table_mut()
+                .ok_or("extensions.allow_process must be a table")?;
+            let programs = grants
+                .entry(extension)
+                .or_insert_with(|| toml_edit::value(toml_edit::Array::new()))
+                .as_array_mut()
+                .ok_or("extensions.allow_process entries must be lists")?;
+            programs.retain(|p| p.as_str() != Some(program.as_str()));
+            if *allowed {
+                programs.push(program.as_str());
+            }
+            if programs.is_empty() {
+                grants.remove(extension);
+            }
+            if grants.is_empty() {
+                extensions.remove("allow_process");
+            }
+            if extensions.is_empty() {
+                document.remove("extensions");
+            }
+        }
     }
     let updated = document.to_string();
     Preferences::parse(&updated)?;
@@ -287,6 +322,7 @@ impl super::App {
     pub(super) fn change_preferences(&self, change: Change) {
         self.preferences.update(|p| p.change(&change));
         let preferences = self.preferences.get();
+        self.sync_process_grants(&preferences);
         self.settings_ui.sync_preferences(&preferences);
         if self.minimap_visible.get() == preferences.hide_minimap {
             self.minimap_visible.set(!preferences.hide_minimap);
@@ -347,6 +383,7 @@ impl super::App {
         self.runtime.lock().unwrap().deferred_preferences = None;
         self.minimap_visible.set(!preferences.hide_minimap);
         self.settings_ui.sync_preferences(&preferences);
+        self.sync_process_grants(&preferences);
         self.preferences.set(preferences);
         self.set_theme(theme);
     }
@@ -478,6 +515,33 @@ mod persistence_tests {
             matches!(next(&watcher),Update::Loaded(t,_) if t.name()=="Monokai" && t.editor_font_size()==20.0)
         );
         drop(watcher);
+    }
+    #[test]
+    fn process_grants_are_saved_and_removed_without_touching_other_settings() {
+        let f = Fixture::new();
+        fs::write(f.settings(), "# mine\ncolor_theme = 'nord'\n").unwrap();
+        let change = |extension: &str, program: &str, allowed| Change::AllowProcess {
+            extension: extension.into(),
+            program: program.into(),
+            allowed,
+        };
+        save(&f.settings(), &change("example.fmt", "ruff", true)).unwrap();
+        save(&f.settings(), &change("example.fmt", "prettier", true)).unwrap();
+        save(&f.settings(), &change("example.fmt", "ruff", true)).unwrap();
+        let saved = fs::read_to_string(f.settings()).unwrap();
+        assert!(
+            saved.starts_with("# mine\ncolor_theme = 'nord'\n"),
+            "{saved}"
+        );
+        let preferences = Preferences::parse(&saved).unwrap();
+        assert_eq!(
+            preferences.allow_process["example.fmt"],
+            ["prettier".to_string(), "ruff".to_string()].into()
+        );
+        save(&f.settings(), &change("example.fmt", "ruff", false)).unwrap();
+        save(&f.settings(), &change("example.fmt", "prettier", false)).unwrap();
+        let saved = fs::read_to_string(f.settings()).unwrap();
+        assert_eq!(saved, "# mine\ncolor_theme = 'nord'\n");
     }
     #[test]
     fn save_acknowledgement_waits_for_preview_without_losing_preferences() {

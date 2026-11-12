@@ -5,6 +5,7 @@ use kureha_code::{
     extensions::{
         Extension, Key, KeyChord, Registry,
         host::{self, Host, Reply},
+        process::{self, Grants},
         runtime::{CommandOutcome, DocumentSnapshot, FormatOptions},
     },
     workspace::DocumentId,
@@ -116,6 +117,11 @@ thread_local! {
     static TEST: std::cell::Cell<Option<(&'static Registry, &'static Host, Duration)>> =
         const { std::cell::Cell::new(None) };
 }
+/// Points this thread's extension UI at a test registry and worker.
+#[cfg(test)]
+pub(super) fn use_test_extensions(registry: &'static Registry, host: &'static Host) {
+    TEST.set(Some((registry, host, FORMAT_ON_SAVE_TIMEOUT)));
+}
 /// Installed extensions once loaded. Never blocks.
 pub(super) fn registry() -> Option<&'static Registry> {
     #[cfg(test)]
@@ -137,6 +143,14 @@ fn running_host() -> Option<&'static Host> {
         return Some(host);
     }
     host::running()
+}
+/// The grants the extension workers check. Tests use their worker's own.
+pub(super) fn process_grants() -> &'static Grants {
+    #[cfg(test)]
+    if let Some((_, host, _)) = TEST.get() {
+        return host.grants();
+    }
+    process::grants()
 }
 fn save_timeout() -> Duration {
     #[cfg(test)]
@@ -172,6 +186,50 @@ pub(super) fn formatter_for(language: &str, choice: Option<&str>) -> Formatter {
             .and_then(|mut e| e.next())
             .map_or(Formatter::LanguageServer, Formatter::Extension),
     }
+}
+
+/// A palette entry that grants or withdraws one declared program.
+pub(super) struct PermissionCommand {
+    pub extension: &'static Extension,
+    pub program: &'static str,
+    pub allow: bool,
+    pub label: String,
+    pub keywords: String,
+}
+/// "Allow" entries for declared programs the user has not granted, "Stop"
+/// entries for granted ones. Labels name the extension id and the program
+/// verbatim; the display name is only a search keyword.
+pub(super) fn permission_commands() -> Vec<PermissionCommand> {
+    let Some(registry) = registry() else {
+        return Vec::new();
+    };
+    let grants = process_grants();
+    registry
+        .extensions
+        .iter()
+        .flat_map(|e| {
+            e.manifest
+                .capabilities
+                .process
+                .iter()
+                .map(move |program| (e, program.as_str()))
+        })
+        .map(|(extension, program)| {
+            let id = extension.manifest.id.as_str();
+            let allow = !grants.allows(id, program);
+            PermissionCommand {
+                extension,
+                program,
+                allow,
+                label: if allow {
+                    process::allow_command_label(id, program)
+                } else {
+                    process::revoke_command_label(id, program)
+                },
+                keywords: format!("{} permission process program", extension.manifest.name),
+            }
+        })
+        .collect()
 }
 
 /// Extension keybindings with the conflicts found while building them.
@@ -280,6 +338,46 @@ pub(super) fn extension_shortcut(extension: &str, command: &str) -> Option<Strin
 }
 
 impl App {
+    /// Makes the workers see the grants in `preferences`.
+    pub(super) fn sync_process_grants(&self, preferences: &super::preferences::Preferences) {
+        process_grants().replace(preferences.allow_process.clone());
+    }
+    /// Grants or withdraws `program` for `extension` and saves the choice.
+    pub(super) fn set_process_permission(
+        &self,
+        extension: &'static Extension,
+        program: &str,
+        allow: bool,
+    ) {
+        let (id, name) = (
+            extension.manifest.id.as_str(),
+            extension.manifest.name.as_str(),
+        );
+        self.change_preferences(super::preferences::Change::AllowProcess {
+            extension: id.to_owned(),
+            program: program.to_owned(),
+            allowed: allow,
+        });
+        let serves = extension
+            .manifest
+            .contributes
+            .language_servers
+            .iter()
+            .any(|server| server.command == program);
+        self.status.set(if allow {
+            format!(
+                "Allowed {name} ({id}) to run {program}. It can run {program} with any \
+                 arguments, with your permissions.{}",
+                if serves {
+                    " Restart the language server to start it."
+                } else {
+                    ""
+                }
+            )
+        } else {
+            format!("{name} ({id}) can no longer run {program}")
+        });
+    }
     fn pending<R>(&self, f: impl FnOnce(&mut HashMap<u64, Pending>) -> R) -> R {
         f(&mut self.runtime.lock().unwrap().extensions.pending)
     }
@@ -797,6 +895,115 @@ mod tests {
         .unwrap()
     }
 
+    /// A command that runs `cat` through the host. A refusal is passed on as
+    /// the extension's error; a run becomes `{"status":"ran"}`.
+    fn process_guest() -> Vec<u8> {
+        let (activate, request, ran) = (
+            "{}",
+            r#"{"op":"process","program":"cat","stdin":"x"}"#,
+            r#"{"status":"ran"}"#,
+        );
+        let escaped: String = format!("{activate}{request}{ran}")
+            .bytes()
+            .map(|b| match b {
+                b'"' => "\\\"".into(),
+                b'\\' => "\\\\".into(),
+                _ => (b as char).to_string(),
+            })
+            .collect();
+        let packed = |offset: usize, len: usize| ((offset as i64) << 32) | len as i64;
+        wat::parse_str(format!(
+            r#"(module
+                (import "kureha" "kx_host" (func $host (param i32 i32) (result i64)))
+                (import "kureha" "kx_host_take" (func $take (param i32 i32) (result i32)))
+                (memory (export "memory") 2)
+                (global $heap (mut i32) (i32.const 32768))
+                (func $alloc (export "kx_alloc") (param $len i32) (result i32)
+                    (local $p i32)
+                    (local.set $p (global.get $heap))
+                    (global.set $heap (i32.add (global.get $heap) (local.get $len)))
+                    (local.get $p))
+                (func (export "kx_free") (param i32 i32))
+                (func (export "kx_call") (param $ptr i32) (param $len i32) (result i64)
+                    (local $n i32) (local $buf i32)
+                    (if (i32.eq (i32.load8_u (i32.add (local.get $ptr) (i32.const 9))) (i32.const 97))
+                        (then (return (i64.const {activate}))))
+                    (local.set $n (i32.wrap_i64
+                        (call $host (i32.const {request_at}) (i32.const {request_len}))))
+                    (local.set $buf (call $alloc (local.get $n)))
+                    (drop (call $take (local.get $buf) (local.get $n)))
+                    ;; `{{"s…` (status) means the program ran.
+                    (if (i32.eq (i32.load8_u (i32.add (local.get $buf) (i32.const 2))) (i32.const 115))
+                        (then (return (i64.const {ran}))))
+                    (i64.or (i64.shl (i64.extend_i32_u (local.get $buf)) (i64.const 32))
+                            (i64.extend_i32_u (local.get $n))))
+                (data (i32.const 0) "{escaped}"))"#,
+            activate = packed(0, activate.len()),
+            request_at = activate.len(),
+            request_len = request.len(),
+            ran = packed(activate.len() + request.len(), ran.len()),
+        ))
+        .unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_permissions_from_the_palette_reach_the_worker() {
+        let dir = std::env::temp_dir().join(format!(
+            "kureha-extension-ui-process-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let folder = dir.join("tool");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("ext.wasm"), process_guest()).unwrap();
+        std::fs::write(
+            folder.join("extension.toml"),
+            "[extension]\nid='test.tool'\nname='Tool'\nversion='1'\napi=1\nwasm='ext.wasm'\n\
+             [capabilities]\nprocess=['cat']\n\
+             [[contributes.commands]]\nid='tool.run'\ntitle='Run'\n",
+        )
+        .unwrap();
+        let registry: &'static Registry = Box::leak(Box::new(Registry::load(&dir)));
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let host: &'static Host = Box::leak(Box::new(Host::start(
+            registry,
+            Budgets::default(),
+            Default::default(),
+        )));
+        TEST.set(Some((registry, host, FORMAT_ON_SAVE_TIMEOUT)));
+        let (app, _) = app_with("text");
+        let run = |expected: &str| {
+            app.run_extension_command("test.tool", "tool.run");
+            wait(&app, expected, |app| app.status.get().contains(expected));
+        };
+
+        // The manifest asks; nothing runs until the user allows it.
+        let listed = permission_commands();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].allow);
+        assert_eq!(listed[0].label, "Extensions: Allow test.tool to Run cat");
+        run("Extensions: Allow test.tool to Run cat");
+
+        app.set_process_permission(listed[0].extension, "cat", true);
+        assert!(
+            app.status
+                .get()
+                .contains("Allowed Tool (test.tool) to run cat")
+        );
+        assert!(app.preferences.get().allow_process["test.tool"].contains("cat"));
+        let listed = permission_commands();
+        assert!(!listed[0].allow);
+        assert_eq!(listed[0].label, "Extensions: Stop test.tool Running cat");
+        run("ran");
+
+        app.set_process_permission(listed[0].extension, "cat", false);
+        assert!(app.preferences.get().allow_process.is_empty());
+        run("needs your permission");
+        TEST.set(None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Installs formatters for the `ok`, `fail` and `slow` languages plus
     /// keybindings, and points this thread's App at them.
     fn install(name: &str, timeout: Duration) -> PathBuf {
@@ -841,7 +1048,11 @@ mod tests {
         }
         let registry: &'static Registry = Box::leak(Box::new(Registry::load(&extensions)));
         assert!(registry.errors.is_empty(), "{:?}", registry.errors);
-        let host: &'static Host = Box::leak(Box::new(Host::start(registry, Budgets::default(), Default::default())));
+        let host: &'static Host = Box::leak(Box::new(Host::start(
+            registry,
+            Budgets::default(),
+            Default::default(),
+        )));
         TEST.set(Some((registry, host, timeout)));
         dir
     }

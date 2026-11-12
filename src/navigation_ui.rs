@@ -30,6 +30,12 @@ enum Action {
     Command(&'static str),
     /// Extension id and command id; kept apart from built-in ids.
     ExtensionCommand(&'static str, &'static str),
+    /// Grants (`true`) or withdraws a program for an extension.
+    ExtensionPermission(
+        &'static kureha_code::extensions::Extension,
+        &'static str,
+        bool,
+    ),
     Theme(kureha_code::theme::Theme),
 }
 #[derive(Clone, Debug)]
@@ -880,7 +886,9 @@ impl App {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                let mut commands = COMMANDS.to_vec();
+                // Then the grants for programs extensions declare.
+                let permissions = super::extension_ui::permission_commands();
+                let mut commands: Vec<CommandDescriptor> = COMMANDS.to_vec();
                 commands.extend(
                     contributed
                         .iter()
@@ -891,6 +899,12 @@ impl App {
                             shortcut: "",
                         }),
                 );
+                commands.extend(permissions.iter().map(|permission| CommandDescriptor {
+                    id: "extension-permission",
+                    label: &permission.label,
+                    keywords: &permission.keywords,
+                    shortcut: "",
+                }));
                 let rows = navigation::filter_commands(&commands, &query, VISIBLE_RESULTS)
                     .into_iter()
                     .map(|hit| match hit.command_index.checked_sub(COMMANDS.len()) {
@@ -903,7 +917,7 @@ impl App {
                                 action: Action::Command(command.id),
                             }
                         }
-                        Some(index) => {
+                        Some(index) if index < contributed.len() => {
                             let (extension, command) = contributed[index];
                             let id = extension.manifest.id.as_str();
                             Row {
@@ -913,6 +927,28 @@ impl App {
                                     .unwrap_or_default(),
                                 key: format!("ext:{id}:{}", command.id),
                                 action: Action::ExtensionCommand(id, command.id.as_str()),
+                            }
+                        }
+                        Some(index) => {
+                            let permission = &permissions[index - contributed.len()];
+                            Row {
+                                label: permission.label.clone(),
+                                detail: if permission.allow {
+                                    "Runs with your permissions".into()
+                                } else {
+                                    String::new()
+                                },
+                                key: format!(
+                                    "perm:{}:{}:{}",
+                                    permission.extension.manifest.id,
+                                    permission.program,
+                                    permission.allow
+                                ),
+                                action: Action::ExtensionPermission(
+                                    permission.extension,
+                                    permission.program,
+                                    permission.allow,
+                                ),
                             }
                         }
                     })
@@ -1112,6 +1148,9 @@ impl App {
             Action::Command(id) => self.execute_navigation_command(id),
             Action::ExtensionCommand(extension, command) => {
                 self.run_extension_command(extension, command)
+            }
+            Action::ExtensionPermission(extension, program, allow) => {
+                self.set_process_permission(extension, program, allow)
             }
             Action::Theme(theme) => {
                 self.apply_theme(theme);
@@ -2273,5 +2312,65 @@ mod tests {
             .unwrap();
         assert_eq!(row.detail, shortcut("Alt+Shift+S"));
         render_preview(&app, "text-tools-shortcut.png");
+    }
+
+    #[test]
+    fn palette_lists_and_applies_process_permissions() {
+        use kureha_code::extensions::{Registry, host::Host, runtime::Budgets};
+        let dir =
+            std::env::temp_dir().join(format!("kureha-palette-permissions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("tool")).unwrap();
+        std::fs::write(
+            dir.join("tool/extension.toml"),
+            "[extension]\nid='test.tool'\nname='Tool'\nversion='1'\napi=1\n\
+             [capabilities]\nprocess=['cat', 'sh']\n",
+        )
+        .unwrap();
+        let registry: &'static Registry = Box::leak(Box::new(Registry::load(&dir)));
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let host: &'static Host = Box::leak(Box::new(Host::start(
+            registry,
+            Budgets::default(),
+            Default::default(),
+        )));
+        super::super::extension_ui::use_test_extensions(registry, host);
+        let app = App::with_document();
+        let mut palette = primary();
+        palette.shift = true;
+        let rows = |query: &str| {
+            assert!(app.navigation_key(KeyCode::Char('p'), palette));
+            app.nav.query.set(query.into());
+            app.poll_navigation();
+            app.nav.rows.get()
+        };
+
+        let listed = rows("Allow test.tool");
+        let index = listed
+            .iter()
+            .position(|row| row.label == "Extensions: Allow test.tool to Run sh")
+            .expect("each declared program has an Allow entry");
+        assert_eq!(listed[index].key, "perm:test.tool:sh:true");
+        assert_eq!(listed[index].detail, "Runs with your permissions");
+        app.nav.selected.set(Some(index));
+        assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
+        assert!(
+            app.status
+                .get()
+                .starts_with("Allowed Tool (test.tool) to run sh."),
+            "{}",
+            app.status.get()
+        );
+        assert_eq!(
+            app.preferences.get().allow_process["test.tool"],
+            ["sh".to_string()].into()
+        );
+
+        let labels: Vec<_> = rows("test.tool").into_iter().map(|row| row.label).collect();
+        assert!(labels.contains(&"Extensions: Stop test.tool Running sh".to_string()));
+        assert!(labels.contains(&"Extensions: Allow test.tool to Run cat".to_string()));
+        assert!(!labels.contains(&"Extensions: Allow test.tool to Run sh".to_string()));
+        app.close_navigation();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
