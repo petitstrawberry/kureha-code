@@ -139,6 +139,9 @@
           ]
           # Release packaging points Linux binaries at the system loader.
           ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf ]
+          # Release packaging signs and notarizes the macOS disk image; openssl
+          # converts the Developer ID .p12 for rcodesign.
+          ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.rcodesign (pkgs.lib.getBin pkgs.openssl) ]
           ++ runtime;
 
           FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
