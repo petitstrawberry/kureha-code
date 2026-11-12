@@ -134,12 +134,13 @@ The graphics driver and shared runtime libraries are supplied by Scarlet.
 
 Each release includes:
 
-- `kureha-code-aarch64-<tag>.tar.gz` and `kureha-code-riscv64-<tag>.tar.gz`
+- `kureha-code-scarlet-aarch64-<tag>.tar.gz` and `kureha-code-scarlet-riscv64-<tag>.tar.gz`
 - `bundle.toml`, with release URLs and an architecture-keyed SHA-256 table
 - `release.json`, recording the source revision and Cargo/Nix lockfile hashes
 - `SHA256SUMS`, covering both archives, the desktop packages and the manifests
 
-Changes on `main` automatically publish a uniquely named prerelease.
+Changes on `main` automatically publish a uniquely named prerelease
+(`v<version>-<run>.<attempt>`, such as `v0.1.0-8.1`).
 Pushing a `v*` tag publishes a regular release. Pull requests build and verify
 all Scarlet and desktop targets without publishing. The **Build and release apps**
 workflow also supports manual runs with an optional fresh tag and a `publish`
@@ -165,13 +166,13 @@ To reproduce the CD build locally, choose a new output directory for each step:
 
 ```sh
 nix develop --command python3 scripts/release-scarlet.py build \
-  --target aarch64-unknown-scarlet --version scarlet-local --output artifacts/aarch64
+  --target aarch64-unknown-scarlet --version local --output artifacts/aarch64
 nix develop --command python3 scripts/release-scarlet.py build \
-  --target riscv64gc-unknown-scarlet --version scarlet-local --output artifacts/riscv64
+  --target riscv64gc-unknown-scarlet --version local --output artifacts/riscv64
 mkdir artifacts/inputs
 cp artifacts/aarch64/* artifacts/riscv64/* artifacts/inputs/
 python3 scripts/release-scarlet.py assemble \
-  --inputs artifacts/inputs --version scarlet-local --output artifacts/release
+  --inputs artifacts/inputs --version local --output artifacts/release
 python3 scripts/release-scarlet.py verify --artifacts artifacts/release
 ```
 

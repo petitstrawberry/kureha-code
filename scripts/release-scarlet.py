@@ -260,6 +260,10 @@ def verify_desktop_archive(path, name):
     return check_desktop_files(files, name)
 
 
+def scarlet_archive_name(arch, version):
+    return f"kureha-code-scarlet-{arch}-{version}.tar.gz"
+
+
 def desktop_archive_name(name, version):
     return f"kureha-code-{name}-{version}." + ("dmg" if DESKTOP[name][0] == "macos" else "tar.gz")
 
@@ -442,7 +446,7 @@ def build(target, version, output, artifact=None):
     dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True))
     output.mkdir(parents=True, exist_ok=False)
     try:
-        archive_path = output / f"kureha-code-{arch}-{version}.tar.gz"
+        archive_path = output / scarlet_archive_name(arch, version)
         with tempfile.TemporaryDirectory(prefix="kureha-scarlet-") as temporary:
             stage = Path(temporary)
             app = stage / APP_PATH
@@ -472,7 +476,7 @@ def assemble(inputs, version, output, desktop=False):
     records = []
     for target, (arch, _) in TARGETS.items():
         record = json.loads((inputs / f"{arch}.json").read_text())
-        name = f"kureha-code-{arch}-{version}.tar.gz"
+        name = scarlet_archive_name(arch, version)
         if (record["target"] != target or record["arch"] != arch or record["version"] != version
                 or record["archive"] != name or record["sha256"] != sha(inputs / name)):
             raise ValueError("release input mismatch: " + arch)
@@ -500,7 +504,7 @@ def assemble(inputs, version, output, desktop=False):
     for record in records + desktop_records:
         shutil.copyfile(inputs / record["archive"], output / record["archive"])
     checksums = ", ".join(f'{record["arch"]} = "sha256:{record["sha256"]}"' for record in records)
-    url = f"https://github.com/{REPOSITORY}/releases/download/{version}/kureha-code-{{arch}}-{version}.tar.gz"
+    url = f"https://github.com/{REPOSITORY}/releases/download/{version}/" + scarlet_archive_name("{arch}", version)
     (output / "bundle.toml").write_text(
         "# Generated from verified Scarlet release archives.\n"
         f"# Source revision: {records[0]['revision']}\n"
@@ -524,7 +528,7 @@ def verify_release(directory):
         for record in release["builds"]:
             if record["target"] not in TARGETS or record["arch"] != TARGETS[record["target"]][0]:
                 raise ValueError("invalid release target")
-            name = f"kureha-code-{record['arch']}-{version}.tar.gz"
+            name = scarlet_archive_name(record["arch"], version)
             if record["archive"] != name:
                 raise ValueError("invalid archive name")
             shutil.copyfile(directory / name, inputs / name)
