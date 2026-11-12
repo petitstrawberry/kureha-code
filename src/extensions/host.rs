@@ -1,8 +1,10 @@
-//! The extension worker. WebAssembly never runs on the UI thread: the UI
-//! queues requests here and drains replies from its poll loop.
+//! The extension workers. WebAssembly never runs on the UI thread: the UI
+//! queues requests here and drains replies from its poll loop. Each extension
+//! has its own worker thread ("lane"), so one that waits (on a process, say)
+//! or runs long never holds up the others.
 
 use super::{
-    Registry,
+    Extension, Registry,
     runtime::{
         Budgets, CallError, CommandOutcome, Decoration, DocumentSnapshot, FormatOptions,
         MAX_WASM_BYTES, Runtime,
@@ -59,8 +61,39 @@ pub enum Reply {
     },
 }
 
+impl Request {
+    fn extension(&self) -> &str {
+        match self {
+            Self::Command { extension, .. }
+            | Self::Decorations { extension, .. }
+            | Self::Format { extension, .. } => extension,
+        }
+    }
+    /// The reply for a request that never reached a lane.
+    fn refuse(self, reason: String) -> Reply {
+        match self {
+            Self::Command { id, .. } => Reply::Command {
+                id,
+                result: Err(reason),
+            },
+            Self::Decorations { id, .. } => Reply::Decorations {
+                id,
+                result: Err(reason),
+            },
+            Self::Format { id, .. } => Reply::Format {
+                id,
+                result: Err(reason),
+            },
+        }
+    }
+}
+
 pub struct Host {
-    requests: Sender<Request>,
+    registry: &'static Registry,
+    budgets: Budgets,
+    /// One request queue per extension that has been used, created on demand.
+    lanes: Mutex<HashMap<String, Sender<Request>>>,
+    outbox: Sender<Reply>,
     replies: Mutex<Receiver<Reply>>,
 }
 
@@ -73,68 +106,62 @@ enum Slot {
     Failed(String),
 }
 
-struct Worker {
+/// One extension's worker state; lives on that extension's thread.
+struct Lane {
     registry: &'static Registry,
+    extension: &'static Extension,
     budgets: Budgets,
-    slots: HashMap<String, Slot>,
+    slot: Option<Slot>,
     /// Consecutive budget overruns, kept apart because overrun instances are dropped.
-    overruns: HashMap<String, u32>,
+    overruns: u32,
 }
 
-impl Worker {
-    fn slot(&mut self, extension: &str) -> &mut Slot {
-        let (registry, budgets) = (self.registry, self.budgets);
-        self.slots.entry(extension.to_owned()).or_insert_with(|| {
-            match instantiate(registry, extension, budgets) {
-                Ok(runtime) => Slot::Ready(Box::new(runtime)),
-                Err(e) => Slot::Failed(e),
-            }
-        })
-    }
+impl Lane {
     fn run<T>(
         &mut self,
-        extension: &str,
         call: impl FnOnce(&mut Runtime) -> Result<T, CallError>,
     ) -> Result<T, String> {
-        let name = self
-            .registry
-            .extensions
-            .iter()
-            .find(|e| e.manifest.id == extension)
-            .map_or(extension, |e| e.manifest.name.as_str())
-            .to_owned();
-        let runtime = match self.slot(extension) {
+        let (id, name) = (
+            self.extension.manifest.id.as_str(),
+            self.extension.manifest.name.as_str(),
+        );
+        let (extension, budgets) = (self.extension, self.budgets);
+        let slot = self
+            .slot
+            .get_or_insert_with(|| match instantiate(extension, budgets) {
+                Ok(runtime) => Slot::Ready(Box::new(runtime)),
+                Err(e) => Slot::Failed(e),
+            });
+        let runtime = match slot {
             Slot::Ready(runtime) => runtime,
             Slot::Failed(reason) => return Err(format!("{name} is not available: {reason}")),
         };
         let result = call(runtime);
         for line in runtime.take_log() {
-            eprintln!("[extension {extension}] {line}");
+            eprintln!("[extension {id}] {line}");
         }
         match result {
             Ok(value) => {
-                self.overruns.remove(extension);
+                self.overruns = 0;
                 Ok(value)
             }
             Err(CallError::Fuel) => {
                 // Fuel can run out mid-update of the guest's own state (its
                 // allocator, say), so the instance is discarded like a trap.
-                self.slots.remove(extension);
-                let overruns = self.overruns.entry(extension.to_owned()).or_default();
-                *overruns += 1;
+                self.slot = None;
+                self.overruns += 1;
                 let message = format!("{name} {}", CallError::Fuel);
-                if *overruns >= MAX_FUEL_FAILURES {
-                    self.slots.insert(
-                        extension.to_owned(),
-                        Slot::Failed("it repeatedly exceeded its time budget".into()),
-                    );
+                if self.overruns >= MAX_FUEL_FAILURES {
+                    self.slot = Some(Slot::Failed(
+                        "it repeatedly exceeded its time budget".into(),
+                    ));
                     return Err(format!("{message}; it is now turned off until restart"));
                 }
                 Err(message)
             }
             Err(CallError::Trap(e)) => {
                 // A trapped instance may hold broken state; start fresh next time.
-                self.slots.remove(extension);
+                self.slot = None;
                 Err(format!("{name} {}", CallError::Trap(e)))
             }
             Err(e @ CallError::Protocol(_)) => Err(format!("{name} {e}")),
@@ -149,16 +176,15 @@ impl Worker {
                 command,
                 document,
             } => {
-                let known = self.registry.extensions.iter().any(|e| {
-                    e.manifest.id == extension
-                        && e.manifest
-                            .contributes
-                            .commands
-                            .iter()
-                            .any(|c| c.id == command)
-                });
+                let known = self
+                    .extension
+                    .manifest
+                    .contributes
+                    .commands
+                    .iter()
+                    .any(|c| c.id == command);
                 let result = if known {
-                    self.run(&extension, |runtime| runtime.command(&command, document))
+                    self.run(|runtime| runtime.command(&command, document))
                 } else {
                     Err(format!("{extension} does not contribute command {command}"))
                 };
@@ -166,12 +192,12 @@ impl Worker {
             }
             Request::Decorations {
                 id,
-                extension,
                 document,
                 range,
+                ..
             } => Reply::Decorations {
                 id,
-                result: self.run(&extension, |runtime| runtime.decorations(document, range)),
+                result: self.run(|runtime| runtime.decorations(document, range)),
             },
             Request::Format {
                 id,
@@ -185,9 +211,7 @@ impl Worker {
                     .formatters(&language)
                     .any(|e| e.manifest.id == extension);
                 let result = if known {
-                    self.run(&extension, |runtime| {
-                        runtime.format(document, &language, options)
-                    })
+                    self.run(|runtime| runtime.format(document, &language, options))
                 } else {
                     Err(format!("{extension} does not format {language}"))
                 };
@@ -197,13 +221,11 @@ impl Worker {
     }
 }
 
-fn instantiate(registry: &Registry, extension: &str, budgets: Budgets) -> Result<Runtime, String> {
-    let entry = registry
-        .extensions
-        .iter()
-        .find(|e| e.manifest.id == extension)
-        .ok_or("it is not installed")?;
-    let path = entry.wasm.as_ref().ok_or("it has no WebAssembly module")?;
+fn instantiate(extension: &Extension, budgets: Budgets) -> Result<Runtime, String> {
+    let path = extension
+        .wasm
+        .as_ref()
+        .ok_or("it has no WebAssembly module")?;
     let metadata = std::fs::metadata(path).map_err(|e| e.to_string())?;
     if metadata.len() > MAX_WASM_BYTES {
         return Err(format!(
@@ -216,36 +238,67 @@ fn instantiate(registry: &Registry, extension: &str, budgets: Budgets) -> Result
 }
 
 impl Host {
-    /// Starts the worker thread for extensions in `registry`.
+    /// Prepares workers for extensions in `registry`. Each extension's thread
+    /// starts when it is first used.
     pub fn start(registry: &'static Registry, budgets: Budgets) -> Self {
-        let (requests, inbox) = mpsc::channel::<Request>();
         let (outbox, replies) = mpsc::channel();
-        let spawned = std::thread::Builder::new()
-            .name("extension-host".into())
-            .spawn(move || {
-                let mut worker = Worker {
-                    registry,
-                    budgets,
-                    slots: HashMap::new(),
-                    overruns: HashMap::new(),
-                };
-                for request in inbox {
-                    if outbox.send(worker.handle(request)).is_err() {
-                        break;
-                    }
-                }
-            });
-        if let Err(e) = spawned {
-            eprintln!("Cannot start the extension worker: {e}");
-        }
         Self {
-            requests,
+            registry,
+            budgets,
+            lanes: Mutex::new(HashMap::new()),
+            outbox,
             replies: Mutex::new(replies),
         }
     }
+    /// The queue for `extension`, starting its thread on first use.
+    fn lane(&self, extension: &str) -> Result<Sender<Request>, String> {
+        let mut lanes = self.lanes.lock().unwrap();
+        if let Some(lane) = lanes.get(extension) {
+            return Ok(lane.clone());
+        }
+        let entry = self
+            .registry
+            .extensions
+            .iter()
+            .find(|e| e.manifest.id == extension)
+            .ok_or_else(|| format!("{extension} is not available: it is not installed"))?;
+        let (requests, inbox) = mpsc::channel::<Request>();
+        let outbox = self.outbox.clone();
+        let mut lane = Lane {
+            registry: self.registry,
+            extension: entry,
+            budgets: self.budgets,
+            slot: None,
+            overruns: 0,
+        };
+        std::thread::Builder::new()
+            .name(format!("extension {extension}"))
+            .spawn(move || {
+                for request in inbox {
+                    if outbox.send(lane.handle(request)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .map_err(|e| format!("Cannot start the worker for {extension}: {e}"))?;
+        lanes.insert(extension.to_owned(), requests.clone());
+        Ok(requests)
+    }
     fn send(&self, request: impl FnOnce(u64) -> Request) -> Option<u64> {
         let id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
-        self.requests.send(request(id)).ok().map(|()| id)
+        let request = request(id);
+        let lane = match self.lane(request.extension()) {
+            Ok(lane) => lane,
+            // Answer through the normal reply path so callers see one flow.
+            Err(reason) => return self.outbox.send(request.refuse(reason)).ok().map(|()| id),
+        };
+        match lane.send(request) {
+            Ok(()) => Some(id),
+            Err(mpsc::SendError(request)) => {
+                let reason = format!("the worker for {} has stopped", request.extension());
+                self.outbox.send(request.refuse(reason)).ok().map(|()| id)
+            }
+        }
     }
     /// Queues a command. `None` if the worker is gone.
     pub fn command(
