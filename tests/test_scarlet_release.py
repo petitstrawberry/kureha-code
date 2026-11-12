@@ -25,13 +25,13 @@ class ScarletReleaseTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.inputs = self.root / "inputs"
         self.inputs.mkdir()
-        self.version = "scarlet-v0.1.0-42.1"
+        self.version = "v0.1.0-42.1"
         for target in release.TARGETS:
             self.make_input(target)
 
     def make_input(self, target, machine=None, executable_mode=0o755, extra=None):
         arch, expected_machine = release.TARGETS[target]
-        archive = self.inputs / f"kureha-code-{arch}-{self.version}.tar.gz"
+        archive = self.inputs / release.scarlet_archive_name(arch, self.version)
         header = bytearray(64)
         header[:8] = b"\x7fELF\x02\x01\x01\x53"
         struct.pack_into("<HH", header, 16, 3, expected_machine if machine is None else machine)
@@ -68,7 +68,7 @@ class ScarletReleaseTests(unittest.TestCase):
         layer = bundle["layers"][0]
         self.assertEqual((layer["kind"], layer["format"], layer["to"]), ("archive", "tar-gz", "/"))
         for arch in ("aarch64", "riscv64"):
-            name = f"kureha-code-{arch}-{self.version}.tar.gz"
+            name = release.scarlet_archive_name(arch, self.version)
             self.assertTrue(layer["url"].replace("{arch}", arch).endswith("/" + name))
             self.assertEqual(layer["sha256"][arch], "sha256:" + release.sha(output / name))
             stage = self.root / arch
@@ -257,6 +257,12 @@ class DesktopReleaseTests(ScarletReleaseTests):
             self.assertNotIn(archive, (output / "bundle.toml").read_text())
         self.assertEqual(manifest["desktop"][1]["glibc"], "2.39")
         self.assertTrue(manifest["desktop"][0]["archive"].endswith(".dmg"))
+        # Every package is kureha-code-<platform>-<arch>-<tag>.
+        packages = sorted(path.name for path in output.iterdir() if path.name.startswith("kureha-code-"))
+        self.assertEqual(packages, [
+            f"kureha-code-{platform}-{arch}-{self.version}.{extension}" for platform, arch, extension in [
+                ("linux", "aarch64", "tar.gz"), ("linux", "x86_64", "tar.gz"), ("macos", "aarch64", "dmg"),
+                ("scarlet", "aarch64", "tar.gz"), ("scarlet", "riscv64", "tar.gz")]])
         notes = release.release_notes(manifest)
         self.assertIn("glibc 2.39 or newer", notes)
         self.assertIn("kureha-code-macos-aarch64-*.dmg", notes)
