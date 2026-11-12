@@ -4,6 +4,7 @@ pub mod explorer;
 pub mod extensions;
 pub mod files;
 pub mod fonts;
+pub mod git;
 pub mod navigation;
 pub mod project_search;
 pub mod search;

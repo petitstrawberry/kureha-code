@@ -75,9 +75,10 @@
             pname = "kureha-code-unwrapped";
             version = manifest.package.version;
             inherit src;
-            cargoHash = "sha256-2w/gUNrcEpaDLYQ7x5MSgtyXaM2gG0uKiJLtO8o9Bu8=";
+            cargoHash = "sha256-DxVAaE92Xq7vJ5JuuGQhFViaoHE+33iB0XMz6qcO4Io=";
             nativeBuildInputs = [ pkgs.pkg-config ];
-            nativeCheckInputs = [ pkgs.python3 ];
+            # Git tests build their fixture repositories with the git command line.
+            nativeCheckInputs = [ pkgs.python3 pkgs.git ];
             # Transport and Markdown tests use local loopback servers.
             __darwinAllowLocalNetworking = true;
             buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.fontconfig ];
