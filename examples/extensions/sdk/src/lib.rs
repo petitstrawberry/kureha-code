@@ -122,6 +122,150 @@ impl<'a> Request<'a> {
     }
 }
 
+/// Where a program runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Cwd {
+    /// The folder of the document (the default).
+    #[default]
+    Document,
+    /// The open folder, or the document's folder without one.
+    Workspace,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum Input {
+    #[default]
+    Empty,
+    Text(String),
+    Document,
+}
+
+/// A program to run, which the extension must declare in `[capabilities]
+/// process` and the user must allow. Programs can run only while handling a
+/// command or a format request; the call waits until the program ends.
+///
+/// ```ignore
+/// let output = Process::new("ruff")
+///     .args(["format", "-"])
+///     .stdin_document()
+///     .run()?;
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Process {
+    program: String,
+    args: Vec<String>,
+    input: Input,
+    cwd: Cwd,
+    timeout_ms: Option<u64>,
+}
+impl Process {
+    /// A bare program name, looked up on the editor's `PATH`.
+    pub fn new(program: impl Into<String>) -> Self {
+        Self {
+            program: program.into(),
+            args: Vec::new(),
+            input: Input::Empty,
+            cwd: Cwd::Document,
+            timeout_ms: None,
+        }
+    }
+    pub fn arg(mut self, arg: impl Into<String>) -> Self {
+        self.args.push(arg.into());
+        self
+    }
+    pub fn args<I: IntoIterator<Item = S>, S: Into<String>>(mut self, args: I) -> Self {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+    /// Sends `text` as standard input.
+    pub fn stdin(mut self, text: impl Into<String>) -> Self {
+        self.input = Input::Text(text.into());
+        self
+    }
+    /// Sends the whole document as standard input, straight from the host.
+    pub fn stdin_document(mut self) -> Self {
+        self.input = Input::Document;
+        self
+    }
+    pub fn cwd(mut self, cwd: Cwd) -> Self {
+        self.cwd = cwd;
+        self
+    }
+    /// Stops the program after this long (the host allows up to 20 s; 5 s by default).
+    pub fn timeout_ms(mut self, ms: u64) -> Self {
+        self.timeout_ms = Some(ms);
+        self
+    }
+    /// The host request this run sends.
+    pub fn request(&self) -> Value {
+        let mut request = json!({
+            "op": "process",
+            "program": self.program,
+            "args": self.args,
+            "cwd": match self.cwd {
+                Cwd::Document => "document",
+                Cwd::Workspace => "workspace",
+            },
+        });
+        match &self.input {
+            Input::Empty => {}
+            Input::Text(text) => request["stdin"] = json!(text),
+            Input::Document => request["stdin_document"] = json!(true),
+        }
+        if let Some(ms) = self.timeout_ms {
+            request["timeout_ms"] = json!(ms);
+        }
+        request
+    }
+    /// Runs the program to completion. Refusals (not declared, not allowed,
+    /// not found), timeouts and oversized output are errors; a failing exit
+    /// status is not, see `Output::success`.
+    pub fn run(&self) -> Result<Output, String> {
+        Output::parse(&host(&self.request())?)
+    }
+}
+
+/// What a program printed and how it ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Output {
+    /// The exit code, or `None` if a signal ended the program.
+    pub status: Option<i32>,
+    pub stdout: String,
+    /// The first 16 KiB at most.
+    pub stderr: String,
+}
+impl Output {
+    pub fn parse(reply: &Value) -> Result<Self, String> {
+        Ok(Self {
+            status: reply["status"].as_i64().and_then(|n| i32::try_from(n).ok()),
+            stdout: reply["stdout"]
+                .as_str()
+                .ok_or("the host returned no output")?
+                .to_owned(),
+            stderr: reply["stderr"].as_str().unwrap_or_default().to_owned(),
+        })
+    }
+    pub fn success(&self) -> bool {
+        self.status == Some(0)
+    }
+    /// A one-line reason for a failed run: the first line of standard error,
+    /// else the exit status.
+    pub fn failure(&self) -> String {
+        match self
+            .stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+        {
+            Some(line) => line.chars().take(200).collect(),
+            None => match self.status {
+                Some(code) => format!("exited with status {code}"),
+                None => "was stopped by a signal".into(),
+            },
+        }
+    }
+}
+
 /// The reply to one message.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reply(pub Value);
@@ -266,5 +410,35 @@ mod tests {
         );
         let reply: Value = serde_json::from_slice(&dispatch(b"nope", echo)).unwrap();
         assert!(reply["error"].as_str().unwrap().contains("invalid message"));
+    }
+
+    #[test]
+    fn process_builds_the_host_request_and_reads_its_output() {
+        let run = Process::new("ruff")
+            .args(["format", "-"])
+            .stdin_document()
+            .timeout_ms(9000);
+        assert_eq!(
+            run.request(),
+            json!({"op": "process", "program": "ruff", "args": ["format", "-"],
+                   "cwd": "document", "stdin_document": true, "timeout_ms": 9000})
+        );
+        let run = Process::new("sh")
+            .arg("-c")
+            .arg("cat")
+            .stdin("hi")
+            .cwd(Cwd::Workspace);
+        assert_eq!(run.request()["stdin"], "hi");
+        assert_eq!(run.request()["cwd"], "workspace");
+        assert!(run.request().get("stdin_document").is_none());
+
+        let output =
+            Output::parse(&json!({"status": 2, "stdout": "", "stderr": "\nerror: bad\nmore"}))
+                .unwrap();
+        assert!(!output.success());
+        assert_eq!(output.failure(), "error: bad");
+        let output = Output::parse(&json!({"status": null, "stdout": "", "stderr": ""})).unwrap();
+        assert_eq!(output.failure(), "was stopped by a signal");
+        assert!(Output::parse(&json!({})).is_err());
     }
 }

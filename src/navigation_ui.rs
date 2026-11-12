@@ -2314,6 +2314,80 @@ mod tests {
         render_preview(&app, "text-tools-shortcut.png");
     }
 
+    /// Format Tools formats Python with `ruff`, once the user allows it.
+    /// Needs `KUREHA_EXTENSIONS_DIR` with the built example and `ruff` on PATH;
+    /// see `examples/extensions/format-tools`.
+    #[test]
+    #[ignore = "needs KUREHA_EXTENSIONS_DIR with the built format-tools example and ruff on PATH"]
+    fn format_tools_end_to_end() {
+        let registry = kureha_code::extensions::registry();
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let extension = registry
+            .extensions
+            .iter()
+            .find(|e| e.manifest.id == "example.format-tools")
+            .expect("Format Tools is installed");
+        let dir = std::env::temp_dir().join(format!("kureha-format-tools-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app.py");
+        let source = "x=1\nif x :\n  print( 'a' )\n";
+        std::fs::write(&path, source).unwrap();
+        let app = App::with_document();
+        let id = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .open(path.clone(), source);
+        app.activate(id);
+        let document = || {
+            app.bindings(id)
+                .unwrap()
+                .document
+                .get()
+                .as_str()
+                .to_string()
+        };
+        let wait_for = |what: &str| {
+            let until = Instant::now() + Duration::from_secs(10);
+            while !app.status.get().contains(what) {
+                assert!(Instant::now() < until, "status: {}", app.status.get());
+                std::thread::sleep(Duration::from_millis(5));
+                app.poll_extensions();
+            }
+        };
+        // Declared but not allowed: nothing runs, and the status names the
+        // palette command that allows it.
+        app.execute_navigation_command("format-document");
+        wait_for("Extensions: Allow example.format-tools to Run ruff");
+        assert_eq!(document(), source);
+
+        app.set_process_permission(extension, "ruff", true);
+        run_palette_command(&app, "format document", "Code: Format Document", None);
+        assert_eq!(document(), "x = 1\nif x:\n    print(\"a\")\n");
+        assert_eq!(app.status.get(), "Formatted with Format Tools");
+        render_preview(&app, "format-tools-python.png");
+
+        // A syntax error leaves the text alone and shows the tool's message.
+        app.edit(
+            id,
+            &crate::EditDelta {
+                replaced_range: 0..0,
+                inserted: "def (:\n".into(),
+            },
+        );
+        let broken = document();
+        app.execute_navigation_command("format-document");
+        wait_for("ruff:");
+        assert_eq!(document(), broken);
+
+        // Withdrawing the grant applies at once.
+        app.set_process_permission(extension, "ruff", false);
+        app.execute_navigation_command("format-document");
+        wait_for("needs your permission");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn palette_lists_and_applies_process_permissions() {
         use kureha_code::extensions::{Registry, host::Host, runtime::Budgets};
