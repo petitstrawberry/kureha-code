@@ -5,6 +5,7 @@
 //! launch settings. Extension code runs only in [`host`]. See `docs/extensions.md`.
 
 pub mod host;
+pub mod process;
 pub mod runtime;
 
 use crate::theme::Theme;
@@ -339,7 +340,8 @@ fn valid_version(version: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
 }
-fn valid_program(program: &str) -> bool {
+/// A bare executable name: no path, no shell syntax.
+pub fn valid_program(program: &str) -> bool {
     program.len() <= 128
         && !matches!(program, "." | "..")
         && program
@@ -790,10 +792,21 @@ impl Registry {
     }
     /// Launch settings for a language, first contribution wins.
     pub fn language_server(&self, language: &str) -> Option<&LanguageServerContribution> {
-        self.extensions
-            .iter()
-            .flat_map(|e| &e.manifest.contributes.language_servers)
-            .find(|server| server.language == language)
+        self.language_server_entry(language).map(|(_, server)| server)
+    }
+    /// The language server for `language` with the extension that provides it.
+    pub fn language_server_entry(
+        &self,
+        language: &str,
+    ) -> Option<(&Extension, &LanguageServerContribution)> {
+        self.extensions.iter().find_map(|e| {
+            e.manifest
+                .contributes
+                .language_servers
+                .iter()
+                .find(|server| server.language == language)
+                .map(|server| (e, server))
+        })
     }
     /// One-line summary for the status bar, or `None` when nothing failed.
     pub fn error_summary(&self) -> Option<String> {

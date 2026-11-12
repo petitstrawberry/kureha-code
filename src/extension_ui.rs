@@ -316,6 +316,7 @@ impl App {
                 version: doc.editor.revision(),
                 selection: start.min(text.len())..end.min(text.len()),
                 text: text.clone(),
+                workspace: rt.explorer.root.clone(),
             },
             text,
         ))
@@ -840,7 +841,7 @@ mod tests {
         }
         let registry: &'static Registry = Box::leak(Box::new(Registry::load(&extensions)));
         assert!(registry.errors.is_empty(), "{:?}", registry.errors);
-        let host: &'static Host = Box::leak(Box::new(Host::start(registry, Budgets::default())));
+        let host: &'static Host = Box::leak(Box::new(Host::start(registry, Budgets::default(), Default::default())));
         TEST.set(Some((registry, host, timeout)));
         dir
     }

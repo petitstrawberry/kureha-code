@@ -13,9 +13,20 @@
 //!
 //! Every pointer and length from the guest is checked before use. Each call
 //! runs with a fuel budget and the store caps linear memory.
+//!
+//! Host requests (`op`): `read` (document text), `log`, and `process`, which
+//! runs a program the extension declared and the user granted. `process` is
+//! synchronous and only allowed in commands and formatters; the extension's own
+//! worker thread waits for it (see `process.rs` for the limits).
 
+use super::process::{self, Grants};
 use serde_json::{Value, json};
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use wasmi::{
     Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder,
     TrapCode, TypedFunc,
@@ -64,6 +75,8 @@ pub struct DocumentSnapshot {
     pub version: u64,
     pub text: Arc<String>,
     pub selection: Range<usize>,
+    /// The open folder, if any; a process may run there.
+    pub workspace: Option<PathBuf>,
 }
 impl DocumentSnapshot {
     fn describe(&self) -> Value {
@@ -139,11 +152,32 @@ fn trap(error: wasmi::Error) -> CallError {
     }
 }
 
+/// Who the instance belongs to and which programs it may run.
+#[derive(Clone, Debug, Default)]
+pub struct Access {
+    pub extension: String,
+    /// The manifest's `[capabilities] process`.
+    pub programs: Vec<String>,
+    pub grants: Grants,
+}
+
+/// The kind of call in progress; only tasks may wait on the outside world.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Call {
+    Activate,
+    Query,
+    Task,
+}
+
 struct HostState {
     limits: StoreLimits,
     document: Option<DocumentSnapshot>,
     pending: Option<Vec<u8>>,
     log: Vec<String>,
+    access: Access,
+    call: Call,
+    /// Processes started in the current call.
+    runs: u32,
 }
 
 /// Takes `units` from the caller's fuel, failing like an instruction would.
@@ -189,15 +223,148 @@ fn text_range(text: &str, start: &Value, end: &Value) -> Result<Range<usize>, St
     }
 }
 
-fn handle_host_request(state: &mut HostState, request: &[u8]) -> Value {
+/// Where a process runs: the document's folder, or the open folder.
+fn process_directory(document: Option<&DocumentSnapshot>, place: &str) -> Option<PathBuf> {
+    let folder = || {
+        document
+            .map(|d| d.path.as_path())
+            .filter(|path| path.is_absolute())
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+    };
+    let workspace = || document.and_then(|d| d.workspace.clone());
+    let candidates = match place {
+        "workspace" => [workspace(), folder()],
+        _ => [folder(), workspace()],
+    };
+    candidates
+        .into_iter()
+        .flatten()
+        .chain(std::env::home_dir())
+        .find(|dir| dir.is_dir())
+}
+
+/// Runs a declared and granted program. Returns the reply and the number of
+/// document bytes piped to it, which the caller charges as fuel.
+fn run_process(state: &mut HostState, request: &Value) -> (Value, usize) {
+    let error = |message: String| (json!({ "error": message }), 0);
+    if state.call != Call::Task {
+        return error("programs can only run in commands and formatters".into());
+    }
+    let Some(program) = request.get("program").and_then(Value::as_str) else {
+        return error("`program` must be a string".into());
+    };
+    if !state.access.programs.iter().any(|p| p == program) {
+        return error(format!(
+            "`{program}` is not declared in [capabilities] process"
+        ));
+    }
+    if !state.access.grants.allows(&state.access.extension, program) {
+        return error(process::permission_hint(&state.access.extension, program));
+    }
+    if state.runs >= process::MAX_RUNS_PER_CALL {
+        return error(format!(
+            "at most {} programs may run in one call",
+            process::MAX_RUNS_PER_CALL
+        ));
+    }
+    let args = match request.get("args") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(items)) if items.len() <= process::MAX_ARGS => {
+            match items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .filter(|a| a.len() <= process::MAX_ARG_BYTES && !a.contains('\0'))
+                        .map(String::from)
+                })
+                .collect::<Option<Vec<_>>>()
+            {
+                Some(args) => args,
+                None => {
+                    return error(format!(
+                        "`args` must be strings of at most {} bytes without NUL",
+                        process::MAX_ARG_BYTES
+                    ));
+                }
+            }
+        }
+        Some(_) => {
+            return error(format!(
+                "`args` must be an array of at most {} strings",
+                process::MAX_ARGS
+            ));
+        }
+    };
+    let pipe_document = request.get("stdin_document").and_then(Value::as_bool) == Some(true);
+    let stdin = match (request.get("stdin"), pipe_document) {
+        (Some(_), true) => return error("give `stdin` or `stdin_document`, not both".into()),
+        (Some(Value::String(text)), false) => Some(text.as_bytes().to_vec()),
+        (Some(_), false) => return error("`stdin` must be a string".into()),
+        (None, true) => match &state.document {
+            Some(document) => Some(document.text.as_bytes().to_vec()),
+            None => return error("no document is available in this call".into()),
+        },
+        (None, false) => None,
+    };
+    let timeout = match request.get("timeout_ms") {
+        None => process::DEFAULT_TIMEOUT,
+        Some(ms) => match ms.as_u64().map(Duration::from_millis) {
+            Some(t) if !t.is_zero() && t <= process::MAX_TIMEOUT => t,
+            _ => {
+                return error(format!(
+                    "`timeout_ms` must be between 1 and {}",
+                    process::MAX_TIMEOUT.as_millis()
+                ));
+            }
+        },
+    };
+    let place = request
+        .get("cwd")
+        .and_then(Value::as_str)
+        .unwrap_or("document");
+    if !matches!(place, "document" | "workspace") {
+        return error("`cwd` must be \"document\" or \"workspace\"".into());
+    }
+    let Some(cwd) = process_directory(state.document.as_ref(), place) else {
+        return error("no folder is available to run the program in".into());
+    };
+    let Some(path) = process::resolve(program, std::env::var_os("PATH").as_deref()) else {
+        return error(format!("`{program}` was not found on PATH"));
+    };
+    state.runs += 1;
+    let piped = if pipe_document {
+        stdin.as_ref().map_or(0, Vec::len)
+    } else {
+        0
+    };
+    let reply = match process::run(process::Run {
+        program: path,
+        args,
+        stdin,
+        cwd,
+        timeout,
+    }) {
+        Ok(output) => json!({
+            "status": output.status,
+            "stdout": output.stdout,
+            "stderr": output.stderr,
+        }),
+        Err(e) => json!({ "error": e }),
+    };
+    (reply, piped)
+}
+
+fn handle_host_request(state: &mut HostState, request: &[u8]) -> (Value, usize) {
     let request: Value = match serde_json::from_slice(request) {
         Ok(value) => value,
-        Err(e) => return json!({"error": format!("invalid JSON: {e}")}),
+        Err(e) => return (json!({"error": format!("invalid JSON: {e}")}), 0),
     };
-    match request.get("op").and_then(Value::as_str) {
+    let reply = match request.get("op").and_then(Value::as_str) {
+        Some("process") => return run_process(state, &request),
         Some("read") => {
             let Some(document) = &state.document else {
-                return json!({"error": "no document is available in this call"});
+                return (json!({"error": "no document is available in this call"}), 0);
             };
             match text_range(&document.text, &request["start"], &request["end"]) {
                 Ok(range) if range.len() <= MAX_MESSAGE_BYTES / 2 => {
@@ -227,7 +394,8 @@ fn handle_host_request(state: &mut HostState, request: &[u8]) -> Value {
         }
         Some(other) => json!({"error": format!("unknown op `{other}`")}),
         None => json!({"error": "`op` is required"}),
-    }
+    };
+    (reply, 0)
 }
 
 fn kx_host(mut caller: Caller<'_, HostState>, ptr: i32, len: i32) -> Result<i64, wasmi::Error> {
@@ -244,10 +412,10 @@ fn kx_host(mut caller: Caller<'_, HostState>, ptr: i32, len: i32) -> Result<i64,
     let request = data[range].to_vec();
     charge(&mut caller, HOST_CALL_FUEL + byte_fuel(request.len()))?;
     let state = caller.data_mut();
-    let reply = serde_json::to_vec(&handle_host_request(state, &request))
-        .expect("JSON values always serialize");
+    let (reply, piped) = handle_host_request(state, &request);
+    let reply = serde_json::to_vec(&reply).expect("JSON values always serialize");
     state.pending = None;
-    charge(&mut caller, byte_fuel(reply.len()))?;
+    charge(&mut caller, byte_fuel(reply.len()) + byte_fuel(piped))?;
     if reply.len() > MAX_MESSAGE_BYTES {
         return Ok(-1);
     }
@@ -289,8 +457,13 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// Compiles and instantiates a module, then sends `activate`.
+    /// Compiles and instantiates a module without process access, then
+    /// sends `activate`.
     pub fn new(wasm: &[u8], budgets: Budgets) -> Result<Self, String> {
+        Self::with_access(wasm, budgets, Access::default())
+    }
+    /// Like `new`, for the extension `access` describes.
+    pub fn with_access(wasm: &[u8], budgets: Budgets, access: Access) -> Result<Self, String> {
         let mut config = Config::default();
         config.consume_fuel(true);
         let engine = Engine::new(&config);
@@ -320,6 +493,9 @@ impl Runtime {
                 document: None,
                 pending: None,
                 log: Vec::new(),
+                access,
+                call: Call::Activate,
+                runs: 0,
             },
         );
         store.limiter(|state| &mut state.limits);
@@ -389,6 +565,12 @@ impl Runtime {
         let state = self.store.data_mut();
         state.document = document;
         state.pending = None;
+        state.runs = 0;
+        state.call = match message.get("kind").and_then(Value::as_str) {
+            Some("activate") => Call::Activate,
+            Some("command" | "format") => Call::Task,
+            _ => Call::Query,
+        };
         let result = self.exchange(&bytes);
         self.last_fuel = fuel.saturating_sub(self.store.get_fuel().unwrap_or(0));
         let state = self.store.data_mut();

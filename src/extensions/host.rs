@@ -5,8 +5,9 @@
 
 use super::{
     Extension, Registry,
+    process::Grants,
     runtime::{
-        Budgets, CallError, CommandOutcome, Decoration, DocumentSnapshot, FormatOptions,
+        Access, Budgets, CallError, CommandOutcome, Decoration, DocumentSnapshot, FormatOptions,
         MAX_WASM_BYTES, Runtime,
     },
 };
@@ -91,6 +92,8 @@ impl Request {
 pub struct Host {
     registry: &'static Registry,
     budgets: Budgets,
+    /// Programs the user allowed; shared with every instance.
+    grants: Grants,
     /// One request queue per extension that has been used, created on demand.
     lanes: Mutex<HashMap<String, Sender<Request>>>,
     outbox: Sender<Reply>,
@@ -111,6 +114,7 @@ struct Lane {
     registry: &'static Registry,
     extension: &'static Extension,
     budgets: Budgets,
+    grants: Grants,
     slot: Option<Slot>,
     /// Consecutive budget overruns, kept apart because overrun instances are dropped.
     overruns: u32,
@@ -126,9 +130,10 @@ impl Lane {
             self.extension.manifest.name.as_str(),
         );
         let (extension, budgets) = (self.extension, self.budgets);
+        let grants = self.grants.clone();
         let slot = self
             .slot
-            .get_or_insert_with(|| match instantiate(extension, budgets) {
+            .get_or_insert_with(|| match instantiate(extension, budgets, grants) {
                 Ok(runtime) => Slot::Ready(Box::new(runtime)),
                 Err(e) => Slot::Failed(e),
             });
@@ -221,7 +226,7 @@ impl Lane {
     }
 }
 
-fn instantiate(extension: &Extension, budgets: Budgets) -> Result<Runtime, String> {
+fn instantiate(extension: &Extension, budgets: Budgets, grants: Grants) -> Result<Runtime, String> {
     let path = extension
         .wasm
         .as_ref()
@@ -234,17 +239,24 @@ fn instantiate(extension: &Extension, budgets: Budgets) -> Result<Runtime, Strin
         ));
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    Runtime::new(&bytes, budgets)
+    let access = Access {
+        extension: extension.manifest.id.clone(),
+        programs: extension.manifest.capabilities.process.clone(),
+        grants,
+    };
+    Runtime::with_access(&bytes, budgets, access)
 }
 
 impl Host {
     /// Prepares workers for extensions in `registry`. Each extension's thread
-    /// starts when it is first used.
-    pub fn start(registry: &'static Registry, budgets: Budgets) -> Self {
+    /// starts when it is first used. `grants` decides which declared programs
+    /// may run; later changes to it apply at once.
+    pub fn start(registry: &'static Registry, budgets: Budgets, grants: Grants) -> Self {
         let (outbox, replies) = mpsc::channel();
         Self {
             registry,
             budgets,
+            grants,
             lanes: Mutex::new(HashMap::new()),
             outbox,
             replies: Mutex::new(replies),
@@ -268,6 +280,7 @@ impl Host {
             registry: self.registry,
             extension: entry,
             budgets: self.budgets,
+            grants: self.grants.clone(),
             slot: None,
             overruns: 0,
         };
@@ -344,6 +357,10 @@ impl Host {
             options,
         })
     }
+    /// The grants this worker checks, to update when the settings change.
+    pub fn grants(&self) -> &Grants {
+        &self.grants
+    }
     /// Replies that arrived since the last poll. Never blocks.
     pub fn poll(&self) -> Vec<Reply> {
         self.replies.lock().unwrap().try_iter().collect()
@@ -355,7 +372,13 @@ static HOST: OnceLock<Host> = OnceLock::new();
 /// The process-wide worker, once the registry has loaded.
 pub fn host() -> Option<&'static Host> {
     let registry = super::loaded()?;
-    Some(HOST.get_or_init(|| Host::start(registry, Budgets::default())))
+    Some(HOST.get_or_init(|| {
+        Host::start(
+            registry,
+            Budgets::default(),
+            super::process::grants().clone(),
+        )
+    }))
 }
 /// The worker if something already started it.
 pub fn running() -> Option<&'static Host> {
@@ -405,6 +428,7 @@ mod tests {
                 query: 100_000,
                 task: 1_000_000,
             },
+            Grants::default(),
         )
     }
     fn wait(host: &Host, id: u64) -> Reply {

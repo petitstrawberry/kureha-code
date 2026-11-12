@@ -100,6 +100,7 @@ pub(crate) fn snapshot(text: &str) -> DocumentSnapshot {
         version: 7,
         text: Arc::new(text.into()),
         selection: 0..0,
+        workspace: None,
     }
 }
 
@@ -473,4 +474,189 @@ fn pretty_json_below(limit: usize) -> String {
             return serde_json::to_string_pretty(&items).unwrap();
         }
     }
+}
+
+fn host_state(programs: &[&str], granted: &[&str], call: Call) -> HostState {
+    let to_strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    HostState {
+        limits: StoreLimitsBuilder::new().build(),
+        document: Some(snapshot("héllo")),
+        pending: None,
+        log: Vec::new(),
+        access: Access {
+            extension: "ex.fmt".into(),
+            programs: to_strings(programs),
+            grants: Grants::new(std::collections::BTreeMap::from([(
+                "ex.fmt".to_string(),
+                to_strings(granted).into_iter().collect(),
+            )])),
+        },
+        call,
+        runs: 0,
+    }
+}
+fn host_request(state: &mut HostState, request: Value) -> Value {
+    handle_host_request(state, request.to_string().as_bytes()).0
+}
+fn host_error(state: &mut HostState, request: Value) -> String {
+    let reply = host_request(state, request);
+    reply["error"]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected an error, got {reply}"))
+        .to_owned()
+}
+
+#[cfg(unix)]
+#[test]
+fn processes_need_a_task_a_declaration_and_the_users_grant() {
+    let cat = json!({"op": "process", "program": "cat", "stdin_document": true});
+    for call in [Call::Activate, Call::Query] {
+        let mut state = host_state(&["cat"], &["cat"], call);
+        assert!(host_error(&mut state, cat.clone()).contains("only run in commands"));
+    }
+    let mut state = host_state(&[], &["cat"], Call::Task);
+    assert!(host_error(&mut state, cat.clone()).contains("not declared"));
+    let mut state = host_state(&["cat"], &[], Call::Task);
+    let error = host_error(&mut state, cat.clone());
+    assert!(
+        error.contains("Extensions: Allow ex.fmt to Run cat"),
+        "{error}"
+    );
+    let mut state = host_state(&["cat"], &["cat"], Call::Task);
+    let (reply, piped) = handle_host_request(&mut state, cat.to_string().as_bytes());
+    assert_eq!(reply, json!({"status": 0, "stdout": "héllo", "stderr": ""}));
+    assert_eq!(piped, "héllo".len(), "document input is charged as fuel");
+}
+
+#[cfg(unix)]
+#[test]
+fn process_requests_are_validated() {
+    let mut state = host_state(&["cat"], &["cat"], Call::Task);
+    for (request, expected) in [
+        (
+            json!({"op": "process", "program": "cat", "stdin": "x", "stdin_document": true}),
+            "not both",
+        ),
+        (
+            json!({"op": "process", "program": "cat", "args": [1]}),
+            "must be strings",
+        ),
+        (
+            json!({"op": "process", "program": "cat", "args": vec!["a"; 65]}),
+            "at most 64",
+        ),
+        (
+            json!({"op": "process", "program": "cat", "args": ["a\u{0}b"]}),
+            "without NUL",
+        ),
+        (
+            json!({"op": "process", "program": "cat", "timeout_ms": 0}),
+            "timeout_ms",
+        ),
+        (
+            json!({"op": "process", "program": "cat", "timeout_ms": 60_000}),
+            "timeout_ms",
+        ),
+        (
+            json!({"op": "process", "program": "cat", "cwd": "/"}),
+            "`cwd`",
+        ),
+        (
+            json!({"op": "process", "program": "../cat"}),
+            "not declared",
+        ),
+    ] {
+        assert!(
+            host_error(&mut state, request.clone()).contains(expected),
+            "{request}"
+        );
+    }
+    state.runs = process::MAX_RUNS_PER_CALL;
+    assert!(host_error(&mut state, json!({"op": "process", "program": "cat"})).contains("at most"));
+}
+
+#[cfg(unix)]
+#[test]
+fn processes_run_in_the_document_or_workspace_folder() {
+    let base = std::env::temp_dir().join(format!("kureha-process-cwd-{}", std::process::id()));
+    let (documents, workspace) = (base.join("docs"), base.join("project"));
+    std::fs::create_dir_all(&documents).unwrap();
+    std::fs::create_dir_all(&workspace).unwrap();
+    let mut state = host_state(&["sh"], &["sh"], Call::Task);
+    state.document = Some(DocumentSnapshot {
+        path: documents.join("notes.txt"),
+        workspace: Some(workspace.clone()),
+        ..snapshot("")
+    });
+    let pwd = |state: &mut HostState, cwd: Option<&str>| {
+        let mut request = json!({"op": "process", "program": "sh", "args": ["-c", "pwd -P"]});
+        if let Some(cwd) = cwd {
+            request["cwd"] = json!(cwd);
+        }
+        PathBuf::from(
+            host_request(state, request)["stdout"]
+                .as_str()
+                .unwrap()
+                .trim_end(),
+        )
+    };
+    assert_eq!(pwd(&mut state, None), documents.canonicalize().unwrap());
+    assert_eq!(
+        pwd(&mut state, Some("workspace")),
+        workspace.canonicalize().unwrap()
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_guest_runs_a_granted_program_through_kx_host() {
+    let mut guest = Guest::new();
+    let (ptr, len) = guest.data(r#"{"op":"process","program":"cat","stdin_document":true}"#);
+    let wasm = guest
+        .body(format!(
+            r#"(local.set $n (i32.wrap_i64 (call $host (i32.const {ptr}) (i32.const {len}))))
+            (local.set $buf (call $alloc (local.get $n)))
+            (drop (call $take (local.get $buf) (local.get $n)))
+            (i64.or (i64.shl (i64.extend_i32_u (local.get $buf)) (i64.const 32))
+                    (i64.extend_i32_u (local.get $n)))"#
+        ))
+        .wasm();
+    let access = |granted: &[&str]| Access {
+        extension: "ex.fmt".into(),
+        programs: vec!["cat".into()],
+        grants: Grants::new(std::collections::BTreeMap::from([(
+            "ex.fmt".to_string(),
+            granted.iter().map(|s| s.to_string()).collect(),
+        )])),
+    };
+    let mut runtime = Runtime::with_access(&wasm, Budgets::default(), access(&["cat"])).unwrap();
+    let reply = runtime
+        .invoke(
+            &json!({"kind": "command"}),
+            Budgets::default().task,
+            Some(snapshot("a\nb\n")),
+        )
+        .unwrap();
+    assert_eq!(
+        reply,
+        json!({"status": 0, "stdout": "a\nb\n", "stderr": ""})
+    );
+    // The same guest in a query is refused before anything starts.
+    let refused = runtime.invoke(
+        &json!({"kind": "decorations"}),
+        Budgets::default().query,
+        Some(snapshot("a\nb\n")),
+    );
+    assert!(matches!(refused, Err(CallError::Extension(e)) if e.contains("only run in commands")));
+    // Grants are read at call time, so withdrawing one applies at once.
+    let access = access(&["cat"]);
+    let mut runtime = Runtime::with_access(&wasm, Budgets::default(), access.clone()).unwrap();
+    access.grants.replace(Default::default());
+    let refused = runtime.invoke(
+        &json!({"kind": "format"}),
+        Budgets::default().task,
+        Some(snapshot("x")),
+    );
+    assert!(matches!(refused, Err(CallError::Extension(e)) if e.contains("permission")));
 }
