@@ -22,6 +22,7 @@ use std::{
 };
 mod editing_ui;
 mod extension_ui;
+mod git_ui;
 mod groups;
 mod hover;
 mod language;
@@ -104,6 +105,7 @@ enum ClipboardJob {
 #[derive(Default)]
 struct Runtime {
     extensions: extension_ui::State,
+    git: git_ui::State,
     window_drag_requested: bool,
     terminal_return_focus: Option<u64>,
     history: location_history::History,
@@ -153,6 +155,8 @@ struct App {
     status: State<String>,
     position: State<String>,
     language_status: State<String>,
+    /// The branch and change count of the open folder's repository.
+    git_status: State<String>,
     language_anchor: State<Point>,
     caret_rect: State<Rect>,
     inactive_caret_rect: State<Rect>,
@@ -218,6 +222,7 @@ impl App {
             panel_fraction: State::new(generate_state_id(), 0.70),
             terminal: terminal_ui::Panel::new(),
             language_status: State::new(generate_state_id(), String::new()),
+            git_status: State::new(generate_state_id(), String::new()),
             language_anchor: State::new(generate_state_id(), Point::new(60.0, 30.0)),
             caret_rect: State::new(generate_state_id(), Rect::from_xywh(60.0, 10.0, 1.0, 20.0)),
             inactive_caret_rect: State::new(generate_state_id(), Rect::zero()),
@@ -914,7 +919,8 @@ impl App {
         self.refresh_tree();
     }
     fn refresh_tree(&self) {
-        let rows = self.runtime.lock().unwrap().explorer.rows();
+        let mut rows = self.runtime.lock().unwrap().explorer.rows();
+        self.apply_git_marks(&mut rows);
         self.tree_rows.set(rows);
         self.changed();
     }
@@ -1353,6 +1359,8 @@ impl App {
                     )
                 };
                 if exists {
+                    // The saved file's Git mark may have changed.
+                    self.refresh_git();
                     let note = self
                         .take_save_note(id)
                         .map(|note| format!(" · {note}"))
@@ -1586,6 +1594,7 @@ impl Application for App {
             self.status.set(report);
         }
         self.poll_extensions();
+        self.poll_git();
         if kureha_code::syntax::poll() {
             self.syntax_revision
                 .update(|revision| *revision = revision.wrapping_add(1));

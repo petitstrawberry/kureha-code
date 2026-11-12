@@ -64,6 +64,8 @@ pub struct Row {
     pub depth: usize,
     pub directory: bool,
     pub expanded: bool,
+    /// The Git change of the file, or the most significant one inside a folder.
+    pub git: Option<crate::git::Change>,
 }
 
 #[derive(Default)]
@@ -179,6 +181,7 @@ impl Explorer {
             depth,
             directory: is_directory,
             expanded,
+            git: None,
         });
         if !expanded {
             return;
@@ -212,6 +215,7 @@ impl Explorer {
                 depth: depth + 1,
                 directory: false,
                 expanded: false,
+                git: None,
             });
         }
     }
