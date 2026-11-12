@@ -13,6 +13,9 @@ use std::{
 
 /// How often the folder is read again, for changes made outside the editor.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+/// Slow reads (many files whose times changed but whose contents did not, as
+/// the index is never refreshed) wait this many times their duration.
+const SLOW_READ_FACTOR: u32 = 10;
 
 /// Git state kept in the app runtime.
 #[derive(Default)]
@@ -24,6 +27,8 @@ pub(super) struct State {
     folder: Option<PathBuf>,
     requested: Option<Instant>,
     waiting: bool,
+    /// How long the last answered read took.
+    last_read: Duration,
     snapshot: Option<Arc<Snapshot>>,
 }
 
@@ -92,6 +97,7 @@ impl App {
                 && state.folder.as_ref() == Some(&answered)
             {
                 state.waiting = false;
+                state.last_read = state.requested.map_or(Duration::ZERO, |at| at.elapsed());
                 answer = Some(outcome);
             }
             let cleared = folder != state.folder;
@@ -104,9 +110,8 @@ impl App {
                 answer = None;
             }
             if let Some(folder) = &state.folder {
-                let due = state
-                    .requested
-                    .is_none_or(|at| at.elapsed() >= REFRESH_INTERVAL);
+                let interval = REFRESH_INTERVAL.max(state.last_read * SLOW_READ_FACTOR);
+                let due = state.requested.is_none_or(|at| at.elapsed() >= interval);
                 if due && !state.waiting {
                     watcher.request(state.generation, folder.clone());
                     state.requested = Some(Instant::now());

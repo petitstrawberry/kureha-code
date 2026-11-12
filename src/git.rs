@@ -332,9 +332,10 @@ impl Watcher {
     }
     /// Asks for `folder`'s state, interrupting a read in progress.
     pub fn request(&self, generation: u64, folder: PathBuf) {
-        if self.requests.send((generation, folder)).is_ok() {
-            self.interrupt.store(true, Ordering::Relaxed);
-        }
+        // Raise the flag before sending: the worker clears it when it starts
+        // a read, so raising it afterwards could stop this very request.
+        self.interrupt.store(true, Ordering::Relaxed);
+        let _ = self.requests.send((generation, folder));
     }
     /// The newest answer since the last poll. Never blocks.
     pub fn poll(&self) -> Option<Answer> {
@@ -513,6 +514,31 @@ mod tests {
     }
 
     #[test]
+    fn diff_drivers_from_the_repositorys_config_never_run() {
+        let repo = Repo::new("textconv");
+        let marker = repo.0.with_extension("textconv-ran");
+        let _ = std::fs::remove_file(&marker);
+        repo.write(".gitattributes", "* diff=kureha-test\n");
+        let body: String = (0..40).map(|i| format!("line {i}\n")).collect();
+        repo.write("old.txt", &body);
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-q", "-m", "init"]);
+        let textconv = format!("touch '{}'; cat", marker.display());
+        repo.git(&["config", "diff.kureha-test.textconv", &textconv]);
+        repo.git(&["config", "status.renames", "copies"]);
+        // A staged rename with an edit: finding it compares contents.
+        repo.git(&["mv", "old.txt", "new.txt"]);
+        repo.write("new.txt", &format!("{body}one more\n"));
+        repo.git(&["add", "new.txt"]);
+        let snapshot = repo.read("");
+        assert!(!marker.exists(), "the repository's textconv ran");
+        assert_eq!(
+            snapshot.change(&repo.0.join("new.txt")),
+            Some(Change::Renamed)
+        );
+    }
+
+    #[test]
     fn a_folder_inside_the_repository_sees_its_own_changes_and_counts_all() {
         let repo = Repo::new("nested");
         repo.write("top.txt", "a\n");
@@ -574,6 +600,30 @@ mod tests {
             }
             assert!(std::time::Instant::now() < until, "no answer");
             std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+/// Times `read` on real repositories:
+/// `KUREHA_GIT_TIMING=/path/a:/path/b cargo test --release --lib git_read_timing -- --ignored --nocapture`
+#[cfg(all(test, not(target_os = "scarlet")))]
+#[test]
+#[ignore]
+fn git_read_timing() {
+    let paths = std::env::var_os("KUREHA_GIT_TIMING").expect("set KUREHA_GIT_TIMING");
+    for path in std::env::split_paths(&paths) {
+        for round in 1..=3 {
+            let started = std::time::Instant::now();
+            let outcome = read(&path, Arc::new(AtomicBool::new(false)));
+            let summary = match &outcome {
+                Outcome::Ready(snapshot) => snapshot.summary(),
+                other => format!("{other:?}"),
+            };
+            println!(
+                "{} round {round}: {:>7.1} ms  {summary}",
+                path.display(),
+                started.elapsed().as_secs_f64() * 1000.0
+            );
         }
     }
 }

@@ -68,10 +68,11 @@ index のバイト列と更新時刻が変わらないこと、`index.lock` が�
 
 `memmap2` の直し方は2つ。
 
-- **本物のメモリマップ**: Scarlet ネイティブにも MemoryMap システムコール(700)があり、オーディオのリングバッファで
-  使われている。ただし `memmap2` が受け取るのは `std::fs::File` で、Scarlet の std にはそこから OS のハンドルを
-  取り出す公開 API(Unix の `AsRawFd` に当たる `std::os::scarlet`)がない。std に足す必要がある。
-  通常のファイルを対応付けられるかも Scarlet 上で確かめる。
+- **本物のメモリマップ**(std の変更は不要): Scarlet の std の `File` はネイティブのハンドルを持ち、`std::os::fd`
+  (`AsRawFd`)も Scarlet で有効になっている。Kureha がすでに依存している `scarlet-os` には、raw ハンドルから
+  `Handle::from_raw` で包み、`as_memory_mapping().mmap(...)`(MemoryMap システムコール 700)で対応付ける API がある
+  (オーディオのリングバッファで使われている)。`memmap2` の Scarlet 用実装はこれで書ける。
+  未確認なのは、ネイティブの MemoryMap が通常のファイルの対応付けに対応しているか(Linux 互換層では対応済み)。
 - **読み込み**: Scarlet 用の実装で、マップの代わりにファイルの該当範囲を読んでメモリに置く。std は変えずに済むが、
   大きなリポジトリでは pack ファイル分のメモリを使う。リポジトリを開いたままにして読み直しを避ければ、
   毎回の読み込みは避けられる(今は読むたびに開き直している)。
