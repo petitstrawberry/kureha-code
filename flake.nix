@@ -136,7 +136,10 @@
             pkgs.pkg-config
             pkgs.fontconfig
             pkgs.dejavu_fonts
-          ] ++ runtime;
+          ]
+          # Release packaging points Linux binaries at the system loader.
+          ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf ]
+          ++ runtime;
 
           FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
           RUST_SRC_PATH = "${rust}/lib/rustlib/src/rust/library";
