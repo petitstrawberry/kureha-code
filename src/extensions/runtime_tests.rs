@@ -667,3 +667,67 @@ fn a_guest_runs_a_granted_program_through_kx_host() {
     );
     assert!(matches!(refused, Err(CallError::Extension(e)) if e.contains("permission")));
 }
+
+/// Fuel Format Tools uses on documents near the output limit (512 KiB), with
+/// `ruff` on PATH:
+/// `KUREHA_TEST_FORMAT_TOOLS_WASM=<path> cargo test --release format_tools_budget -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn format_tools_budget() {
+    let path = std::env::var("KUREHA_TEST_FORMAT_TOOLS_WASM")
+        .expect("set KUREHA_TEST_FORMAT_TOOLS_WASM to the Format Tools module");
+    let budgets = Budgets::default();
+    let access = Access {
+        extension: "example.format-tools".into(),
+        programs: vec!["ruff".into()],
+        grants: Grants::new(std::collections::BTreeMap::from([(
+            "example.format-tools".to_string(),
+            ["ruff".to_string()].into(),
+        )])),
+    };
+    let mut runtime = Runtime::with_access(&std::fs::read(path).unwrap(), budgets, access).unwrap();
+    let limit = 480 * 1024;
+    let lines = |unformatted: bool| {
+        let mut text = String::new();
+        let mut i = 0u64;
+        while text.len() + 60 < limit {
+            i += 1;
+            text.push_str(&if unformatted {
+                format!("value_{i:06}=[ {i},{},'é' ]\n", i * 7)
+            } else {
+                format!("value_{i:06} = [{i}, {}, \"é\"]\n", i * 7)
+            });
+        }
+        text
+    };
+    let folder = std::env::temp_dir();
+    for (case, text) in [("unchanged", lines(false)), ("reformatted", lines(true))] {
+        let document = DocumentSnapshot {
+            path: folder.join("budget.py"),
+            ..snapshot(&text)
+        };
+        let started = std::time::Instant::now();
+        let outcome = runtime.format(
+            document,
+            "python",
+            FormatOptions {
+                tab_size: 4,
+                insert_spaces: true,
+            },
+        );
+        let fuel = runtime.last_fuel();
+        println!(
+            "{case:12} {:>4} KiB  fuel {fuel:>11} ({:>5.1}% of task)  {:>6.1} ms  {}",
+            text.len() / 1024,
+            fuel as f64 * 100.0 / budgets.task as f64,
+            started.elapsed().as_secs_f64() * 1000.0,
+            match &outcome {
+                Ok(o) => format!("{} edit(s)", o.edits.len()),
+                Err(e) => format!("ERROR {e}"),
+            }
+        );
+        let outcome = outcome.unwrap();
+        assert_eq!(outcome.edits.len(), usize::from(case == "reformatted"));
+        assert!(fuel < budgets.task / 2, "{case} used {fuel} fuel");
+    }
+}
