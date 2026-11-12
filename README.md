@@ -4,6 +4,31 @@ A native, cross-platform code editor written in pure Rust with ScarletUI.
 
 ![Markdown source and preview](docs/screenshots/markdown-preview.png)
 
+## Install
+
+Download a package from [Releases](https://github.com/petitstrawberry/kureha-code/releases).
+
+**macOS (Apple silicon):** open `kureha-code-macos-aarch64-<tag>.dmg` and drag
+Kureha Code to Applications.
+
+**Linux (x86_64, AArch64):** extract and run it. It needs glibc 2.39 or newer
+(e.g. Ubuntu 24.04, Debian 13), Fontconfig and your distribution's graphics drivers.
+
+```sh
+tar -xzf kureha-code-linux-<arch>-<tag>.tar.gz
+kureha-code/bin/kureha-code
+```
+
+**Scarlet:** add the bundle to the image, pinned to a `Pin Scarlet app release`
+commit on `main`.
+
+```toml
+[[images.rootfs.layers]]
+kind = "bundle"
+source = { git = "https://github.com/petitstrawberry/kureha-code.git", rev = "<pin commit>" }
+bundle = "platforms/scarlet/bundle.toml"
+```
+
 ## Build and run
 
 With Nix and flakes enabled:
@@ -60,133 +85,6 @@ are never overwritten. This helper writes to `dist/macos/Kureha Code.app` or
 `dist/linux/kureha-code` by default. On macOS, open the generated `.app` or copy it
 to Applications. On Linux, run `bin/kureha-code` inside the generated directory;
 desktop launchers need its `bin` on `PATH` and `share` on `XDG_DATA_DIRS`.
-
-## Releases
-
-Each release carries the Scarlet apps and desktop packages for macOS and Linux.
-
-| Platform | Asset | Notes |
-| --- | --- | --- |
-| macOS (Apple silicon) | `kureha-code-macos-aarch64-<tag>.dmg` | Open it and drag Kureha Code to Applications. Signed with Developer ID and notarized when the repository has the signing secrets below; otherwise ad-hoc signed, and the release notes give the quarantine workaround |
-| Linux x86_64 / AArch64 | `kureha-code-linux-<arch>-<tag>.tar.gz` | Run `kureha-code/bin/kureha-code`. Needs the glibc version in the release notes, Fontconfig, Vulkan or OpenGL drivers and Wayland/xkbcommon or X11 libraries from the distribution |
-| Scarlet | see below | Installed into images through `bundle.toml` |
-
-Desktop packages use the same flake toolchain and Appcoat as the Scarlet
-builds, on GitHub-hosted macOS 15 and Ubuntu 24.04 runners. Linux binaries are
-then pointed at the distribution's dynamic loader with `patchelf` and their Nix
-library search paths removed, so they run outside Nix; they need the glibc
-named in the release notes (2.39 with the current nixpkgs, e.g. Ubuntu 24.04,
-Debian 13 or Fedora 40 and newer). The build refuses Linux binaries with another
-loader, a library search path or a library named by path, wrong architectures,
-and other files that mention `/nix/store`.
-
-The macOS app is signed with [rcodesign](https://github.com/indygreg/apple-platform-rs)
-from the flake, always with the hardened runtime, and put in a disk image beside
-an `Applications` link. With Developer ID credentials the app and image are
-signed with a secure timestamp, notarized and stapled. The macOS runner then
-mounts the image and checks it with Apple's own tools (`codesign`, `stapler`,
-`spctl`): only the app and the link, no Nix store references or links, an arm64
-executable, the hardened runtime, and Gatekeeper acceptance when notarized. Other
-hosts can only check the UDIF trailer and the checksum recorded by that job.
-
-`release.json` records each build's source revision, the Linux glibc requirement
-and whether the macOS image is notarized. Desktop assets are listed in
-`SHA256SUMS` but never in `bundle.toml`, so Scarlet images are unaffected.
-
-```sh
-nix develop --command python3 scripts/release-scarlet.py build-desktop \
-  --name linux-x86_64 --version local --output artifacts/desktop
-```
-
-Names are `macos-aarch64`, `linux-x86_64` and `linux-aarch64`; each must be built
-on that platform. `assemble --desktop` requires all three. For a notarized local
-macOS build, add `--p12-file`, `--p12-password-file` and `--notary-api-key-file`.
-
-### macOS signing secrets
-
-CI notarizes when the repository has all three secrets (or none, for ad-hoc
-builds; a partial set fails the job):
-
-- `MACOS_CERTIFICATE_P12`: a base64-encoded *Developer ID Application*
-  certificate with its private key, exported as `.p12`
-- `MACOS_CERTIFICATE_PASSWORD`: the password of that `.p12`
-- `MACOS_NOTARY_API_KEY`: an App Store Connect API key (Developer role or
-  higher) encoded as JSON by rcodesign
-
-```sh
-base64 -i DeveloperID.p12 | gh secret set MACOS_CERTIFICATE_P12
-gh secret set MACOS_CERTIFICATE_PASSWORD
-nix shell --inputs-from . nixpkgs#rcodesign --command rcodesign \
-  encode-app-store-connect-api-key <issuer-id> <key-id> AuthKey_<key-id>.p8 \
-  | gh secret set MACOS_NOTARY_API_KEY
-```
-
-Either PKCS#12 encoding works: the build converts the certificate with OpenSSL,
-because rcodesign cannot read AES-encrypted `.p12` files.
-
-## Scarlet releases
-
-The Scarlet CD workflow uses the pinned toolchain and Appcoat from this flake.
-It builds `aarch64-unknown-scarlet` and `riscv64gc-unknown-scarlet` with Cargo,
-then packages each complete `.app` into a separate `.tar.gz`. Image composition
-downloads and extracts these archives; it does not build the application.
-The graphics driver and shared runtime libraries are supplied by Scarlet.
-
-Each release includes:
-
-- `kureha-code-scarlet-aarch64-<tag>.tar.gz` and `kureha-code-scarlet-riscv64-<tag>.tar.gz`
-- `bundle.toml`, with release URLs and an architecture-keyed SHA-256 table
-- `release.json`, recording the source revision and Cargo/Nix lockfile hashes
-- `SHA256SUMS`, covering both archives, the desktop packages and the manifests
-
-Changes on `main` automatically publish a uniquely named prerelease
-(`v<version>-<run>.<attempt>`, such as `v0.1.0-8.1`).
-Pushing a `v*` tag publishes a regular release. Pull requests build and verify
-all Scarlet and desktop targets without publishing. The **Build and release apps**
-workflow also supports manual runs with an optional fresh tag and a `publish`
-switch. Existing release assets are never overwritten.
-
-After publishing, CD downloads and verifies the assets again. For `main`
-builds it then commits the generated `platforms/scarlet/bundle.toml`; this file
-is created by the first successful publication. Bundle-only updates do not
-trigger another build. Consumers pin that bundle commit:
-
-```toml
-[[images.rootfs.layers]]
-kind = "bundle"
-source = { git = "https://github.com/petitstrawberry/kureha-code.git", rev = "<published-bundle-commit>" }
-bundle = "platforms/scarlet/bundle.toml"
-```
-
-Alternatively, download the release's `bundle.toml`, commit it to the consuming
-project, and reference it with a local bundle layer. Both ways install the app
-at `/applications/kureha-code.app` using only `kind = "archive"`.
-
-To reproduce the CD build locally, choose a new output directory for each step:
-
-```sh
-nix develop --command python3 scripts/release-scarlet.py build \
-  --target aarch64-unknown-scarlet --version local --output artifacts/aarch64
-nix develop --command python3 scripts/release-scarlet.py build \
-  --target riscv64gc-unknown-scarlet --version local --output artifacts/riscv64
-mkdir artifacts/inputs
-cp artifacts/aarch64/* artifacts/riscv64/* artifacts/inputs/
-python3 scripts/release-scarlet.py assemble \
-  --inputs artifacts/inputs --version local --output artifacts/release
-python3 scripts/release-scarlet.py verify --artifacts artifacts/release
-```
-
-For local packaging of an existing executable, the original helper remains available:
-
-```sh
-python3 scripts/package.py --platform scarlet --target aarch64-unknown-scarlet \
-  --artifact /path/to/scarlet/kureha-code
-```
-
-`riscv64gc-unknown-scarlet` is also accepted. This writes a local `.app` directory;
-the release tooling creates the archive and bundle used for image composition.
-`release-scarlet.py build --artifact` can exercise packaging with a prebuilt
-binary, but such builds cannot be published by the release command.
 
 ## Configuration
 
