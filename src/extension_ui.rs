@@ -114,6 +114,8 @@ pub(super) struct State {
     synced_disabled: std::collections::BTreeSet<String>,
     /// The environment grants this window last handed over.
     synced_environment: std::collections::BTreeSet<String>,
+    /// Whether the settings (and so the grants) have been applied once.
+    pub(super) settings_applied: bool,
 }
 
 #[cfg(test)]
@@ -413,6 +415,7 @@ impl App {
         if changed {
             kureha_code::environment::set_allowed(&preferences.allow_environment);
         }
+        self.runtime.lock().unwrap().extensions.settings_applied = true;
     }
     /// Lets `extension` set the folder's environment, or stops it, and saves
     /// the choice. Allowing loads it now; stopping removes it.

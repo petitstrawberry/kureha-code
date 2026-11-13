@@ -1,29 +1,49 @@
-//! The open folder's environment from an extension (direnv's, say). It is
-//! asked for when a folder opens and when a watched file is saved, and then
-//! given to every program Kureha starts: language servers (restarted, since
-//! with Nix they may only exist in the dev shell), new terminals, extension
+//! The open folder's environment from an extension (direnv's, say), given
+//! to every program Kureha starts: language servers (restarted, since with
+//! Nix they may only exist in the dev shell), new terminals, extension
 //! programs (see `kureha_code::environment`).
 //!
 //! Only an enabled extension that declares `[capabilities] environment`, and
-//! that the user allowed to set the environment, is asked. Its answer applies
-//! only if the folder is still the same; a changed folder, a disabled
-//! extension or a withdrawn permission clears the overlay.
+//! that the user allowed to set the environment, is asked. The poll asks
+//! whenever the folder's provider differs from the one last asked (a folder
+//! opened, the extensions or settings finished loading, an extension came
+//! back on, permission was given); saving a watched file and "Environment:
+//! Reload" ask again. An answer applies only to the request it answers; a
+//! changed folder, a disabled extension or a withdrawn permission clears the
+//! overlay.
 use super::*;
 use kureha_code::{
     environment::{self, Overlay},
     extensions::{EnvironmentContribution, Extension},
 };
+use std::time::{Duration, Instant};
+
+/// How long language servers for a newly opened folder wait for the
+/// extensions and settings to load before starting without its environment.
+const STARTUP_WAIT: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 pub(super) struct State {
-    /// The folder the environment is for (the explorer's).
-    folder: Option<PathBuf>,
+    /// The folder the environment is for (the explorer's), and when it opened.
+    folder: Option<(PathBuf, Instant)>,
+    /// The folder's provider, cached per folder and disabled-set revision
+    /// (looking for its files touches the disk).
+    provider: Option<((PathBuf, u64), Option<String>)>,
+    /// The folder and extension last asked; asked again only when either
+    /// changes, or on request.
+    asked_for: Option<(PathBuf, String)>,
     /// The request in flight: host request id, folder, extension id.
     request: Option<(u64, PathBuf, String)>,
     /// The status bar's progress item for it.
     progress: Option<u64>,
     /// Folders already told that the extension needs permission.
-    asked: BTreeSet<PathBuf>,
+    told: BTreeSet<PathBuf>,
+    /// Whether the folder's language servers wait for the extensions and
+    /// settings to load.
+    waiting: bool,
+    /// Times the language servers were restarted for a new environment.
+    #[cfg(test)]
+    restarts: u32,
 }
 
 /// The extension that supplies `folder`'s environment: the first enabled
@@ -35,15 +55,43 @@ fn provider(folder: &Path) -> Option<(&'static Extension, &'static EnvironmentCo
 }
 
 impl App {
-    /// Follows the explorer's folder; drops an overlay its extension may no
-    /// longer supply.
+    /// The explorer's folder, once the extensions and the settings (which
+    /// hold the grants) have loaded.
+    fn environment_folder(&self) -> Option<PathBuf> {
+        let rt = self.runtime.lock().unwrap();
+        let (folder, _) = rt.environment.folder.as_ref()?;
+        (super::extension_ui::registry().is_some() && rt.extensions.settings_applied)
+            .then(|| folder.clone())
+    }
+
+    /// The id of the folder's provider, if any (cached).
+    fn environment_provider(&self, folder: &Path) -> Option<String> {
+        let key = (
+            folder.to_owned(),
+            kureha_code::extensions::disabled_revision(),
+        );
+        if let Some((cached, id)) = &self.runtime.lock().unwrap().environment.provider
+            && *cached == key
+        {
+            return id.clone();
+        }
+        let id = provider(folder).map(|(extension, _)| extension.manifest.id.clone());
+        self.runtime.lock().unwrap().environment.provider = Some((key, id.clone()));
+        id
+    }
+
+    /// Follows the explorer's folder and asks its provider when that changes;
+    /// removes an overlay no allowed provider supplies any more.
     pub(super) fn poll_environment(&self) {
-        let folder = self.runtime.lock().unwrap().explorer.root.clone();
+        let root = self.runtime.lock().unwrap().explorer.root.clone();
         let changed = {
             let mut rt = self.runtime.lock().unwrap();
-            if rt.environment.folder != folder {
-                rt.environment.folder = folder.clone();
-                rt.environment.request = None;
+            let state = &mut rt.environment;
+            if state.folder.as_ref().map(|(folder, _)| folder) != root.as_ref() {
+                state.folder = root.clone().map(|folder| (folder, Instant::now()));
+                state.request = None;
+                state.asked_for = None;
+                state.waiting = false;
                 true
             } else {
                 false
@@ -51,58 +99,107 @@ impl App {
         };
         if changed {
             self.end_environment_progress();
+            environment::set_pending(None);
             if environment::overlay().is_some() {
                 environment::set(None);
                 self.restart_language_servers_for_environment();
             }
-            environment::set_pending(None);
-            self.request_environment();
-            return;
         }
-        if let Some(overlay) = environment::overlay() {
-            let source = overlay.source.as_str();
-            if !kureha_code::extensions::is_enabled(source) || !environment::allows(source) {
-                environment::set(None);
-                self.restart_language_servers_for_environment();
-                self.notify(
-                    super::messages::Level::Info,
-                    "The folder's environment was removed",
-                );
+        let Some(folder) = self.environment_folder() else {
+            // Until it is known whether the folder has an environment, its
+            // language servers wait (for a moment) rather than start without.
+            let mut rt = self.runtime.lock().unwrap();
+            let wait = rt
+                .environment
+                .folder
+                .as_ref()
+                .filter(|(_, at)| at.elapsed() < STARTUP_WAIT)
+                .map(|(folder, _)| folder.clone());
+            if wait.is_some() != rt.environment.waiting {
+                rt.environment.waiting = wait.is_some();
+                drop(rt);
+                environment::set_pending(wait);
+            }
+            return;
+        };
+        self.runtime.lock().unwrap().environment.waiting = false;
+        let wanted = self
+            .environment_provider(&folder)
+            .filter(|id| environment::allows(id));
+        let asked_for = self.runtime.lock().unwrap().environment.asked_for.clone();
+        match wanted {
+            Some(id) if asked_for.as_ref() != Some(&(folder.clone(), id.clone())) => {
+                self.request_environment()
+            }
+            Some(_) => {}
+            None => {
+                let dropped = {
+                    let mut rt = self.runtime.lock().unwrap();
+                    rt.environment.asked_for = None;
+                    rt.environment.request.take().is_some()
+                };
+                if dropped {
+                    self.end_environment_progress();
+                }
+                if environment::is_pending(&folder) {
+                    environment::set_pending(None);
+                }
+                if environment::overlay().is_some() {
+                    environment::set(None);
+                    self.restart_language_servers_for_environment();
+                    self.notify(
+                        super::messages::Level::Info,
+                        "The folder's environment was removed",
+                    );
+                }
+                self.tell_environment_permission(&folder);
             }
         }
     }
 
-    /// Asks the folder's provider for its environment (again).
-    pub(super) fn request_environment(&self) {
-        let Some(folder) = self.runtime.lock().unwrap().environment.folder.clone() else {
+    /// Tells once per folder how to allow its provider, if it needs that.
+    fn tell_environment_permission(&self, folder: &Path) {
+        let Some((extension, _)) = provider(folder) else {
             return;
         };
-        let Some((extension, _)) = provider(&folder) else {
+        let id = &extension.manifest.id;
+        if environment::allows(id)
+            || !self
+                .runtime
+                .lock()
+                .unwrap()
+                .environment
+                .told
+                .insert(folder.to_owned())
+        {
+            return;
+        }
+        self.notify(
+            super::messages::Level::Info,
+            format!(
+                "{} can load this folder's environment: run \"{}\" from the command palette",
+                extension.manifest.name,
+                environment::allow_command_label(id)
+            ),
+        );
+    }
+
+    /// Asks the folder's provider for its environment (again).
+    pub(super) fn request_environment(&self) {
+        let Some(folder) = self.environment_folder() else {
+            return;
+        };
+        // A file may have appeared or gone: look again.
+        self.runtime.lock().unwrap().environment.provider = None;
+        let Some(id) = self.environment_provider(&folder) else {
             if environment::overlay().is_some() {
                 environment::set(None);
                 self.restart_language_servers_for_environment();
             }
             return;
         };
-        let id = extension.manifest.id.clone();
-        let name = extension.manifest.name.clone();
         if !environment::allows(&id) {
-            let first = self
-                .runtime
-                .lock()
-                .unwrap()
-                .environment
-                .asked
-                .insert(folder.clone());
-            if first {
-                self.notify(
-                    super::messages::Level::Info,
-                    format!(
-                        "{name} can load this folder's environment: run \"{}\" from the command palette",
-                        environment::allow_command_label(&id)
-                    ),
-                );
-            }
+            self.tell_environment_permission(&folder);
             return;
         }
         let Some(host) = super::extension_ui::start_host() else {
@@ -118,10 +215,20 @@ impl App {
         // Language servers for this folder wait for its PATH.
         environment::set_pending(Some(folder.clone()));
         self.end_environment_progress();
-        let progress = self.progress(format!("{name}: loading the environment…"));
+        let progress = self.progress(format!(
+            "{}: loading the environment…",
+            self.extension_name(&id)
+        ));
         let mut rt = self.runtime.lock().unwrap();
+        rt.environment.asked_for = Some((folder.clone(), id.clone()));
         rt.environment.request = Some((request, folder, id));
         rt.environment.progress = Some(progress);
+    }
+
+    fn extension_name(&self, id: &str) -> String {
+        super::extension_ui::registry()
+            .and_then(|registry| registry.extensions.iter().find(|e| e.manifest.id == id))
+            .map_or_else(|| id.to_owned(), |e| e.manifest.name.clone())
     }
 
     /// An extension answered a request.
@@ -142,11 +249,9 @@ impl App {
             }
         };
         self.end_environment_progress();
-        environment::set_pending(None);
-        let name = super::extension_ui::registry()
-            .and_then(|registry| registry.extensions.iter().find(|e| e.manifest.id == id))
-            .map_or_else(|| id.clone(), |e| e.manifest.name.clone());
-        match result {
+        let name = self.extension_name(&id);
+        let before = environment::revision();
+        let message = match result {
             Ok(vars) => {
                 let count = vars.len();
                 environment::set(Some(Overlay {
@@ -154,28 +259,30 @@ impl App {
                     vars,
                     source: id,
                 }));
-                self.restart_language_servers_for_environment();
-                self.notify(
+                (
                     super::messages::Level::Info,
                     match count {
                         1 => format!("{name}: loaded the environment (1 variable)"),
                         n => format!("{name}: loaded the environment ({n} variables)"),
                     },
-                );
+                )
             }
             Err(error) => {
-                if environment::overlay().is_some() {
-                    environment::set(None);
-                    self.restart_language_servers_for_environment();
-                }
-                self.notify(super::messages::Level::Error, format!("{name}: {error}"));
+                environment::set(None);
+                (super::messages::Level::Error, format!("{name}: {error}"))
             }
+        };
+        // Servers that waited start now; running ones restart only if what
+        // they would get changed.
+        if environment::revision() != before {
+            self.restart_language_servers_for_environment();
         }
+        self.notify(message.0, message.1);
     }
 
     /// A file was saved: if the folder's provider watches it, ask again.
     pub(super) fn environment_file_saved(&self, path: &Path) {
-        let Some(folder) = self.runtime.lock().unwrap().environment.folder.clone() else {
+        let Some(folder) = self.environment_folder() else {
             return;
         };
         if path.parent() != Some(folder.as_path()) {
@@ -204,7 +311,13 @@ impl App {
     /// Language servers start again with the new environment, and servers
     /// that failed without it get another try.
     fn restart_language_servers_for_environment(&self) {
-        self.runtime.lock().unwrap().language = Default::default();
+        let mut rt = self.runtime.lock().unwrap();
+        rt.language = Default::default();
+        #[cfg(test)]
+        {
+            rt.environment.restarts += 1;
+        }
+        drop(rt);
         self.changed();
     }
 }
@@ -304,10 +417,23 @@ mod tests {
                 .unwrap()
         };
 
-        // Nothing runs until the user allows it; they are told how, once.
+        // Before the settings (with the grants) load, nothing is asked or
+        // told, and the folder's language servers wait for a moment.
         app.runtime.lock().unwrap().explorer.root = Some(project.clone());
         app.poll_environment();
         assert_eq!(request(&app), None);
+        assert!(app.messages.history().is_empty());
+        assert!(environment::is_pending(&project));
+        // Loaded without a grant: nothing runs until the user allows it, and
+        // they are told how, once.
+        app.sync_process_grants(&app.preferences.get());
+        app.poll_environment();
+        assert_eq!(request(&app), None);
+        assert!(!environment::is_pending(&project));
+        assert!(
+            kureha_code::lsp::Client::spawn("kureha-test-tool", &[], &project).is_err(),
+            "only the dev shell has it"
+        );
         assert_eq!(
             permission(),
             (
@@ -351,6 +477,7 @@ mod tests {
             )
         );
         // New programs get it, and a bare name resolves in its PATH.
+        assert!(kureha_code::lsp::Client::spawn("kureha-test-tool", &[], &project).is_ok());
         assert_eq!(
             shell("kureha-test-tool; echo \"$KUREHA_TEST_SHELL\""),
             "from the dev shell\ndev\n"
@@ -418,11 +545,18 @@ mod tests {
             latest(&app),
             (Level::Info, "The folder's environment was removed".into())
         );
+        // Back on, it is asked again without being told to.
         app.toggle_extension("test.env");
-        app.request_environment();
+        app.poll_environment();
+        assert!(request(&app).is_some());
         wait(&app, "the environment once on", |_| {
             environment::overlay().is_some()
         });
+        // An answer that changes nothing keeps the language servers running.
+        let restarts = app.runtime.lock().unwrap().environment.restarts;
+        app.request_environment();
+        wait(&app, "the same environment", |app| request(app).is_none());
+        assert_eq!(app.runtime.lock().unwrap().environment.restarts, restarts);
         app.set_environment_permission("test.env", false);
         app.poll_environment();
         assert!(environment::overlay().is_none());
@@ -431,6 +565,25 @@ mod tests {
         assert_eq!(request(&app), None);
         assert_eq!(app.messages.history().len(), told, "asked once per folder");
         assert_eq!(shell("echo \"${KUREHA_TEST_SHELL-base}\""), "base\n");
+
+        // A grant already saved: the environment loads once the settings do,
+        // even if the folder opened first.
+        let app = App::with_document();
+        app.runtime.lock().unwrap().explorer.root = Some(project.clone());
+        app.poll_environment();
+        assert_eq!(request(&app), None);
+        app.preferences.update(|p| {
+            p.allow_environment.insert("test.env".into());
+        });
+        app.sync_process_grants(&app.preferences.get());
+        app.poll_environment();
+        assert!(request(&app).is_some());
+        wait(&app, "the environment at startup", |_| {
+            environment::overlay().is_some()
+        });
+        app.set_environment_permission("test.env", false);
+        app.poll_environment();
+        assert!(environment::overlay().is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
