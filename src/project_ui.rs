@@ -803,7 +803,7 @@ impl App {
                         false
                     })
             }).item_key(|row| row.key.clone().into()).frame(f32::INFINITY, f32::INFINITY),
-        }.alignment(Alignment::Leading).spacing(8.0).padding(12.0)
+        }.alignment(Alignment::Leading).spacing(8.0).padding_insets(EdgeInsets::new(12.0, 4.0, 12.0, 12.0))
             .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {
                 if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) {

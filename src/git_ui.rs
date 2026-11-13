@@ -561,7 +561,7 @@ impl App {
             Spacer::new(),
         }
         .spacing(4.0)
-        .padding_insets(EdgeInsets::new(12.0, 10.0, 0.0, 8.0))
+        .padding_insets(EdgeInsets::new(12.0, 10.0, 8.0, 2.0))
     }
 
     /// The Git sidebar.
@@ -646,7 +646,7 @@ impl App {
         vstack! { header, body }
             .alignment(Alignment::Leading)
             .spacing(8.0)
-            .padding_insets(EdgeInsets::new(10.0, 12.0, 12.0, 12.0))
+            .padding_insets(EdgeInsets::new(12.0, 4.0, 12.0, 12.0))
             .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {
                 if matches!(
@@ -735,7 +735,7 @@ impl App {
                             }.spacing(6.0).padding(4.0),
                             Spacer::new(),
                             Text::new(entry.change.letter()).font_size(11.0).color(color)
-                                .padding_insets(EdgeInsets::new(0.0, 0.0, 0.0, 6.0)),
+                                .padding_insets(EdgeInsets::new(0.0, 0.0, 6.0, 0.0)),
                         }.spacing(0.0).frame(f32::INFINITY, 27.0).clip(),
                         input, selected, !entry.folder, colors,
                         move || open.open_git_diff(&target, staged)),
@@ -807,10 +807,10 @@ impl App {
                     Text::new(title).font_size(12.0).color(colors.foreground),
                     Spacer::new(),
                     Text::new(summary).font_size(12.0).color(colors.muted),
-                }.spacing(8.0).padding_insets(EdgeInsets::new(10.0, 14.0, 4.0, 14.0)),
+                }.spacing(8.0).padding_insets(EdgeInsets::new(14.0, 10.0, 14.0, 4.0)),
                 if_view!(!message.is_empty(),
                     Text::new(message.clone()).font_size(12.0).color(colors.muted)
-                        .padding_insets(EdgeInsets::new(4.0, 14.0, 4.0, 14.0)),
+                        .padding_insets(EdgeInsets::new(14.0, 4.0, 14.0, 4.0)),
                     VStack::new(())),
                 body,
             }

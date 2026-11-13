@@ -761,7 +761,7 @@ impl App {
                     let root = refresh.runtime.lock().unwrap().explorer.root.clone();
                     if let Some(root) = root { refresh.open_folder(root); }
                 }),
-            }.spacing(2.0).padding_insets(EdgeInsets::new(14.0, 10.0, 8.0, 8.0)),
+            }.spacing(2.0).padding_insets(EdgeInsets::new(14.0, 4.0, 8.0, 8.0)),
             if_view!(has_root,
                 ListView::new(self.tree_rows.clone(), self.tree_selected.clone(), 27.0, move |index, row: Row, selected| {
                     let app = rows.clone();
@@ -788,7 +788,7 @@ impl App {
                             Text::new(row.label.clone()).font_size(13.0).color(if !enabled { theme.colors().muted } else { change_color.unwrap_or(theme.colors().foreground) }),
                         }.spacing(6.0).padding(4.0),
                         Spacer::new(),
-                        Text::new(mark).font_size(11.0).color(change_color.unwrap_or(theme.colors().muted)).padding_insets(EdgeInsets::new(0.0, 0.0, 0.0, 8.0)),
+                        Text::new(mark).font_size(11.0).color(change_color.unwrap_or(theme.colors().muted)).padding_insets(EdgeInsets::new(0.0, 0.0, 8.0, 0.0)),
                     }.spacing(0.0).frame(f32::INFINITY, 27.0)
                         .clip(), input, selected == Some(index), enabled, theme.colors(),
                         move || app.open_tree_row(row.clone(), index))
