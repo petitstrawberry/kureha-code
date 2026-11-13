@@ -28,6 +28,9 @@ scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "322
 
 [target.'cfg(not(target_os = "scarlet"))'.dependencies]
 ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
+# Read-only Git status (branch and changed files). Not on Scarlet yet: gix maps
+# files with memmap2, which has no Scarlet backend (see docs/git.md).
+gix = { version = "=0.90.0", default-features = false, features = ["status", "sha1"] }
 scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "322744948ecb8ae05cf594479789075331c732c5", default-features = false, features = ["std", "platform-winit"] }
 
 [target.'cfg(all(unix, not(target_os = "scarlet")))'.dependencies]

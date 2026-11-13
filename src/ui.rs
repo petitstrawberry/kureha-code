@@ -1,6 +1,6 @@
 //! The workbench uses ScarletUI controls; the window menu is the app menu.
 use super::*;
-use kureha_code::{file_icons, syntax};
+use kureha_code::{file_icons, git::Change, syntax};
 use scarlet_ui::views::containers::ViewTuple;
 use scarlet_ui::{
     element::ComponentElement,
@@ -343,6 +343,7 @@ impl App {
             hstack! {
                 Text::from_state(self.status.clone()).font_size(11.0).color(theme.colors().foreground),
                 Spacer::new(),
+                Text::from_state(self.git_status.clone()).font_size(11.0).color(theme.colors().muted),
                 if_view!(!self.terminal_focused(), Text::from_state(self.language_status.clone()).font_size(11.0).color(theme.colors().muted), VStack::new(())),
                 Text::from_state(self.position.clone()).font_size(11.0).color(theme.colors().muted),
             }.spacing(12.0).padding_insets(EdgeInsets::new(18.0, 8.0, 18.0, 8.0)),
@@ -753,13 +754,25 @@ impl App {
                     let icon = if row.directory { file_icons::folder(row.expanded) }
                         else { file_icons::for_path(row.path.as_deref()) };
                     let icon = icon.themed(&theme, selected == Some(index));
+                    // Git: tint changed entries; a letter for files, a dot for folders.
+                    let change_color = row.git.map(|change| match change {
+                        Change::Conflicted => theme.colors().error,
+                        Change::Modified | Change::Deleted => theme.colors().warning,
+                        Change::Untracked | Change::Added | Change::Renamed => theme.colors().accent,
+                    });
+                    let mark = match row.git {
+                        Some(_) if row.directory => "•",
+                        Some(change) => change.letter(),
+                        None => "",
+                    };
                     list_row(hstack! {
                         Spacer::new().frame(row.depth as f32 * 14.0, 1.0),
                         hstack! {
                             icon.view(),
-                            Text::new(row.label.clone()).font_size(13.0).color(if enabled { theme.colors().foreground } else { theme.colors().muted }),
+                            Text::new(row.label.clone()).font_size(13.0).color(if !enabled { theme.colors().muted } else { change_color.unwrap_or(theme.colors().foreground) }),
                         }.spacing(6.0).padding(4.0),
                         Spacer::new(),
+                        Text::new(mark).font_size(11.0).color(change_color.unwrap_or(theme.colors().muted)).padding_insets(EdgeInsets::new(0.0, 0.0, 0.0, 8.0)),
                     }.spacing(0.0).frame(f32::INFINITY, 27.0)
                         .clip(), input, selected == Some(index), enabled, theme.colors(),
                         move || app.open_tree_row(row.clone(), index))

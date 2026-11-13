@@ -66,6 +66,7 @@ fn workbench_preview() {
                         directory,
                         depth,
                         expanded: directory && name != "assets",
+                        git: None,
                     })
                     .collect(),
                 );

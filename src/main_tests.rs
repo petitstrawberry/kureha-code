@@ -1049,6 +1049,7 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
                 depth: 0,
                 directory: false,
                 expanded: false,
+                git: None,
             })
             .collect(),
     );
