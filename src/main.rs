@@ -22,6 +22,7 @@ use std::{
 };
 mod editing_ui;
 mod extension_ui;
+mod git_diff_view;
 mod git_ui;
 mod groups;
 mod hover;
@@ -136,6 +137,7 @@ struct App {
     tab_drag: tab_drag::DragState,
     nav: navigation_ui::Navigation,
     project: project_ui::ProjectSearch,
+    git_panel: git_ui::Panel,
     editor_font: Option<FontStack>,
     theme: State<kureha_code::theme::Theme>,
     theme_settings: Arc<Mutex<Option<theme_settings::Watcher>>>,
@@ -208,6 +210,7 @@ impl App {
             tab_drag: Default::default(),
             nav: navigation_ui::Navigation::new(),
             project: project_ui::ProjectSearch::new(),
+            git_panel: git_ui::Panel::new(),
             editor_font: kureha_code::fonts::editor_stack(),
             theme: State::new(
                 generate_state_id(),
@@ -423,6 +426,7 @@ impl App {
         let exists = {
             let mut rt = self.runtime.lock().unwrap();
             let exists = rt.settings_tab == Some(id)
+                || rt.git.diffs.contains_key(&id)
                 || rt.document_for_tab(id).is_some()
                 || self.terminal.for_tab(id).is_some();
             if exists && !rt.group_tabs[group].contains(&id) {
@@ -516,6 +520,9 @@ impl App {
     fn request_close(&self, tab: Option<TabId>) {
         if let Some(id) = tab {
             if self.close_settings_tab(id) {
+                return;
+            }
+            if self.close_git_diff_tab(id) {
                 return;
             }
             if self.close_terminal_tab(id) {
@@ -1511,6 +1518,7 @@ impl View for App {
         listenables.extend(self.settings_ui.listenables());
         listenables.extend(self.nav.listenables());
         listenables.extend(self.project.listenables());
+        listenables.extend(self.git_panel.listenables());
         listenables
     }
     fn as_any(&self) -> &dyn std::any::Any {

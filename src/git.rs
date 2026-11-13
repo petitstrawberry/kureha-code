@@ -1,14 +1,18 @@
-//! Read-only Git state for the workbench: the branch and the changed files of
-//! the repository that contains the open folder, computed on a worker thread.
+//! Git state for the workbench: the branch and the changed files of the
+//! repository that contains the open folder, computed on a worker thread.
+//! [`diff`] reads the lines of one change; [`write`] stages and commits.
 //!
 //! Opening a folder must never run that folder's code. Git configuration can
 //! name commands (clean/smudge filters, for example) and secrets; settings like
 //! these are read only from the user's and the system's configuration, never
-//! from the repository's own `.git/config`, whoever owns it. Nothing is
-//! written: the index is read, never refreshed or locked.
+//! from the repository's own `.git/config`, whoever owns it. Reading never
+//! writes: the index is read, never refreshed or locked.
 //!
 //! On Scarlet, gix runs on patched dependencies (memory maps, file times,
 //! entropy; see `docs/git.md`).
+
+pub mod diff;
+pub mod write;
 
 use std::{
     collections::BTreeMap,
@@ -68,6 +72,18 @@ impl Head {
     }
 }
 
+/// A changed path of the repository.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    /// Relative to the work tree.
+    pub path: PathBuf,
+    pub change: Change,
+    /// Where a rename came from, relative to the work tree.
+    pub source: Option<PathBuf>,
+    /// An untracked folder reported as a whole.
+    pub folder: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub head: Head,
@@ -78,6 +94,17 @@ pub struct Snapshot {
     pub untracked_folders: Vec<PathBuf>,
     /// Changes in the whole repository, including any not kept.
     pub total: usize,
+    /// The repository's work tree.
+    pub workdir: PathBuf,
+    /// Changes from `HEAD` to the index (what a commit records), in the whole
+    /// repository, at most [`MAX_CHANGES`].
+    pub staged: Vec<Entry>,
+    /// Changes from the index to the work tree, untracked files included.
+    pub unstaged: Vec<Entry>,
+    /// The repository has hooks that `git commit` would run; Kureha does not.
+    pub hooks: bool,
+    /// A merge, rebase or similar is in progress (committing is left to Git).
+    pub in_progress: Option<String>,
 }
 impl Snapshot {
     /// The change of a file, including files inside untracked folders.
@@ -136,7 +163,7 @@ mod imp {
     use super::*;
     use gix::{bstr::ByteSlice, status::index_worktree, status::plumbing::index_as_worktree};
 
-    fn open(folder: &Path) -> Result<Option<gix::Repository>, String> {
+    pub(super) fn open(folder: &Path) -> Result<Option<gix::Repository>, String> {
         // Command- and secret-bearing settings (filters, credentials, signing,
         // remotes, submodules) only from outside the repository.
         let options = gix::open::Options::default().filter_config_section(|meta| {
@@ -146,9 +173,21 @@ mod imp {
             full: options.clone(),
             reduced: options,
         };
-        gix::ThreadSafeRepository::discover_opts(folder, Default::default(), mapping)
-            .map(|repo| Some(repo.to_thread_local()))
-            .map_err(|e| e.to_string())
+        let mut repo =
+            gix::ThreadSafeRepository::discover_opts(folder, Default::default(), mapping)
+                .map_err(|e| e.to_string())?
+                .to_thread_local();
+        if !cfg!(unix) {
+            // Without Unix permissions (Scarlet) every file reads as not
+            // executable; keep the recorded modes, as Git does with
+            // core.fileMode=false, instead of reporting or staging a change.
+            let mut config = repo.config_snapshot_mut();
+            config
+                .set_value(&gix::config::tree::Core::FILE_MODE, "false")
+                .map_err(|e| e.to_string())?;
+            config.commit().map_err(|e| e.to_string())?;
+        }
+        Ok(Some(repo))
     }
 
     fn head(repo: &gix::Repository) -> Result<super::Head, String> {
@@ -193,15 +232,35 @@ mod imp {
             changes: BTreeMap::new(),
             untracked_folders: Vec::new(),
             total: 0,
+            workdir: workdir.clone(),
+            staged: Vec::new(),
+            unstaged: Vec::new(),
+            hooks: has_hooks(&repo),
+            in_progress: repo
+                .state()
+                .map(|state| in_progress_label(&state).to_string()),
         };
         // A path staged and also changed again counts once, like `git status`.
         let mut seen = std::collections::HashSet::new();
         let mut note = |relative: &Path,
                         change: Change,
                         folder_entry: bool,
+                        staged: Option<Option<PathBuf>>,
                         snapshot: &mut Snapshot| {
             if seen.insert(relative.to_path_buf()) {
                 snapshot.total += 1;
+            }
+            let list = match &staged {
+                Some(_) => &mut snapshot.staged,
+                None => &mut snapshot.unstaged,
+            };
+            if list.len() < MAX_CHANGES {
+                list.push(Entry {
+                    path: relative.to_path_buf(),
+                    change,
+                    source: staged.flatten(),
+                    folder: folder_entry,
+                });
             }
             let Ok(below) = relative.strip_prefix(&inside) else {
                 return;
@@ -235,7 +294,13 @@ mod imp {
                         index_worktree::Item::DirectoryContents { entry, .. } => {
                             let folder_entry =
                                 entry.disk_kind == Some(gix::dir::entry::Kind::Directory);
-                            note(relative, Change::Untracked, folder_entry, &mut snapshot);
+                            note(
+                                relative,
+                                Change::Untracked,
+                                folder_entry,
+                                None,
+                                &mut snapshot,
+                            );
                         }
                         _ => {
                             use index_as_worktree::EntryStatus;
@@ -253,27 +318,84 @@ mod imp {
                                 index_worktree::Item::DirectoryContents { .. } => None,
                             };
                             if let Some(change) = change {
-                                note(relative, change, false, &mut snapshot);
+                                note(relative, change, false, None, &mut snapshot);
                             }
                         }
                     }
                 }
                 gix::status::Item::TreeIndex(change) => {
                     use gix::diff::index::ChangeRef;
-                    let (location, change) = match &change {
-                        ChangeRef::Addition { location, .. } => (location, Change::Added),
-                        ChangeRef::Deletion { location, .. } => (location, Change::Deleted),
-                        ChangeRef::Modification { location, .. } => (location, Change::Modified),
-                        ChangeRef::Rewrite { location, .. } => (location, Change::Renamed),
+                    let path = |location: &gix::bstr::BStr| {
+                        gix::path::from_bstr(location)
+                            .map(|path| path.into_owned())
+                            .map_err(|e| e.to_string())
                     };
-                    let relative = gix::path::from_bstr(location.as_bstr())
-                        .map_err(|e| e.to_string())?
-                        .into_owned();
-                    note(&relative, change, false, &mut snapshot);
+                    let (location, change, source) = match &change {
+                        ChangeRef::Addition { location, .. } => (location, Change::Added, None),
+                        ChangeRef::Deletion { location, .. } => (location, Change::Deleted, None),
+                        ChangeRef::Modification { location, .. } => {
+                            (location, Change::Modified, None)
+                        }
+                        ChangeRef::Rewrite {
+                            location,
+                            source_location,
+                            ..
+                        } => (
+                            location,
+                            Change::Renamed,
+                            Some(path(source_location.as_bstr())?),
+                        ),
+                    };
+                    let relative = path(location.as_bstr())?;
+                    note(&relative, change, false, Some(source), &mut snapshot);
                 }
             }
         }
+        snapshot.staged.sort_by(|a, b| a.path.cmp(&b.path));
+        snapshot.unstaged.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(Some(snapshot))
+    }
+
+    /// Hooks `git commit` runs, in the configured hooks folder.
+    fn has_hooks(repo: &gix::Repository) -> bool {
+        // Every source counts here, the repository's own config included: this
+        // only decides whether to say that hooks are not run.
+        let configured = repo
+            .config_snapshot()
+            .string("core.hooksPath")
+            .map(|value| value.to_string())
+            .map(|value| match value.strip_prefix("~/") {
+                Some(rest) => std::env::var_os("HOME").map_or_else(
+                    || PathBuf::from(&value),
+                    |home| PathBuf::from(home).join(rest),
+                ),
+                None => PathBuf::from(value),
+            });
+        let folder = match configured {
+            Some(path) if path.is_absolute() => path,
+            Some(path) => repo.workdir().unwrap_or(repo.git_dir()).join(path),
+            None => repo.common_dir().join("hooks"),
+        };
+        [
+            "pre-commit",
+            "prepare-commit-msg",
+            "commit-msg",
+            "post-commit",
+        ]
+        .iter()
+        .any(|hook| folder.join(hook).is_file())
+    }
+
+    pub(super) fn in_progress_label(state: &gix::state::InProgress) -> &'static str {
+        use gix::state::InProgress::*;
+        match state {
+            ApplyMailbox | ApplyMailboxRebase => "applying patches",
+            Bisect => "bisecting",
+            CherryPick | CherryPickSequence => "cherry-picking",
+            Merge => "merging",
+            Rebase | RebaseInteractive => "rebasing",
+            Revert | RevertSequence => "reverting",
+        }
     }
 }
 
@@ -334,37 +456,48 @@ impl Watcher {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod testing {
     use super::*;
-    use std::{process::Command, time::Duration};
+    use std::process::Command;
 
-    struct Repo(PathBuf);
+    /// A scratch repository, removed on drop.
+    pub struct Repo(pub PathBuf);
     impl Drop for Repo {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
     impl Repo {
-        fn new(name: &str) -> Self {
+        pub fn new(name: &str) -> Self {
             let dir =
                 std::env::temp_dir().join(format!("kureha-git-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             let repo = Self(dir);
             repo.git(&["init", "-q", "-b", "main"]);
+            // Kureha reads the developer's settings too; keep these tests
+            // independent of them.
+            repo.git(&["config", "user.name", "Test"]);
+            repo.git(&["config", "user.email", "test@example.invalid"]);
+            repo.git(&["config", "commit.gpgsign", "false"]);
             repo
         }
         /// Runs the `git` command line, isolated from the developer's settings.
-        fn git(&self, args: &[&str]) {
+        pub fn git(&self, args: &[&str]) -> String {
+            self.git_in(&self.0, args)
+        }
+        pub fn git_in(&self, dir: &Path, args: &[&str]) -> String {
             let output = Command::new("git")
                 .args([
                     "-c",
                     "user.name=Test",
                     "-c",
                     "user.email=test@example.invalid",
+                    "-c",
+                    "protocol.file.allow=always",
                 ])
                 .args(args)
-                .current_dir(&self.0)
+                .current_dir(dir)
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .output()
@@ -374,19 +507,26 @@ mod tests {
                 "git {args:?}: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
+            String::from_utf8(output.stdout).unwrap()
         }
-        fn write(&self, path: &str, text: &str) {
+        pub fn write(&self, path: &str, text: &str) {
             let path = self.0.join(path);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
-        fn read(&self, folder: &str) -> Snapshot {
+        pub fn read(&self, folder: &str) -> Snapshot {
             match read(&self.0.join(folder), Arc::new(AtomicBool::new(false))) {
                 Outcome::Ready(snapshot) => snapshot,
                 other => panic!("{other:?}"),
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{testing::Repo, *};
+    use std::time::Duration;
 
     fn changes(repo: &Repo, snapshot: &Snapshot) -> Vec<(String, Change)> {
         snapshot

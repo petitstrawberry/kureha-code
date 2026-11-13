@@ -385,6 +385,7 @@ impl App {
             return false;
         }
         self.project.blur();
+        self.git_panel.blur();
         self.terminal.select(id);
         true
     }
@@ -478,6 +479,7 @@ impl App {
             self.close_navigation();
             self.dismiss_language_panel();
             self.project.blur();
+            self.git_panel.blur();
             if self.terminal.active().is_none() {
                 self.terminal.add(self.terminal_directory());
             }
@@ -503,6 +505,7 @@ impl App {
         self.close_navigation();
         self.dismiss_language_panel();
         self.project.blur();
+        self.git_panel.blur();
         self.terminal.add(self.terminal_directory());
         self.panel_visible.set(true);
     }

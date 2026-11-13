@@ -62,3 +62,6 @@ filetime = { git = "https://github.com/petitstrawberry/filetime", rev = "df3f25e
 # scarlet-gix-0.90.0: no Unix-only user lookups on Scarlet.
 gix-sec = { git = "https://github.com/petitstrawberry/gitoxide", rev = "21d5c3cee190b7338558d2d9357449052a0b3a9e" }
 gix-config-value = { git = "https://github.com/petitstrawberry/gitoxide", rev = "21d5c3cee190b7338558d2d9357449052a0b3a9e" }
+# scarlet-3.27.0: named temporary files and rename, which gix uses for locks
+# and objects; what Scarlet cannot do safely stays unsupported.
+tempfile = { git = "https://github.com/petitstrawberry/tempfile", rev = "8aaf0d61eeab7e8ae8e1ddb4b927438e901a02cc" }

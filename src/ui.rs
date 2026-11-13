@@ -328,10 +328,15 @@ impl App {
     pub(super) fn content(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let keys = self.clone();
+        let git = self.clone();
         let content = ZStack::new((vstack! {
             self.window_header(),
             SplitView::new(
-                Surface::section(if_view!(self.project.is_open(), self.project_search_view(), self.explorer_view()))
+                Surface::section(vstack! {
+                    self.sidebar_switcher(),
+                    if_view!(self.project.is_open(), self.project_search_view(),
+                        if_view!(self.git_panel.open.get(), self.git_view(), self.explorer_view())),
+                }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY))
                     .surface_style(theme.chrome_style()).corner_radius(16.0).clip_content(true),
                 self.editor_area(),
             )
@@ -343,7 +348,14 @@ impl App {
             hstack! {
                 Text::from_state(self.status.clone()).font_size(11.0).color(theme.colors().foreground),
                 Spacer::new(),
-                Text::from_state(self.git_status.clone()).font_size(11.0).color(theme.colors().muted),
+                Text::from_state(self.git_status.clone()).font_size(11.0).color(theme.colors().muted)
+                    .on_event(move |event| {
+                        if matches!(event, Event::Mouse(MouseEvent::ButtonPressed { button: MouseButton::Left, .. })) {
+                            git.show_git();
+                            return true;
+                        }
+                        false
+                    }),
                 if_view!(!self.terminal_focused(), Text::from_state(self.language_status.clone()).font_size(11.0).color(theme.colors().muted), VStack::new(())),
                 Text::from_state(self.position.clone()).font_size(11.0).color(theme.colors().muted),
             }.spacing(12.0).padding_insets(EdgeInsets::new(18.0, 8.0, 18.0, 8.0)),
@@ -477,13 +489,15 @@ impl App {
             self.tabs_view(group),
             if self.group_id(group).is_some_and(|id| self.is_settings_tab(id)) {
                 Either::A(self.settings_view(group))
-            } else { Either::B(match self.group_id(group).filter(|tab| self.terminal.for_tab(*tab).is_some()) {
+            } else if let Some(tab) = self.group_id(group).filter(|id| self.is_git_diff_tab(*id)) {
+                Either::B(Either::A(self.git_diff_view(tab)))
+            } else { Either::B(Either::B(match self.group_id(group).filter(|tab| self.terminal.for_tab(*tab).is_some()) {
                 Some(tab) => Either::A(self.terminal_tab_view(tab, group)),
                 None => Either::B(match self.group_document(group) {
                     Some(id) => Either::A(self.document_view(id, group)),
                     None => Either::B(VStack::new(()).frame(f32::INFINITY,f32::INFINITY).background(self.theme.get().editor_colors().background)),
                 }),
-            }) },
+            })) },
         )
             .surface_style(self.theme.get().chrome_style())
             .border_color(self.theme.get().colors().border)
@@ -500,6 +514,9 @@ impl App {
                     Some((*tab, doc.path.clone(), format!("{}{}{}{}", if doc.editor.dirty() { "● " } else { "" }, doc.name(), if rt.markdown.tabs.contains_key(tab) { " · Preview" } else { "" }, if saving { " …" } else { "" }), false))
                 } else if rt.settings_tab == Some(*tab) {
                     Some((*tab, None, "Settings".into(), false))
+                } else if let Some(diff) = rt.git.diffs.get(tab) {
+                    let (path, label) = git_ui::diff_tab_label(diff);
+                    Some((*tab, Some(path), label, false))
                 } else {
                     self.terminal.for_tab(*tab).map(|session| (*tab, None, terminal_ui::session_label(session.id), true))
                 }
@@ -619,6 +636,7 @@ impl App {
                     && !self.find_open.get()
                     && !self.nav.is_open()
                     && !self.project.wants_focus()
+                    && !self.git_panel.wants_focus()
                     && !self.language_rename_open(),
             )
             .scroll_state(bindings.scroll)
@@ -729,7 +747,6 @@ impl App {
         let open = self.clone();
         let refresh = self.clone();
         let empty_open = self.clone();
-        let search = self.clone();
         let rows = self.clone();
         let has_root = self.runtime.lock().unwrap().explorer.root.is_some();
         self.nav
@@ -740,12 +757,11 @@ impl App {
                 Text::new("Explorer").font_size(13.0).color(theme.colors().foreground),
                 Spacer::new(),
                 Button::icon_only(Icon::FolderOpen).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(6.0).on_click(move || open.show_folder()),
-                Button::icon_only(Icon::Search).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(6.0).on_click(move || search.show_project_search()),
                 Button::icon_only(Icon::Refresh).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(5.0).enabled(has_root).on_click(move || {
                     let root = refresh.runtime.lock().unwrap().explorer.root.clone();
                     if let Some(root) = root { refresh.open_folder(root); }
                 }),
-            }.spacing(2.0).padding_insets(EdgeInsets::new(14.0, 10.0, 8.0, 8.0)),
+            }.spacing(2.0).padding_insets(EdgeInsets::new(14.0, 4.0, 8.0, 8.0)),
             if_view!(has_root,
                 ListView::new(self.tree_rows.clone(), self.tree_selected.clone(), 27.0, move |index, row: Row, selected| {
                     let app = rows.clone();
@@ -772,7 +788,7 @@ impl App {
                             Text::new(row.label.clone()).font_size(13.0).color(if !enabled { theme.colors().muted } else { change_color.unwrap_or(theme.colors().foreground) }),
                         }.spacing(6.0).padding(4.0),
                         Spacer::new(),
-                        Text::new(mark).font_size(11.0).color(change_color.unwrap_or(theme.colors().muted)).padding_insets(EdgeInsets::new(0.0, 0.0, 0.0, 8.0)),
+                        Text::new(mark).font_size(11.0).color(change_color.unwrap_or(theme.colors().muted)).padding_insets(EdgeInsets::new(0.0, 0.0, 8.0, 0.0)),
                     }.spacing(0.0).frame(f32::INFINITY, 27.0)
                         .clip(), input, selected == Some(index), enabled, theme.colors(),
                         move || app.open_tree_row(row.clone(), index))

@@ -1,6 +1,6 @@
 {
   "generator": "cargo-about",
-  "cargo_lock_sha256": "087f85959772745038d6c2ae02f5606fba42ed2273fa96c3679e9fb0ddc94e0a",
+  "cargo_lock_sha256": "072713895ab0d0954d47a86da88112a43ad410bbc3ce2c2ef2f674c5823f91a7",
   "entries": [
     {
       "name": "ab_glyph",
@@ -3256,7 +3256,7 @@
     },
     {
       "name": "tempfile",
-      "version": "3.27.0",
+      "version": "3.27.0+scarlet.1",
       "texts": [
         33
       ],
