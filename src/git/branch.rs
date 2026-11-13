@@ -154,8 +154,14 @@ fn head_label(repo: &gix::Repository) -> String {
 
 /// Creates `name` at `HEAD`'s commit and, if `switch`, checks it out: the
 /// files are the same, so only `HEAD` moves.
+/// Branch changes are logged with who made them, as Git does.
+const IDENTITY: &str = "Set user.name and user.email in your Git configuration";
+
 pub(super) fn create(repo: &gix::Repository, name: &str, switch: bool) -> Result<String, String> {
     let full = full_name(name)?;
+    repo.committer()
+        .ok_or(IDENTITY)?
+        .map_err(|e| e.to_string())?;
     if repo
         .try_find_reference(full.as_ref())
         .map_err(|e| e.to_string())?
@@ -205,6 +211,9 @@ pub(super) fn switch(
     if repo.head_name().map_err(err)?.as_ref() == Some(&full) {
         return Err(format!("Already on {short}"));
     }
+    repo.committer()
+        .ok_or(IDENTITY)?
+        .map_err(|e| e.to_string())?;
     if let Some(state) = repo.state() {
         return Err(format!(
             "Git is {}; finish it with git",

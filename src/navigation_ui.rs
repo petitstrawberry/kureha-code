@@ -2586,6 +2586,9 @@ mod tests {
             String::from_utf8(output.stdout).unwrap()
         };
         git(&["init", "-q", "-b", "main"]);
+        // Kureha reads the repository's config; reflogs need an identity.
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "test@example.invalid"]);
         std::fs::write(dir.join("a.txt"), "a\n").unwrap();
         git(&["add", "."]);
         git(&["commit", "-q", "-m", "init"]);
