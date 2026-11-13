@@ -154,8 +154,8 @@ impl App {
     }
     /// Turns an extension on or off from the Extensions view.
     pub(super) fn toggle_extension(&self, id: &str) {
-        let enabled = extensions::is_enabled(id);
-        self.set_extension_enabled(id, !enabled);
+        let disabled = self.preferences.get().disabled_extensions.contains(id);
+        self.set_extension_enabled(id, disabled);
         self.refresh_extension_rows();
     }
 

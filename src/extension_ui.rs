@@ -109,6 +109,8 @@ pub(super) struct State {
     queued_saves: Vec<(DocumentId, PathBuf)>,
     lsp_save_noted: bool,
     keys_reported: bool,
+    /// The disabled set this window last handed to the registry.
+    synced_disabled: std::collections::BTreeSet<String>,
 }
 
 #[cfg(test)]
@@ -352,7 +354,20 @@ impl App {
     /// Makes the workers see the grants in `preferences`.
     pub(super) fn sync_process_grants(&self, preferences: &super::preferences::Preferences) {
         process_grants().replace(preferences.allow_process.clone());
-        kureha_code::extensions::set_disabled(&preferences.disabled_extensions);
+        // The set is process-wide; write it only when this window's choice
+        // changed, so another window (or test) with none leaves it alone.
+        let changed = {
+            let mut rt = self.runtime.lock().unwrap();
+            let synced = &mut rt.extensions.synced_disabled;
+            let changed = *synced != preferences.disabled_extensions;
+            if changed {
+                *synced = preferences.disabled_extensions.clone();
+            }
+            changed
+        };
+        if changed {
+            kureha_code::extensions::set_disabled(&preferences.disabled_extensions);
+        }
     }
     /// Turns `extension` on or off and saves the choice. Its contributions
     /// (commands, keys, formatters, themes in lists, languages) follow at
