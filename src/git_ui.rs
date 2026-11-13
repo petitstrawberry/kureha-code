@@ -12,7 +12,7 @@ use kureha_code::{
         write::{Operation, Writer},
     },
 };
-use scarlet_ui::prelude::State as Ui;
+use scarlet_ui::{prelude::State as Ui, views::Truncation};
 use std::{
     result::Result,
     time::{Duration, Instant},
@@ -44,6 +44,8 @@ pub(super) struct State {
     pub(super) diffs: BTreeMap<TabId, DiffTab>,
     diff_answers: Option<(mpsc::Sender<DiffAnswer>, mpsc::Receiver<DiffAnswer>)>,
     diff_requests: u64,
+    /// Status bar progress items of operations sent to the writer, in order.
+    progress: std::collections::VecDeque<u64>,
 }
 
 /// A tab showing one change.
@@ -61,12 +63,12 @@ type DiffAnswer = (TabId, u64, Result<FileDiff, String>);
 /// The Git sidebar's own state.
 #[derive(Clone)]
 pub(super) struct Panel {
-    pub(super) open: Ui<bool>,
     owns_focus: Ui<bool>,
     focus_message: Ui<bool>,
     rows: Ui<Vec<GitRow>>,
     selected: Ui<Option<usize>>,
     message: Ui<String>,
+    message_selection: Ui<scarlet_ui::views::TextSelection>,
     /// The last answer from the writer, or why nothing can be done.
     notice: Ui<String>,
     busy: Ui<bool>,
@@ -74,19 +76,18 @@ pub(super) struct Panel {
 impl Panel {
     pub(super) fn new() -> Self {
         Self {
-            open: Ui::new(generate_state_id(), false),
             owns_focus: Ui::new(generate_state_id(), false),
             focus_message: Ui::new(generate_state_id(), false),
             rows: Ui::new(generate_state_id(), Vec::new()),
             selected: Ui::new(generate_state_id(), None),
             message: Ui::new(generate_state_id(), String::new()),
+            message_selection: Ui::new(generate_state_id(), Default::default()),
             notice: Ui::new(generate_state_id(), String::new()),
             busy: Ui::new(generate_state_id(), false),
         }
     }
     pub(super) fn listenables(&self) -> Vec<&dyn Listenable> {
         vec![
-            &self.open,
             &self.owns_focus,
             &self.focus_message,
             &self.rows,
@@ -94,9 +95,9 @@ impl Panel {
             &self.busy,
         ]
     }
-    /// The sidebar holds keyboard focus, so the editor must not take it.
-    pub(super) fn wants_focus(&self) -> bool {
-        self.open.get() && self.owns_focus.get()
+    /// The sidebar was clicked last, so the editor must not take focus.
+    pub(super) fn owns_focus(&self) -> bool {
+        self.owns_focus.get()
     }
     pub(super) fn blur(&self) {
         self.owns_focus.set(false);
@@ -284,15 +285,14 @@ impl App {
 
     /// Shows the Git sidebar.
     pub(super) fn show_git(&self) {
-        self.project.close();
-        self.git_panel.open.set(true);
+        self.show_sidebar(super::sidebar_ui::Sidebar::Git);
         self.refresh_git();
     }
-    /// Shows the explorer.
-    pub(super) fn show_explorer(&self) {
-        self.project.close();
-        self.git_panel.open.set(false);
-        self.git_panel.blur();
+    /// The Git sidebar is shown and holds keyboard focus.
+    pub(super) fn git_wants_focus(&self) -> bool {
+        self.sidebar.get() == super::sidebar_ui::Sidebar::Git
+            && !self.project.is_open()
+            && self.git_panel.owns_focus()
     }
 
     fn git_write(&self, operation: Operation) {
@@ -318,17 +318,22 @@ impl App {
         };
         match started {
             Ok(()) => {
+                let doing = match &operation {
+                    Operation::Stage(_) => "Staging…".to_string(),
+                    Operation::Unstage(_) => "Unstaging…".to_string(),
+                    Operation::Commit(_) => "Committing…".to_string(),
+                    Operation::CreateBranch { name, .. } => format!("Creating {name}…"),
+                    Operation::Switch { name, .. } => format!("Switching to {name}…"),
+                };
                 self.git_panel.busy.set(true);
-                self.git_panel.notice.set(
-                    match operation {
-                        Operation::Stage(_) => "Staging…",
-                        Operation::Unstage(_) => "Unstaging…",
-                        Operation::Commit(_) => "Committing…",
-                    }
-                    .into(),
-                );
+                self.git_panel.notice.set(doing.clone());
+                let id = self.progress(doing);
+                self.runtime.lock().unwrap().git.progress.push_back(id);
             }
-            Err(e) => self.git_panel.notice.set(e),
+            Err(e) => {
+                self.git_panel.notice.set(e.clone());
+                self.notify(super::messages::Level::Error, e);
+            }
         }
     }
     fn poll_git_writer(&self) {
@@ -348,14 +353,26 @@ impl App {
         };
         let (answers, pending) = answers;
         for (_, operation, result) in answers {
+            // Answers come in the order the work was sent.
+            let progress = self.runtime.lock().unwrap().git.progress.pop_front();
+            if let Some(id) = progress {
+                self.progress_done(id);
+            }
             match result {
-                Ok(text) => {
+                Ok(done) => {
                     if matches!(operation, Operation::Commit(_)) {
                         self.git_panel.message.set(String::new());
                     }
-                    self.git_panel.notice.set(text);
+                    if matches!(operation, Operation::Switch { .. }) {
+                        self.reload_switched(&done.changed);
+                    }
+                    self.notify(super::messages::Level::Info, done.message.clone());
+                    self.git_panel.notice.set(done.message);
                 }
-                Err(e) => self.git_panel.notice.set(e),
+                Err(e) => {
+                    self.notify(super::messages::Level::Error, e.clone());
+                    self.git_panel.notice.set(e);
+                }
             }
         }
         if pending == 0 && self.git_panel.busy.get() {
@@ -375,6 +392,116 @@ impl App {
                 entries.into_iter().map(|e| e.path).collect(),
             ));
         }
+    }
+    /// Local branches of the open repository, from the latest read.
+    pub(super) fn git_branches(&self) -> Vec<kureha_code::git::branch::Branch> {
+        let rt = self.runtime.lock().unwrap();
+        rt.git
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.branches.clone())
+            .unwrap_or_default()
+    }
+    /// Files open with unsaved edits, which a switch must not change.
+    fn unsaved_files(&self) -> Vec<PathBuf> {
+        let rt = self.runtime.lock().unwrap();
+        rt.workspace
+            .documents
+            .iter()
+            .filter(|doc| doc.editor.dirty())
+            .filter_map(|doc| doc.path.clone())
+            .collect()
+    }
+    pub(super) fn switch_branch(&self, name: String) {
+        if self.git_branches().iter().any(|b| b.current && b.name == name) {
+            return;
+        }
+        let keep = self.unsaved_files();
+        self.git_write(Operation::Switch { name, keep });
+    }
+    pub(super) fn create_branch(&self, name: String) {
+        self.git_write(Operation::CreateBranch { name, switch: true });
+    }
+    /// After a switch: open documents follow their files (the switch refused
+    /// to touch any with unsaved edits); those whose file is gone close.
+    fn reload_switched(&self, changed: &[PathBuf]) {
+        let Some(workdir) = self
+            .runtime
+            .lock()
+            .unwrap()
+            .git
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.workdir.clone())
+        else {
+            return;
+        };
+        use kureha_code::git::branch::resolved;
+        // Open documents may spell the folder differently (`/tmp` and
+        // `/private/tmp`); compare resolved paths.
+        let open: Vec<(PathBuf, kureha_code::workspace::DocumentId)> = {
+            let rt = self.runtime.lock().unwrap();
+            rt.workspace
+                .documents
+                .iter()
+                .filter_map(|doc| Some((resolved(doc.path.as_ref()?), doc.id)))
+                .collect()
+        };
+        for relative in changed {
+            let path = workdir.join(relative);
+            let target = resolved(&path);
+            let Some(id) = open
+                .iter()
+                .find_map(|(open, id)| (*open == target).then_some(*id))
+            else {
+                continue;
+            };
+            match kureha_code::files::read(&path) {
+                Ok(raw) => {
+                    {
+                        let mut rt = self.runtime.lock().unwrap();
+                        let Some(doc) = rt.workspace.get_mut(id) else {
+                            continue;
+                        };
+                        if doc.editor.dirty() || doc.image.is_some() {
+                            continue;
+                        }
+                        let text = raw.replace("\r\n", "\n").replace('\r', "\n");
+                        let len = doc.editor.document.len();
+                        // Keep the caret near where it was, on a character boundary.
+                        let mut end = text.len().min(doc.editor.selection.caret.byte);
+                        while !text.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        doc.editor.edit_parts(
+                            &[scarlet_ui::views::EditDelta {
+                                replaced_range: 0..len,
+                                inserted: text,
+                            }],
+                            scarlet_ui::views::TextSelection::collapsed(end),
+                        );
+                        doc.editor.saved();
+                        doc.crlf = raw.contains("\r\n");
+                        doc.disk_text = Some(raw.into());
+                    }
+                    self.sync_editor(id);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    let clean = self
+                        .runtime
+                        .lock()
+                        .unwrap()
+                        .workspace
+                        .get(id)
+                        .is_some_and(|doc| !doc.editor.dirty());
+                    if clean {
+                        self.remove_document(id);
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        self.changed();
     }
     fn git_commit(&self) {
         if self.git_panel.busy.get() {
@@ -524,44 +651,59 @@ impl App {
         true
     }
 
-    /// The switcher above the sidebar: explorer, search, Git.
-    pub(super) fn sidebar_switcher(&self) -> impl View + Clone + use<> {
+    /// The status bar's Git items: the branch, which opens the branch list,
+    /// and the change count, which opens the Git sidebar. Running stages,
+    /// commits and switches show as progress beside them.
+    pub(super) fn git_status_bar(&self) -> impl View + Clone + use<> {
         let colors = self.theme.get().colors();
-        let current = if self.project.is_open() {
-            1
-        } else if self.git_panel.open.get() {
-            2
-        } else {
-            0
+        let (branch, changes, repository) = {
+            let rt = self.runtime.lock().unwrap();
+            match rt.git.snapshot.as_ref() {
+                Some(snapshot) => (
+                    snapshot.head.label(),
+                    match snapshot.total {
+                        0 => String::new(),
+                        1 => "1 change".into(),
+                        n => format!("{n} changes"),
+                    },
+                    true,
+                ),
+                // Empty outside a repository; `Git: …` when reading failed.
+                None => (self.git_status.get(), String::new(), false),
+            }
         };
-        let button = |icon: Icon, index: usize, action: Box<dyn Fn()>| {
-            Button::icon_only(icon)
-                .header_style()
-                .text_color(if index == current {
-                    colors.foreground
-                } else {
-                    colors.muted
+        let clicked = |event: &Event| {
+            matches!(
+                event,
+                Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed {
+                    button: scarlet_ui::event::MouseButton::Left,
+                    ..
                 })
-                .background_color(if index == current {
-                    colors.selection
-                } else {
-                    Color::TRANSPARENT
-                })
-                .padding(6.0)
-                .on_click(action)
+            )
         };
-        let explorer = self.clone();
-        let search = self.clone();
-        let git = self.clone();
+        let picker = self.clone();
+        let sidebar = self.clone();
         hstack! {
-            button(Icon::Folder, 0, Box::new(move || explorer.show_explorer())),
-            button(Icon::Search, 1, Box::new(move || search.show_project_search())),
-            // The pinned icon set has no branch symbol yet.
-            button(Icon::Share, 2, Box::new(move || git.show_git())),
-            Spacer::new(),
+            Text::new(branch).font_size(11.0).color(colors.foreground)
+                .on_event(move |event| {
+                    if clicked(event) {
+                        if repository { picker.show_branch_picker() } else { picker.show_git() }
+                        return true;
+                    }
+                    false
+                }),
+            if_view!(!changes.is_empty(),
+                Text::new(changes).font_size(11.0).color(colors.muted)
+                    .on_event(move |event| {
+                        if clicked(event) {
+                            sidebar.show_git();
+                            return true;
+                        }
+                        false
+                    }),
+                VStack::new(())),
         }
-        .spacing(4.0)
-        .padding_insets(EdgeInsets::new(12.0, 10.0, 8.0, 2.0))
+        .spacing(10.0)
     }
 
     /// The Git sidebar.
@@ -574,7 +716,9 @@ impl App {
         };
         let refresh = self.clone();
         let commit = self.clone();
-        let submit = self.clone();
+        let commit_key = self.clone();
+        let branches = self.clone();
+
         let rows = self.clone();
         let focus = self.git_panel.clone();
         let message_focus = self.git_panel.clone();
@@ -612,17 +756,25 @@ impl App {
         let row_theme = theme.clone();
         let body = if_view!(snapshot.is_some(),
             vstack! {
-                Text::new(head).font_size(12.0).color(colors.muted),
-                // One line for now: a multi-line TextView overflows the sidebar
-                // (it measures 400 px wide there).
-                TextField::new(self.git_panel.message.clone()).font_size(13.0).padding(5.0)
-                    .background_color(colors.elevated).text_color(colors.foreground)
+                Button::new(head).header_style()
+                    .icon(Icon::ChevronDown).icon_size(IconSize::Small)
+                    .font_size(12.0).padding(4.0).text_color(colors.foreground)
+                    .background_color(Color::TRANSPARENT)
+                    .on_click(move || branches.show_branch_picker()),
+                TextView::new(self.git_panel.message.clone(), self.git_panel.message_selection.clone())
+                    .placeholder(if cfg!(target_os = "macos") {
+                        "Message (⌘Enter to commit)"
+                    } else {
+                        "Message (Ctrl+Enter to commit)"
+                    })
+                    .font_size(13.0).padding(6.0)
+                    .background(colors.elevated).text_color(colors.foreground)
                     .placeholder_color(colors.muted).border_color(colors.border)
+                    .focused_border_color(colors.accent)
                     .material(theme.input_material())
-                    .placeholder("Commit message (Enter to commit)")
-                    .autofocus(self.git_panel.wants_focus() && self.git_panel.focus_message.get())
-                    .on_submit(move || submit.git_commit())
-                    .frame(f32::INFINITY, 28.0)
+                    .wrap_mode(scarlet_ui::views::WrapMode::Soft)
+                    .autofocus(self.git_wants_focus() && self.git_panel.focus_message.get())
+                    .frame(f32::INFINITY, 76.0)
                     .on_event_capture(move |event| {
                         if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) {
                             message_focus.focus_message.set(true);
@@ -636,16 +788,16 @@ impl App {
                     .on_click(move || commit.git_commit())
                     .frame(f32::INFINITY, 28.0),
                 if_view!(!warning.is_empty(),
-                    Text::new(warning.clone()).font_size(11.0).color(colors.warning),
+                    Text::new(warning.clone()).font_size(11.0).color(colors.warning).line_limit(None),
                     VStack::new(())),
-                Text::new(notice).font_size(11.0).color(colors.muted),
+                Text::new(notice).font_size(11.0).color(colors.muted).line_limit(None),
                 ListView::new(self.git_panel.rows.clone(), self.git_panel.selected.clone(), 27.0, move |index, row: GitRow, selected| {
                     rows.git_row(row, selected == Some(index), &row_theme)
                 }).item_key(|row| row.key().into())
                   .frame(f32::INFINITY, f32::INFINITY),
             }.alignment(Alignment::Leading).spacing(8.0),
             vstack! {
-                Text::new(empty).font_size(12.0).color(colors.muted),
+                Text::new(empty).font_size(12.0).color(colors.muted).line_limit(None),
                 Spacer::new(),
             }.alignment(Alignment::Leading)
         );
@@ -661,6 +813,17 @@ impl App {
                 ) {
                     focus.owns_focus.set(true);
                     focus.focus_message.set(false);
+                }
+                // Enter adds a line to the message; with the primary key it commits.
+                if let Event::Keyboard(KeyEvent::Pressed {
+                    keycode: KeyCode::Enter,
+                    modifiers,
+                }) = event
+                    && modifiers.primary()
+                    && focus.focus_message.get()
+                {
+                    commit_key.git_commit();
+                    return true;
                 }
                 false
             })
@@ -733,12 +896,15 @@ impl App {
                 let stage = entry.clone();
                 Either::B(
                     hstack! {
+                        // One flat row, so the name and folder shorten before the letter.
                         super::ui::list_row(hstack! {
-                            hstack! {
-                                icon.view(),
-                                Text::new(name).font_size(13.0).color(color),
-                                Text::new(parent).font_size(11.0).color(colors.muted),
-                            }.spacing(6.0).padding(4.0),
+                            Spacer::new().frame(4.0, 1.0),
+                            icon.view(),
+                            Spacer::new().frame(6.0, 1.0),
+                            Text::new(name).font_size(13.0).color(color),
+                            Spacer::new().frame(6.0, 1.0),
+                            Text::new(parent).font_size(11.0).color(colors.muted)
+                                .truncation(Truncation::Middle),
                             Spacer::new(),
                             Text::new(entry.change.letter()).font_size(11.0).color(color)
                                 .padding_insets(EdgeInsets::new(0.0, 0.0, 6.0, 0.0)),
@@ -810,12 +976,13 @@ impl App {
         Surface::section(
             vstack! {
                 hstack! {
-                    Text::new(title).font_size(12.0).color(colors.foreground),
+                    Text::new(title).font_size(12.0).color(colors.foreground)
+                        .truncation(Truncation::Middle),
                     Spacer::new(),
                     Text::new(summary).font_size(12.0).color(colors.muted),
                 }.spacing(8.0).padding_insets(EdgeInsets::new(14.0, 10.0, 14.0, 4.0)),
                 if_view!(!message.is_empty(),
-                    Text::new(message.clone()).font_size(12.0).color(colors.muted)
+                    Text::new(message.clone()).font_size(12.0).color(colors.muted).line_limit(None)
                         .padding_insets(EdgeInsets::new(14.0, 4.0, 14.0, 4.0)),
                     VStack::new(())),
                 body,
@@ -868,6 +1035,10 @@ mod tests {
     }
     /// Writes a PNG of the workbench when `KUREHA_WORKBENCH_PREVIEW` names a folder.
     fn render_preview(app: &App, name: &str) {
+        render_preview_sized(app, name, 1100.0);
+    }
+    /// The workbench at `width`; the sidebar takes its minimum below ~860.
+    fn render_preview_sized(app: &App, name: &str, width: f32) {
         use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
         let Some(directory) = std::env::var_os("KUREHA_WORKBENCH_PREVIEW") else {
             return;
@@ -876,7 +1047,7 @@ mod tests {
         pipeline.set_root(
             Window::new("Kureha Code", app.content())
                 .decorated(false)
-                .size(Size::new(1100.0, 560.0))
+                .size(Size::new(width, 560.0))
                 .create_element(),
         );
         pipeline.layout_initial();
@@ -907,7 +1078,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("src")).unwrap();
         git(&dir, &["init", "-q", "-b", "main"]);
-        for file in ["README.md", "keep.txt", "src/lib.rs"] {
+        for file in [
+            "README.md",
+            "keep.txt",
+            "src/lib.rs",
+            "a_rather_long_file_name_for_a_narrow_explorer.txt",
+        ] {
             std::fs::write(dir.join(file), "one\n").unwrap();
         }
         git(&dir, &["add", "."]);
@@ -938,6 +1114,7 @@ mod tests {
         });
         assert_eq!(mark(&app, "keep.txt"), Some(Change::Modified));
         render_preview(&app, "git-explorer.png");
+        render_preview_sized(&app, "git-explorer-narrow.png", 760.0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -962,6 +1139,10 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.join("notes.txt"), "new\n").unwrap();
+        let deep = dir.join("src/components/forms/inputs");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("a_rather_long_component_name.rs"), "new\n").unwrap();
+        git(&dir, &["add", "-N", "src/components"]);
 
         let app = App::with_document();
         app.open_folder(dir.clone());
@@ -1009,8 +1190,9 @@ mod tests {
                 && file(app, "lib.rs", true).is_some()
                 && file(app, "lib.rs", false).is_none()
         });
-        assert_eq!(app.git_panel.notice.get(), "Staged 2 files");
+        assert_eq!(app.git_panel.notice.get(), "Staged 3 files");
         render_preview(&app, "git-sidebar.png");
+        render_preview_sized(&app, "git-sidebar-narrow.png", 760.0);
 
         app.git_panel.message.set("Fill in f6".into());
         app.git_commit();
@@ -1029,6 +1211,70 @@ mod tests {
 
         app.request_close(Some(tab));
         assert!(!app.is_git_diff_tab(tab));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn switching_branches_reloads_open_files_and_keeps_unsaved_ones() {
+        let dir = std::env::temp_dir().join(format!("kureha-git-branch-ui-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["config", "user.name", "Test"]);
+        git(&dir, &["config", "user.email", "test@example.invalid"]);
+        for (file, text) in [("a.txt", "main\n"), ("gone.txt", "only on main\n"), ("draft.txt", "d\n")] {
+            std::fs::write(dir.join(file), text).unwrap();
+        }
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "main"]);
+        git(&dir, &["switch", "-q", "-c", "side"]);
+        std::fs::write(dir.join("a.txt"), "side\n").unwrap();
+        git(&dir, &["rm", "-q", "gone.txt"]);
+        git(&dir, &["commit", "-q", "-am", "side"]);
+        git(&dir, &["switch", "-q", "main"]);
+
+        let app = App::with_document();
+        app.open_folder(dir.clone());
+        wait(&app, "the repository is read", |app| app.git_status.get() == "main");
+        assert_eq!(
+            app.git_branches().iter().map(|b| (b.name.as_str(), b.current)).collect::<Vec<_>>(),
+            [("main", true), ("side", false)]
+        );
+        let open = |name: &str| {
+            let path = dir.join(name);
+            let text = std::fs::read_to_string(&path).unwrap();
+            let id = app.runtime.lock().unwrap().workspace.open(path, &text);
+            app.activate(id);
+            id
+        };
+        let a = open("a.txt");
+        let gone = open("gone.txt");
+        let draft = open("draft.txt");
+        app.runtime.lock().unwrap().workspace.get_mut(draft).unwrap().editor.edit(
+            &scarlet_ui::views::EditDelta { replaced_range: 0..0, inserted: "unsaved ".into() },
+        );
+
+        app.switch_branch("side".into());
+        wait(&app, "the switch is done", |app| {
+            app.git_status.get() == "side" && !app.git_panel.busy.get()
+        });
+        assert_eq!(app.status.get(), "Switched to side");
+        let rt = app.runtime.lock().unwrap();
+        let doc = rt.workspace.get(a).unwrap();
+        assert_eq!(doc.editor.document.as_str(), "side\n");
+        assert!(!doc.editor.dirty());
+        assert!(rt.workspace.get(gone).is_none(), "the deleted file's tab closes");
+        assert!(rt.workspace.get(draft).unwrap().editor.dirty(), "unsaved edits stay");
+        drop(rt);
+
+        // Unsaved edits to a file the switch would change stop it.
+        app.runtime.lock().unwrap().workspace.get_mut(a).unwrap().editor.edit(
+            &scarlet_ui::views::EditDelta { replaced_range: 0..0, inserted: "x".into() },
+        );
+        app.switch_branch("main".into());
+        wait(&app, "the switch is refused", |app| !app.git_panel.busy.get() && app.status.get().starts_with("Save or close"));
+        assert_eq!(app.git_status.get(), "side");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

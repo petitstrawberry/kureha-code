@@ -264,6 +264,11 @@ impl Host {
     }
     /// The queue for `extension`, starting its thread on first use.
     fn lane(&self, extension: &str) -> Result<Sender<Request>, String> {
+        // Checked on every request, so turning an extension off stops it from
+        // running even if a caller missed it.
+        if !super::is_enabled(extension) {
+            return Err(format!("{extension} is disabled"));
+        }
         let mut lanes = self.lanes.lock().unwrap();
         if let Some(lane) = lanes.get(extension) {
             return Ok(lane.clone());

@@ -328,14 +328,12 @@ impl App {
     pub(super) fn content(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let keys = self.clone();
-        let git = self.clone();
         let content = ZStack::new((vstack! {
             self.window_header(),
             SplitView::new(
                 Surface::section(vstack! {
                     self.sidebar_switcher(),
-                    if_view!(self.project.is_open(), self.project_search_view(),
-                        if_view!(self.git_panel.open.get(), self.git_view(), self.explorer_view())),
+                    self.sidebar_view(),
                 }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY))
                     .surface_style(theme.chrome_style()).corner_radius(16.0).clip_content(true),
                 self.editor_area(),
@@ -346,16 +344,8 @@ impl App {
                 .frame(f32::INFINITY, f32::INFINITY)
                 .padding_insets(EdgeInsets::new(10.0, 10.0, 10.0, 0.0)),
             hstack! {
-                Text::from_state(self.status.clone()).font_size(11.0).color(theme.colors().foreground),
+                self.status_bar_left(),
                 Spacer::new(),
-                Text::from_state(self.git_status.clone()).font_size(11.0).color(theme.colors().muted)
-                    .on_event(move |event| {
-                        if matches!(event, Event::Mouse(MouseEvent::ButtonPressed { button: MouseButton::Left, .. })) {
-                            git.show_git();
-                            return true;
-                        }
-                        false
-                    }),
                 if_view!(!self.terminal_focused(), Text::from_state(self.language_status.clone()).font_size(11.0).color(theme.colors().muted), VStack::new(())),
                 Text::from_state(self.position.clone()).font_size(11.0).color(theme.colors().muted),
             }.spacing(12.0).padding_insets(EdgeInsets::new(18.0, 8.0, 18.0, 8.0)),
@@ -636,7 +626,7 @@ impl App {
                     && !self.find_open.get()
                     && !self.nav.is_open()
                     && !self.project.wants_focus()
-                    && !self.git_panel.wants_focus()
+                    && !self.git_wants_focus()
                     && !self.language_rename_open(),
             )
             .scroll_state(bindings.scroll)
@@ -742,7 +732,7 @@ impl App {
         .fill(theme.editor_colors().background).corner_radius(12.0).clip_content(true)
         .padding_insets(EdgeInsets::new(4.0, 0.0, 4.0, 4.0))
     }
-    fn explorer_view(&self) -> impl View + Clone + use<> {
+    pub(super) fn explorer_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let open = self.clone();
         let refresh = self.clone();
@@ -781,12 +771,12 @@ impl App {
                         Some(change) => change.letter(),
                         None => "",
                     };
+                    // One flat row, so a long name shortens before the mark.
                     list_row(hstack! {
-                        Spacer::new().frame(row.depth as f32 * 14.0, 1.0),
-                        hstack! {
-                            icon.view(),
-                            Text::new(row.label.clone()).font_size(13.0).color(if !enabled { theme.colors().muted } else { change_color.unwrap_or(theme.colors().foreground) }),
-                        }.spacing(6.0).padding(4.0),
+                        Spacer::new().frame(row.depth as f32 * 14.0 + 4.0, 1.0),
+                        icon.view(),
+                        Spacer::new().frame(6.0, 1.0),
+                        Text::new(row.label.clone()).font_size(13.0).color(if !enabled { theme.colors().muted } else { change_color.unwrap_or(theme.colors().foreground) }),
                         Spacer::new(),
                         Text::new(mark).font_size(11.0).color(change_color.unwrap_or(theme.colors().muted)).padding_insets(EdgeInsets::new(0.0, 0.0, 8.0, 0.0)),
                     }.spacing(0.0).frame(f32::INFINITY, 27.0)

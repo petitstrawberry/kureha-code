@@ -14,7 +14,7 @@ use scarlet_ui::{KeyCode, event::KeyModifiers};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock, atomic::Ordering},
+    sync::{Arc, atomic::Ordering},
     time::{Duration, Instant},
 };
 
@@ -109,6 +109,8 @@ pub(super) struct State {
     queued_saves: Vec<(DocumentId, PathBuf)>,
     lsp_save_noted: bool,
     keys_reported: bool,
+    /// The disabled set this window last handed to the registry.
+    synced_disabled: std::collections::BTreeSet<String>,
 }
 
 #[cfg(test)]
@@ -306,9 +308,20 @@ fn key_table() -> Option<&'static KeyTable> {
     if TEST.get().is_some() {
         return registry().map(|r| &*Box::leak(Box::new(KeyTable::build(r))));
     }
-    static TABLE: OnceLock<KeyTable> = OnceLock::new();
+    // Rebuilt when an extension is turned on or off. Tables hand out
+    // `'static` references, so a replaced one is kept; toggles are rare.
+    static TABLE: std::sync::Mutex<Option<(u64, &'static KeyTable)>> = std::sync::Mutex::new(None);
     let registry = registry()?;
-    Some(TABLE.get_or_init(|| KeyTable::build(registry)))
+    let revision = kureha_code::extensions::disabled_revision();
+    let mut table = TABLE.lock().unwrap();
+    match *table {
+        Some((built, table)) if built == revision => Some(table),
+        _ => {
+            let built = &*Box::leak(Box::new(KeyTable::build(registry)));
+            *table = Some((revision, built));
+            Some(built)
+        }
+    }
 }
 /// The press as a chord, or `None` for keys extensions cannot bind.
 fn pressed(key: KeyCode, modifiers: KeyModifiers) -> Option<KeyChord> {
@@ -341,6 +354,33 @@ impl App {
     /// Makes the workers see the grants in `preferences`.
     pub(super) fn sync_process_grants(&self, preferences: &super::preferences::Preferences) {
         process_grants().replace(preferences.allow_process.clone());
+        // The set is process-wide; write it only when this window's choice
+        // changed, so another window (or test) with none leaves it alone.
+        let changed = {
+            let mut rt = self.runtime.lock().unwrap();
+            let synced = &mut rt.extensions.synced_disabled;
+            let changed = *synced != preferences.disabled_extensions;
+            if changed {
+                *synced = preferences.disabled_extensions.clone();
+            }
+            changed
+        };
+        if changed {
+            kureha_code::extensions::set_disabled(&preferences.disabled_extensions);
+        }
+    }
+    /// Turns `extension` on or off and saves the choice. Its contributions
+    /// (commands, keys, formatters, themes in lists, languages) follow at
+    /// once; its worker refuses further work while it is off.
+    pub(super) fn set_extension_enabled(&self, extension: &str, enabled: bool) {
+        self.change_preferences(super::preferences::Change::ExtensionEnabled {
+            extension: extension.into(),
+            enabled,
+        });
+        self.status.set(format!(
+            "{extension} {}",
+            if enabled { "enabled" } else { "disabled" }
+        ));
     }
     /// Grants or withdraws `program` for `extension` and saves the choice.
     pub(super) fn set_process_permission(
@@ -1094,6 +1134,90 @@ mod tests {
             .get()
             .as_str()
             .to_string()
+    }
+
+    #[test]
+    fn turning_an_extension_off_hides_its_contributions_and_refuses_its_work() {
+        // An id of its own: the enabled set is shared by the whole process.
+        let dir = std::env::temp_dir().join(format!("kureha-extension-toggle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let folder = dir.join("extensions/test.toggle");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("ext.wasm"), guest(r#"{"edits":[]}"#, 0)).unwrap();
+        std::fs::write(
+            folder.join("extension.toml"),
+            "[extension]\nid='test.toggle'\nname='Toggle'\nversion='2'\napi=1\nwasm='ext.wasm'\n\
+             [[contributes.languages]]\nid='tog'\nextensions=['tog']\n\
+             [[contributes.formatters]]\nlanguages=['tog']\n\
+             [[contributes.commands]]\nid='tog.run'\ntitle='Run'\n\
+             [[contributes.keybindings]]\ncommand='tog.run'\nkey='Alt+Shift+J'\n",
+        )
+        .unwrap();
+        let registry: &'static Registry =
+            Box::leak(Box::new(Registry::load(&dir.join("extensions"))));
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let host: &'static Host = Box::leak(Box::new(Host::start(
+            registry,
+            Budgets::default(),
+            Default::default(),
+        )));
+        use_test_extensions(registry, host);
+        let app = App::with_document();
+        let mut chord = KeyModifiers::empty();
+        chord.alt = true;
+        chord.shift = true;
+        let bound = || {
+            key_table()
+                .and_then(|table| table.find(pressed(KeyCode::Char('j'), chord)?))
+                .is_some()
+        };
+        let contributes = || {
+            (
+                registry.formatters("tog").count(),
+                registry.language_for_extension("tog").is_some(),
+                bound(),
+            )
+        };
+        assert_eq!(contributes(), (1, true, true));
+        app.show_extensions();
+        let rows = app.extensions_view_rows();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].enabled && rows[0].summary.contains("1 command") && rows[0].summary.contains("formats tog"));
+        // A picture of the view when KUREHA_WORKBENCH_PREVIEW names a folder.
+        if let Some(folder) = std::env::var_os("KUREHA_WORKBENCH_PREVIEW") {
+            use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
+            let mut pipeline = RenderingPipeline::new();
+            pipeline.set_root(
+                Window::new("Kureha Code", app.content())
+                    .decorated(false)
+                    .size(Size::new(1100.0, 560.0))
+                    .create_element(),
+            );
+            pipeline.layout_initial();
+            let buffer = pipeline.render().expect("workbench paints");
+            let pixels = buffer.data().chunks_exact(4).flat_map(|p| [p[2], p[1], p[0]]).collect();
+            image::RgbImage::from_raw(buffer.width(), buffer.height(), pixels)
+                .unwrap()
+                .save(PathBuf::from(folder).join("extensions-view.png"))
+                .unwrap();
+            pipeline.teardown();
+        }
+
+        app.toggle_extension("test.toggle");
+        assert!(!kureha_code::extensions::is_enabled("test.toggle"));
+        assert!(app.preferences.get().disabled_extensions.contains("test.toggle"));
+        assert_eq!(contributes(), (0, false, false));
+        assert!(!app.extensions_view_rows()[0].enabled);
+        // A caller that missed the switch is still refused by the worker.
+        let id = open(&app, &dir.join("a.tog"), "body\n");
+        app.activate(id);
+        app.run_extension_command("test.toggle", "tog.run");
+        wait(&app, "the refusal", |app| app.status.get().contains("disabled"));
+
+        app.toggle_extension("test.toggle");
+        assert_eq!(contributes(), (1, true, true));
+        assert!(app.preferences.get().disabled_extensions.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

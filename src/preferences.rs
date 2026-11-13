@@ -16,6 +16,8 @@ pub(super) struct Preferences {
     pub formatter: BTreeMap<String, String>,
     /// `[extensions.allow_process]`: programs each extension may run.
     pub allow_process: BTreeMap<String, BTreeSet<String>>,
+    /// `[extensions] disabled`: extensions turned off; their grants stay.
+    pub disabled_extensions: BTreeSet<String>,
 }
 #[derive(Clone, Debug)]
 pub(super) enum Change {
@@ -32,6 +34,8 @@ pub(super) enum Change {
         program: String,
         allowed: bool,
     },
+    /// Turns an extension on or off.
+    ExtensionEnabled { extension: String, enabled: bool },
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -45,6 +49,7 @@ impl Default for Preferences {
             format_on_save: false,
             formatter: BTreeMap::new(),
             allow_process: BTreeMap::new(),
+            disabled_extensions: BTreeSet::new(),
         }
     }
 }
@@ -119,6 +124,20 @@ impl Preferences {
                 "extensions" => {
                     let table = value.as_table().ok_or("extensions must be a table")?;
                     for (key, value) in table {
+                        if key == "disabled" {
+                            result.disabled_extensions = value
+                                .as_array()
+                                .ok_or("extensions.disabled must be a list of extension ids")?
+                                .iter()
+                                .map(|id| {
+                                    id.as_str()
+                                        .filter(|id| kureha_code::extensions::valid_id(id))
+                                        .map(String::from)
+                                        .ok_or("extensions.disabled: invalid extension id")
+                                })
+                                .collect::<Result<_, _>>()?;
+                            continue;
+                        }
                         if key != "allow_process" {
                             return Err(format!("Unknown settings key: extensions.{key}"));
                         }
@@ -180,6 +199,13 @@ impl Preferences {
                 }
                 if programs.is_empty() {
                     self.allow_process.remove(extension);
+                }
+            }
+            Change::ExtensionEnabled { extension, enabled } => {
+                if *enabled {
+                    self.disabled_extensions.remove(extension);
+                } else {
+                    self.disabled_extensions.insert(extension.clone());
                 }
             }
         }

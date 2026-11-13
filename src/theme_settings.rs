@@ -255,6 +255,29 @@ fn save(path: &std::path::Path, change: &Change) -> Result<(), String> {
                 document.remove("extensions");
             }
         }
+        Change::ExtensionEnabled { extension, enabled } => {
+            let extensions = document
+                .entry("extensions")
+                .or_insert_with(toml_edit::table)
+                .as_table_mut()
+                .ok_or("extensions must be a table")?;
+            extensions.set_implicit(true);
+            let disabled = extensions
+                .entry("disabled")
+                .or_insert_with(|| toml_edit::value(toml_edit::Array::new()))
+                .as_array_mut()
+                .ok_or("extensions.disabled must be a list")?;
+            disabled.retain(|id| id.as_str() != Some(extension.as_str()));
+            if !*enabled {
+                disabled.push(extension.as_str());
+            }
+            if disabled.is_empty() {
+                extensions.remove("disabled");
+            }
+            if extensions.is_empty() {
+                document.remove("extensions");
+            }
+        }
     }
     let updated = document.to_string();
     Preferences::parse(&updated)?;
@@ -542,6 +565,32 @@ mod persistence_tests {
         save(&f.settings(), &change("example.fmt", "prettier", false)).unwrap();
         let saved = fs::read_to_string(f.settings()).unwrap();
         assert_eq!(saved, "# mine\ncolor_theme = 'nord'\n");
+    }
+    #[test]
+    fn disabled_extensions_are_saved_beside_their_grants() {
+        let f = Fixture::new();
+        fs::write(f.settings(), "# mine\ncolor_theme = 'nord'\n").unwrap();
+        let grant = Change::AllowProcess {
+            extension: "example.fmt".into(),
+            program: "ruff".into(),
+            allowed: true,
+        };
+        save(&f.settings(), &grant).unwrap();
+        let toggle = |enabled| Change::ExtensionEnabled {
+            extension: "example.fmt".into(),
+            enabled,
+        };
+        save(&f.settings(), &toggle(false)).unwrap();
+        save(&f.settings(), &toggle(false)).unwrap();
+        let preferences = Preferences::parse(&fs::read_to_string(f.settings()).unwrap()).unwrap();
+        assert_eq!(preferences.disabled_extensions, ["example.fmt".to_string()].into());
+        // Turning it off keeps what it may run.
+        assert!(preferences.allow_process["example.fmt"].contains("ruff"));
+        save(&f.settings(), &toggle(true)).unwrap();
+        let saved = fs::read_to_string(f.settings()).unwrap();
+        assert!(!saved.contains("disabled"), "{saved}");
+        assert!(Preferences::parse(&saved).unwrap().disabled_extensions.is_empty());
+        assert!(Preferences::parse("[extensions]\ndisabled = [\"Not An Id\"]").is_err());
     }
     #[test]
     fn save_acknowledgement_waits_for_preview_without_losing_preferences() {

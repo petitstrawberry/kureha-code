@@ -24,12 +24,14 @@ mod editing_ui;
 mod extension_ui;
 mod git_diff_view;
 mod git_ui;
+mod sidebar_ui;
 mod groups;
 mod hover;
 mod language;
 mod location_history;
 mod markdown_ui;
 mod markdown_view;
+mod messages;
 mod navigation_ui;
 mod popup;
 mod preferences;
@@ -138,6 +140,10 @@ struct App {
     nav: navigation_ui::Navigation,
     project: project_ui::ProjectSearch,
     git_panel: git_ui::Panel,
+    messages: messages::Messages,
+    /// Which view the sidebar shows (search, when open, is shown over it).
+    sidebar: State<sidebar_ui::Sidebar>,
+    extensions_view: sidebar_ui::ExtensionsView,
     editor_font: Option<FontStack>,
     theme: State<kureha_code::theme::Theme>,
     theme_settings: Arc<Mutex<Option<theme_settings::Watcher>>>,
@@ -206,11 +212,14 @@ impl App {
                 changed.fetch_add(1, Ordering::Relaxed);
             }));
         }
-        Self {
+        let app = Self {
             tab_drag: Default::default(),
             nav: navigation_ui::Navigation::new(),
             project: project_ui::ProjectSearch::new(),
             git_panel: git_ui::Panel::new(),
+            messages: messages::Messages::new(),
+            sidebar: State::new(generate_state_id(), Default::default()),
+            extensions_view: sidebar_ui::ExtensionsView::new(),
             editor_font: kureha_code::fonts::editor_stack(),
             theme: State::new(
                 generate_state_id(),
@@ -236,7 +245,7 @@ impl App {
             chrome: State::new(generate_state_id(), 0),
             syntax_revision: State::new(generate_state_id(), 0),
             markdown_revision: State::new(generate_state_id(), 0),
-            status: State::new(generate_state_id(), "Ready".into()),
+            status: State::new(generate_state_id(), String::new()),
             position: State::new(generate_state_id(), String::new()),
             tree_rows: State::initial(generate_state_id()),
             tree_selected: State::initial(generate_state_id()),
@@ -247,7 +256,9 @@ impl App {
             search_status: State::new(generate_state_id(), "Literal search · Match case".into()),
             find_options: State::new(generate_state_id(), search::Options::default()),
             runtime: Arc::new(Mutex::new(runtime)),
-        }
+        };
+        app.messages.follow(&app.status);
+        app
     }
     fn set_theme(&self, theme: kureha_code::theme::Theme) {
         if self.nav.is_open() {
@@ -1432,7 +1443,8 @@ impl App {
                 self.blur_terminals();
             }
         }
-        self.status.set("Ready".into());
+        // Opening clears an earlier message.
+        self.status.set(String::new());
     }
     fn update_position(&self) {
         let Some(id) = self.active_id() else {
@@ -1514,11 +1526,16 @@ impl View for App {
             &self.panel_visible,
             &self.panel_fraction,
             &self.terminal.revision,
+            // The status bar's Git items are built from the latest read.
+            &self.git_status,
         ];
         listenables.extend(self.settings_ui.listenables());
         listenables.extend(self.nav.listenables());
         listenables.extend(self.project.listenables());
         listenables.extend(self.git_panel.listenables());
+        listenables.extend(self.messages.listenables());
+        listenables.push(&self.sidebar);
+        listenables.extend(self.extensions_view.listenables());
         listenables
     }
     fn as_any(&self) -> &dyn std::any::Any {
@@ -1603,6 +1620,7 @@ impl Application for App {
         }
         self.poll_extensions();
         self.poll_git();
+        self.expire_messages();
         if kureha_code::syntax::poll() {
             self.syntax_revision
                 .update(|revision| *revision = revision.wrapping_add(1));
