@@ -28,9 +28,13 @@ until you run "direnv: Allow .envrc" (the same as `direnv allow` in the folder).
 Finder, that `PATH` is short (`/usr/bin:/bin:/usr/sbin:/sbin`) and may not
 include your Nix profile; start it from a terminal in that case.
 
+To install it, run this from the repository and restart Kureha Code:
+
 ```sh
-nix develop --command cargo build --release --target wasm32-unknown-unknown \
-  --manifest-path examples/extensions/direnv/Cargo.toml
-mkdir -p ~/.config/kureha-code/extensions
-ln -s "$PWD/examples/extensions/direnv" ~/.config/kureha-code/extensions/direnv
+nix develop --command python3 scripts/build-extension.py --install examples/extensions/direnv
 ```
+
+It builds the module and puts `extension.toml`, `extension.wasm` and this
+README in `~/.config/kureha-code/extensions/example.direnv/` (or under
+`KUREHA_EXTENSIONS_DIR`). Run it again after changing the code; `--out <folder>`
+puts the folder somewhere else.

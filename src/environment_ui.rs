@@ -589,7 +589,7 @@ mod tests {
 }
 
 /// The real direnv extension, direnv and Nix, through the app's own flow:
-/// `KUREHA_TEST_DIRENV_EXTENSIONS=<folder with the built direnv example>
+/// `KUREHA_TEST_DIRENV_EXTENSIONS=<folder scripts/build-extension.py --out built it into>
 /// KUREHA_TEST_DIRENV_PROJECT=<folder with an allowed `.envrc`>
 /// KUREHA_TEST_DIRENV_PROGRAM=<a program only its dev shell has>
 /// cargo test real_direnv_dev_shell -- --ignored`

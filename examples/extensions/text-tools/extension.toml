@@ -3,7 +3,7 @@ id = "example.text-tools"
 name = "Text Tools"
 version = "0.1.0"
 api = 1
-wasm = "target/wasm32-unknown-unknown/release/kureha_text_tools.wasm"
+wasm = "extension.wasm"
 
 [[contributes.commands]]
 id = "text-tools.sort-lines"

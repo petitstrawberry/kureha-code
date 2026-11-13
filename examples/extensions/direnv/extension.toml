@@ -3,7 +3,7 @@ id = "example.direnv"
 name = "direnv"
 version = "0.1.0"
 api = 1
-wasm = "target/wasm32-unknown-unknown/release/kureha_direnv.wasm"
+wasm = "extension.wasm"
 
 # Both need your permission: "Extensions: Allow example.direnv to Run direnv"
 # and "Extensions: Allow example.direnv to Set the Environment".

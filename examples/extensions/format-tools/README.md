@@ -37,9 +37,13 @@ language server's formatting for one of them, set it in the settings file:
 python = "lsp"
 ```
 
+To install it, run this from the repository and restart Kureha Code:
+
 ```sh
-nix develop --command cargo build --release --target wasm32-unknown-unknown \
-  --manifest-path examples/extensions/format-tools/Cargo.toml
-mkdir -p ~/.config/kureha-code/extensions
-ln -s "$PWD/examples/extensions/format-tools" ~/.config/kureha-code/extensions/format-tools
+nix develop --command python3 scripts/build-extension.py --install examples/extensions/format-tools
 ```
+
+It builds the module and puts `extension.toml`, `extension.wasm` and this
+README in `~/.config/kureha-code/extensions/example.format-tools/` (or under
+`KUREHA_EXTENSIONS_DIR`). Run it again after changing the code; `--out <folder>`
+puts the folder somewhere else.

@@ -677,7 +677,7 @@ fn environment_calls_run_in_the_folder_without_the_overlay() {
 /// Runs the direnv example (`examples/extensions/direnv`) with the `direnv`
 /// first on PATH, in a folder, and checks one variable (`NAME=value`) or an
 /// error (`error:<part of it>`):
-/// `KUREHA_TEST_DIRENV_WASM=<.wasm> KUREHA_TEST_DIRENV_FOLDER=<dir>
+/// `KUREHA_TEST_DIRENV_WASM=<built folder>/example.direnv/extension.wasm KUREHA_TEST_DIRENV_FOLDER=<dir>
 /// KUREHA_TEST_DIRENV_EXPECT=FOO=bar cargo test real_direnv -- --ignored`
 #[test]
 #[ignore]
