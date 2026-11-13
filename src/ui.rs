@@ -781,12 +781,12 @@ impl App {
                         Some(change) => change.letter(),
                         None => "",
                     };
+                    // One flat row, so a long name shortens before the mark.
                     list_row(hstack! {
-                        Spacer::new().frame(row.depth as f32 * 14.0, 1.0),
-                        hstack! {
-                            icon.view(),
-                            Text::new(row.label.clone()).font_size(13.0).color(if !enabled { theme.colors().muted } else { change_color.unwrap_or(theme.colors().foreground) }),
-                        }.spacing(6.0).padding(4.0),
+                        Spacer::new().frame(row.depth as f32 * 14.0 + 4.0, 1.0),
+                        icon.view(),
+                        Spacer::new().frame(6.0, 1.0),
+                        Text::new(row.label.clone()).font_size(13.0).color(if !enabled { theme.colors().muted } else { change_color.unwrap_or(theme.colors().foreground) }),
                         Spacer::new(),
                         Text::new(mark).font_size(11.0).color(change_color.unwrap_or(theme.colors().muted)).padding_insets(EdgeInsets::new(0.0, 0.0, 8.0, 0.0)),
                     }.spacing(0.0).frame(f32::INFINITY, 27.0)

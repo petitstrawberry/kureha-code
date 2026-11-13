@@ -12,7 +12,7 @@ use kureha_code::{
         write::{Operation, Writer},
     },
 };
-use scarlet_ui::prelude::State as Ui;
+use scarlet_ui::{prelude::State as Ui, views::Truncation};
 use std::{
     result::Result,
     time::{Duration, Instant},
@@ -67,6 +67,7 @@ pub(super) struct Panel {
     rows: Ui<Vec<GitRow>>,
     selected: Ui<Option<usize>>,
     message: Ui<String>,
+    message_selection: Ui<scarlet_ui::views::TextSelection>,
     /// The last answer from the writer, or why nothing can be done.
     notice: Ui<String>,
     busy: Ui<bool>,
@@ -80,6 +81,7 @@ impl Panel {
             rows: Ui::new(generate_state_id(), Vec::new()),
             selected: Ui::new(generate_state_id(), None),
             message: Ui::new(generate_state_id(), String::new()),
+            message_selection: Ui::new(generate_state_id(), Default::default()),
             notice: Ui::new(generate_state_id(), String::new()),
             busy: Ui::new(generate_state_id(), false),
         }
@@ -574,7 +576,8 @@ impl App {
         };
         let refresh = self.clone();
         let commit = self.clone();
-        let submit = self.clone();
+        let commit_key = self.clone();
+
         let rows = self.clone();
         let focus = self.git_panel.clone();
         let message_focus = self.git_panel.clone();
@@ -613,16 +616,20 @@ impl App {
         let body = if_view!(snapshot.is_some(),
             vstack! {
                 Text::new(head).font_size(12.0).color(colors.muted),
-                // One line for now: a multi-line TextView overflows the sidebar
-                // (it measures 400 px wide there).
-                TextField::new(self.git_panel.message.clone()).font_size(13.0).padding(5.0)
-                    .background_color(colors.elevated).text_color(colors.foreground)
+                TextView::new(self.git_panel.message.clone(), self.git_panel.message_selection.clone())
+                    .placeholder(if cfg!(target_os = "macos") {
+                        "Message (⌘Enter to commit)"
+                    } else {
+                        "Message (Ctrl+Enter to commit)"
+                    })
+                    .font_size(13.0).padding(6.0)
+                    .background(colors.elevated).text_color(colors.foreground)
                     .placeholder_color(colors.muted).border_color(colors.border)
+                    .focused_border_color(colors.accent)
                     .material(theme.input_material())
-                    .placeholder("Commit message (Enter to commit)")
+                    .wrap_mode(scarlet_ui::views::WrapMode::Soft)
                     .autofocus(self.git_panel.wants_focus() && self.git_panel.focus_message.get())
-                    .on_submit(move || submit.git_commit())
-                    .frame(f32::INFINITY, 28.0)
+                    .frame(f32::INFINITY, 76.0)
                     .on_event_capture(move |event| {
                         if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) {
                             message_focus.focus_message.set(true);
@@ -636,16 +643,16 @@ impl App {
                     .on_click(move || commit.git_commit())
                     .frame(f32::INFINITY, 28.0),
                 if_view!(!warning.is_empty(),
-                    Text::new(warning.clone()).font_size(11.0).color(colors.warning),
+                    Text::new(warning.clone()).font_size(11.0).color(colors.warning).line_limit(None),
                     VStack::new(())),
-                Text::new(notice).font_size(11.0).color(colors.muted),
+                Text::new(notice).font_size(11.0).color(colors.muted).line_limit(None),
                 ListView::new(self.git_panel.rows.clone(), self.git_panel.selected.clone(), 27.0, move |index, row: GitRow, selected| {
                     rows.git_row(row, selected == Some(index), &row_theme)
                 }).item_key(|row| row.key().into())
                   .frame(f32::INFINITY, f32::INFINITY),
             }.alignment(Alignment::Leading).spacing(8.0),
             vstack! {
-                Text::new(empty).font_size(12.0).color(colors.muted),
+                Text::new(empty).font_size(12.0).color(colors.muted).line_limit(None),
                 Spacer::new(),
             }.alignment(Alignment::Leading)
         );
@@ -661,6 +668,17 @@ impl App {
                 ) {
                     focus.owns_focus.set(true);
                     focus.focus_message.set(false);
+                }
+                // Enter adds a line to the message; with the primary key it commits.
+                if let Event::Keyboard(KeyEvent::Pressed {
+                    keycode: KeyCode::Enter,
+                    modifiers,
+                }) = event
+                    && modifiers.primary()
+                    && focus.focus_message.get()
+                {
+                    commit_key.git_commit();
+                    return true;
                 }
                 false
             })
@@ -733,12 +751,15 @@ impl App {
                 let stage = entry.clone();
                 Either::B(
                     hstack! {
+                        // One flat row, so the name and folder shorten before the letter.
                         super::ui::list_row(hstack! {
-                            hstack! {
-                                icon.view(),
-                                Text::new(name).font_size(13.0).color(color),
-                                Text::new(parent).font_size(11.0).color(colors.muted),
-                            }.spacing(6.0).padding(4.0),
+                            Spacer::new().frame(4.0, 1.0),
+                            icon.view(),
+                            Spacer::new().frame(6.0, 1.0),
+                            Text::new(name).font_size(13.0).color(color),
+                            Spacer::new().frame(6.0, 1.0),
+                            Text::new(parent).font_size(11.0).color(colors.muted)
+                                .truncation(Truncation::Middle),
                             Spacer::new(),
                             Text::new(entry.change.letter()).font_size(11.0).color(color)
                                 .padding_insets(EdgeInsets::new(0.0, 0.0, 6.0, 0.0)),
@@ -810,12 +831,13 @@ impl App {
         Surface::section(
             vstack! {
                 hstack! {
-                    Text::new(title).font_size(12.0).color(colors.foreground),
+                    Text::new(title).font_size(12.0).color(colors.foreground)
+                        .truncation(Truncation::Middle),
                     Spacer::new(),
                     Text::new(summary).font_size(12.0).color(colors.muted),
                 }.spacing(8.0).padding_insets(EdgeInsets::new(14.0, 10.0, 14.0, 4.0)),
                 if_view!(!message.is_empty(),
-                    Text::new(message.clone()).font_size(12.0).color(colors.muted)
+                    Text::new(message.clone()).font_size(12.0).color(colors.muted).line_limit(None)
                         .padding_insets(EdgeInsets::new(14.0, 4.0, 14.0, 4.0)),
                     VStack::new(())),
                 body,
@@ -868,6 +890,10 @@ mod tests {
     }
     /// Writes a PNG of the workbench when `KUREHA_WORKBENCH_PREVIEW` names a folder.
     fn render_preview(app: &App, name: &str) {
+        render_preview_sized(app, name, 1100.0);
+    }
+    /// The workbench at `width`; the sidebar takes its minimum below ~860.
+    fn render_preview_sized(app: &App, name: &str, width: f32) {
         use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
         let Some(directory) = std::env::var_os("KUREHA_WORKBENCH_PREVIEW") else {
             return;
@@ -876,7 +902,7 @@ mod tests {
         pipeline.set_root(
             Window::new("Kureha Code", app.content())
                 .decorated(false)
-                .size(Size::new(1100.0, 560.0))
+                .size(Size::new(width, 560.0))
                 .create_element(),
         );
         pipeline.layout_initial();
@@ -907,7 +933,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("src")).unwrap();
         git(&dir, &["init", "-q", "-b", "main"]);
-        for file in ["README.md", "keep.txt", "src/lib.rs"] {
+        for file in [
+            "README.md",
+            "keep.txt",
+            "src/lib.rs",
+            "a_rather_long_file_name_for_a_narrow_explorer.txt",
+        ] {
             std::fs::write(dir.join(file), "one\n").unwrap();
         }
         git(&dir, &["add", "."]);
@@ -938,6 +969,7 @@ mod tests {
         });
         assert_eq!(mark(&app, "keep.txt"), Some(Change::Modified));
         render_preview(&app, "git-explorer.png");
+        render_preview_sized(&app, "git-explorer-narrow.png", 760.0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -962,6 +994,10 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.join("notes.txt"), "new\n").unwrap();
+        let deep = dir.join("src/components/forms/inputs");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("a_rather_long_component_name.rs"), "new\n").unwrap();
+        git(&dir, &["add", "-N", "src/components"]);
 
         let app = App::with_document();
         app.open_folder(dir.clone());
@@ -1009,8 +1045,9 @@ mod tests {
                 && file(app, "lib.rs", true).is_some()
                 && file(app, "lib.rs", false).is_none()
         });
-        assert_eq!(app.git_panel.notice.get(), "Staged 2 files");
+        assert_eq!(app.git_panel.notice.get(), "Staged 3 files");
         render_preview(&app, "git-sidebar.png");
+        render_preview_sized(&app, "git-sidebar-narrow.png", 760.0);
 
         app.git_panel.message.set("Fill in f6".into());
         app.git_commit();

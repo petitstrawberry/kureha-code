@@ -1,6 +1,6 @@
 {
   "generator": "cargo-about",
-  "cargo_lock_sha256": "072713895ab0d0954d47a86da88112a43ad410bbc3ce2c2ef2f674c5823f91a7",
+  "cargo_lock_sha256": "1a59bda42d6e77aea205ee122a113126847315ef3879fb486b759c71a8adfbf7",
   "entries": [
     {
       "name": "ab_glyph",
