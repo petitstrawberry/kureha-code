@@ -59,6 +59,7 @@ impl Pty {
             .unwrap_or_else(|| "/bin/sh".into());
         let spawn = |shell: &std::ffi::OsStr| -> io::Result<Child> {
             let mut command = Command::new(shell);
+            crate::environment::apply(&mut command);
             command
                 .arg("-i")
                 .current_dir(cwd)

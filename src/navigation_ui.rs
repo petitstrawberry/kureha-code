@@ -321,6 +321,12 @@ pub(super) const COMMANDS: &[CommandDescriptor] = &[
         "Primary+Shift+F"
     ),
     command!(
+        "environment-reload",
+        "Environment: Reload",
+        "direnv nix envrc shell",
+        ""
+    ),
+    command!(
         "messages-history",
         "Messages: Show History",
         "status notifications errors log",
@@ -1002,10 +1008,10 @@ impl App {
                             let permission = &permissions[index - contributed.len()];
                             Row {
                                 label: permission.label.clone(),
-                                detail: if permission.allow {
-                                    "Runs with your permissions".into()
-                                } else {
-                                    String::new()
+                                detail: match (permission.allow, permission.environment()) {
+                                    (true, false) => "Runs with your permissions".into(),
+                                    (true, true) => "Sets PATH and more for every program".into(),
+                                    (false, _) => String::new(),
                                 },
                                 key: format!(
                                     "perm:{}:{}:{}",
@@ -1265,6 +1271,9 @@ impl App {
             Action::ExtensionCommand(extension, command) => {
                 self.run_extension_command(extension, command)
             }
+            Action::ExtensionPermission(extension, "", allow) => {
+                self.set_environment_permission(&extension.manifest.id, allow)
+            }
             Action::ExtensionPermission(extension, program, allow) => {
                 self.set_process_permission(extension, program, allow)
             }
@@ -1300,6 +1309,7 @@ impl App {
             "project-search" => self.show_project_search(),
             "git-switch-branch" => self.show_branch_picker(),
             "messages-history" => self.show_message_history(),
+            "environment-reload" => self.request_environment(),
             "undo" => self.undo(false),
             "redo" => self.undo(true),
             "comment" => self.edit_command(super::editing_ui::Command::Comment),

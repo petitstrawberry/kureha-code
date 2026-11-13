@@ -31,6 +31,9 @@ pub const MAX_STDOUT_BYTES: usize = 512 * 1024;
 pub const MAX_STDERR_BYTES: usize = 16 * 1024;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_TIMEOUT: Duration = Duration::from_secs(20);
+/// The longest an environment may take to compute: a Nix dev shell can
+/// build for minutes the first time.
+pub const MAX_ENVIRONMENT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// Runs allowed within one command or format call.
 pub const MAX_RUNS_PER_CALL: u32 = 8;
 /// After the program exits, how long its pipes may stay open (for example,
@@ -117,6 +120,9 @@ pub struct Run {
     pub stdin: Option<Vec<u8>>,
     pub cwd: PathBuf,
     pub timeout: Duration,
+    /// Give the program Kureha's environment overlay (direnv's, say). Off
+    /// when computing that environment, which must start from the base.
+    pub overlay: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -201,6 +207,9 @@ pub fn run(run: Run) -> Result<Output, String> {
         |n| n.to_string_lossy().into(),
     );
     let mut command = Command::new(&run.program);
+    if run.overlay {
+        crate::environment::apply(&mut command);
+    }
     command
         .args(&run.args)
         .current_dir(&run.cwd)
@@ -330,6 +339,7 @@ mod tests {
             stdin: stdin.map(|s| s.as_bytes().to_vec()),
             cwd: std::env::temp_dir(),
             timeout,
+            overlay: true,
         })
     }
 

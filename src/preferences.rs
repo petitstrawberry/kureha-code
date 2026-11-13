@@ -18,6 +18,9 @@ pub(super) struct Preferences {
     pub allow_process: BTreeMap<String, BTreeSet<String>>,
     /// `[extensions] disabled`: extensions turned off; their grants stay.
     pub disabled_extensions: BTreeSet<String>,
+    /// `[extensions] allow_environment`: extensions that may set the
+    /// environment of the programs Kureha starts (direnv's, say).
+    pub allow_environment: BTreeSet<String>,
 }
 #[derive(Clone, Debug)]
 pub(super) enum Change {
@@ -36,6 +39,11 @@ pub(super) enum Change {
     },
     /// Turns an extension on or off.
     ExtensionEnabled { extension: String, enabled: bool },
+    /// Lets an extension set the environment, or stops it.
+    AllowEnvironment {
+        extension: String,
+        allowed: bool,
+    },
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -50,6 +58,7 @@ impl Default for Preferences {
             formatter: BTreeMap::new(),
             allow_process: BTreeMap::new(),
             disabled_extensions: BTreeSet::new(),
+            allow_environment: BTreeSet::new(),
         }
     }
 }
@@ -124,18 +133,27 @@ impl Preferences {
                 "extensions" => {
                     let table = value.as_table().ok_or("extensions must be a table")?;
                     for (key, value) in table {
-                        if key == "disabled" {
-                            result.disabled_extensions = value
+                        if key == "disabled" || key == "allow_environment" {
+                            let ids = value
                                 .as_array()
-                                .ok_or("extensions.disabled must be a list of extension ids")?
+                                .ok_or_else(|| {
+                                    format!("extensions.{key} must be a list of extension ids")
+                                })?
                                 .iter()
                                 .map(|id| {
                                     id.as_str()
                                         .filter(|id| kureha_code::extensions::valid_id(id))
                                         .map(String::from)
-                                        .ok_or("extensions.disabled: invalid extension id")
+                                        .ok_or_else(|| {
+                                            format!("extensions.{key}: invalid extension id")
+                                        })
                                 })
                                 .collect::<Result<_, _>>()?;
+                            if key == "disabled" {
+                                result.disabled_extensions = ids;
+                            } else {
+                                result.allow_environment = ids;
+                            }
                             continue;
                         }
                         if key != "allow_process" {
@@ -206,6 +224,13 @@ impl Preferences {
                     self.disabled_extensions.remove(extension);
                 } else {
                     self.disabled_extensions.insert(extension.clone());
+                }
+            }
+            Change::AllowEnvironment { extension, allowed } => {
+                if *allowed {
+                    self.allow_environment.insert(extension.clone());
+                } else {
+                    self.allow_environment.remove(extension);
                 }
             }
         }

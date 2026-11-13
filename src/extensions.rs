@@ -39,6 +39,9 @@ pub struct Capabilities {
     /// Host names the extension may connect to.
     pub network: Vec<String>,
     pub clock: bool,
+    /// May set the environment of the programs Kureha starts (with the
+    /// user's grant), through `[contributes.environment]`.
+    pub environment: bool,
 }
 impl Default for Capabilities {
     fn default() -> Self {
@@ -47,6 +50,7 @@ impl Default for Capabilities {
             process: Vec::new(),
             network: Vec::new(),
             clock: false,
+            environment: false,
         }
     }
 }
@@ -216,6 +220,16 @@ pub struct KeybindingContribution {
     pub key: KeyChord,
 }
 
+/// Supplies the environment for an open folder, such as direnv's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnvironmentContribution {
+    /// File names, one of which must be in the folder for the extension to
+    /// be asked (`.envrc`).
+    pub files: Vec<String>,
+    /// File names whose save asks again (`.envrc`, `flake.nix`, …).
+    pub watch: Vec<String>,
+}
+
 /// Formats whole documents of the given languages, on request or on save.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FormatterContribution {
@@ -232,6 +246,7 @@ pub struct Contributions {
     pub language_servers: Vec<LanguageServerContribution>,
     pub keybindings: Vec<KeybindingContribution>,
     pub formatters: Vec<FormatterContribution>,
+    pub environment: Option<EnvironmentContribution>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -432,7 +447,7 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, String> {
         reject_unknown(
             table,
             "[capabilities]",
-            &["workspace", "process", "network", "clock"],
+            &["workspace", "process", "network", "clock", "environment"],
         )?;
         capabilities.workspace =
             match optional_string(table, "workspace", "[capabilities]")?.as_deref() {
@@ -463,6 +478,12 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, String> {
                 .as_bool()
                 .ok_or("[capabilities]: `clock` must be true or false")?,
         };
+        capabilities.environment = match table.get("environment") {
+            None => false,
+            Some(value) => value
+                .as_bool()
+                .ok_or("[capabilities]: `environment` must be true or false")?,
+        };
     }
 
     let mut contributes = Contributions::default();
@@ -478,6 +499,7 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, String> {
                 "language_servers",
                 "keybindings",
                 "formatters",
+                "environment",
             ],
         )?;
         for item in tables(table, "commands")? {
@@ -603,10 +625,41 @@ pub fn parse_manifest(source: &str) -> Result<Manifest, String> {
                 .formatters
                 .push(FormatterContribution { languages });
         }
+        if let Some(item) = sub_table(table, "environment")? {
+            let context = "[contributes.environment]";
+            reject_unknown(item, context, &["files", "watch"])?;
+            let files = strings(item, "files", context)?;
+            let mut watch = strings(item, "watch", context)?;
+            if files.is_empty() {
+                return Err(format!("{context}: `files` must not be empty"));
+            }
+            let plain = |name: &String| {
+                !name.is_empty() && !name.contains(['/', '\\', '\0']) && name != "." && name != ".."
+            };
+            if let Some(bad) = files.iter().chain(&watch).find(|name| !plain(name)) {
+                return Err(format!("{context}: `{bad}` must be a file name"));
+            }
+            if !capabilities.environment {
+                return Err(format!(
+                    "{context} needs `environment = true` in [capabilities]"
+                ));
+            }
+            for file in &files {
+                if !watch.contains(file) {
+                    watch.push(file.clone());
+                }
+            }
+            contributes.environment = Some(EnvironmentContribution { files, watch });
+        }
         if wasm.is_none()
-            && !(contributes.keybindings.is_empty() && contributes.formatters.is_empty())
+            && !(contributes.keybindings.is_empty()
+                && contributes.formatters.is_empty()
+                && contributes.environment.is_none())
         {
-            return Err("keybindings and formatters need a `wasm` module in [extension]".into());
+            return Err(
+                "keybindings, formatters and environments need a `wasm` module in [extension]"
+                    .into(),
+            );
         }
     }
 
@@ -783,6 +836,20 @@ impl Registry {
                     .formatters
                     .iter()
                     .any(|f| f.languages.iter().any(|l| l == language))
+        })
+    }
+    /// Enabled extensions that supply an environment for a folder.
+    pub fn environment_providers(
+        &self,
+    ) -> impl Iterator<Item = (&Extension, &EnvironmentContribution)> {
+        self.enabled().filter_map(|extension| {
+            extension
+                .manifest
+                .contributes
+                .environment
+                .as_ref()
+                .filter(|_| extension.wasm.is_some())
+                .map(|contribution| (extension, contribution))
         })
     }
     /// Contributed keybindings as (extension, binding), in load order.

@@ -182,6 +182,38 @@ fn create_settings(path: &std::path::Path) -> std::io::Result<()> {
         Err(e) => Err(e),
     }
 }
+/// Adds `extension` to (or, with `listed` false, removes it from) the list
+/// `[extensions] <key>`, dropping empty lists and tables.
+fn set_listed(
+    document: &mut toml_edit::DocumentMut,
+    key: &str,
+    extension: &str,
+    listed: bool,
+) -> Result<(), String> {
+    let extensions = document
+        .entry("extensions")
+        .or_insert_with(toml_edit::table)
+        .as_table_mut()
+        .ok_or("extensions must be a table")?;
+    extensions.set_implicit(true);
+    let ids = extensions
+        .entry(key)
+        .or_insert_with(|| toml_edit::value(toml_edit::Array::new()))
+        .as_array_mut()
+        .ok_or_else(|| format!("extensions.{key} must be a list"))?;
+    ids.retain(|id| id.as_str() != Some(extension));
+    if listed {
+        ids.push(extension);
+    }
+    if ids.is_empty() {
+        extensions.remove(key);
+    }
+    if extensions.is_empty() {
+        document.remove("extensions");
+    }
+    Ok(())
+}
+
 fn save(path: &std::path::Path, change: &Change) -> Result<(), String> {
     let resolved = if path.is_symlink() {
         Some(path.canonicalize().map_err(|e| e.to_string())?)
@@ -256,27 +288,10 @@ fn save(path: &std::path::Path, change: &Change) -> Result<(), String> {
             }
         }
         Change::ExtensionEnabled { extension, enabled } => {
-            let extensions = document
-                .entry("extensions")
-                .or_insert_with(toml_edit::table)
-                .as_table_mut()
-                .ok_or("extensions must be a table")?;
-            extensions.set_implicit(true);
-            let disabled = extensions
-                .entry("disabled")
-                .or_insert_with(|| toml_edit::value(toml_edit::Array::new()))
-                .as_array_mut()
-                .ok_or("extensions.disabled must be a list")?;
-            disabled.retain(|id| id.as_str() != Some(extension.as_str()));
-            if !*enabled {
-                disabled.push(extension.as_str());
-            }
-            if disabled.is_empty() {
-                extensions.remove("disabled");
-            }
-            if extensions.is_empty() {
-                document.remove("extensions");
-            }
+            set_listed(&mut document, "disabled", extension, !*enabled)?;
+        }
+        Change::AllowEnvironment { extension, allowed } => {
+            set_listed(&mut document, "allow_environment", extension, *allowed)?;
         }
     }
     let updated = document.to_string();
@@ -591,6 +606,43 @@ mod persistence_tests {
         assert!(!saved.contains("disabled"), "{saved}");
         assert!(Preferences::parse(&saved).unwrap().disabled_extensions.is_empty());
         assert!(Preferences::parse("[extensions]\ndisabled = [\"Not An Id\"]").is_err());
+    }
+    #[test]
+    fn environment_grants_are_saved_beside_the_disabled_list() {
+        let f = Fixture::new();
+        fs::write(f.settings(), "# mine\ncolor_theme = 'nord'\n").unwrap();
+        let allow = |allowed| Change::AllowEnvironment {
+            extension: "example.direnv".into(),
+            allowed,
+        };
+        let disable = Change::ExtensionEnabled {
+            extension: "example.fmt".into(),
+            enabled: false,
+        };
+        save(&f.settings(), &allow(true)).unwrap();
+        save(&f.settings(), &allow(true)).unwrap();
+        save(&f.settings(), &disable).unwrap();
+        let preferences = Preferences::parse(&fs::read_to_string(f.settings()).unwrap()).unwrap();
+        assert_eq!(
+            preferences.allow_environment,
+            ["example.direnv".to_string()].into()
+        );
+        assert_eq!(
+            preferences.disabled_extensions,
+            ["example.fmt".to_string()].into()
+        );
+        save(&f.settings(), &allow(false)).unwrap();
+        let saved = fs::read_to_string(f.settings()).unwrap();
+        assert!(!saved.contains("allow_environment"), "{saved}");
+        assert!(saved.contains("disabled"), "{saved}");
+        assert!(
+            Preferences::parse(&saved)
+                .unwrap()
+                .allow_environment
+                .is_empty()
+        );
+        assert!(Preferences::parse("[extensions]\nallow_environment = \"x.y\"").is_err());
+        assert!(Preferences::parse("[extensions]\nallow_environment = [\"Not An Id\"]").is_err());
     }
     #[test]
     fn save_acknowledgement_waits_for_preview_without_losing_preferences() {

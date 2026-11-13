@@ -317,6 +317,29 @@ fn real_pty_interactive_cwd_input_ansi_resize_exit_and_close() {
 
 #[test]
 #[cfg(all(unix, not(target_os = "scarlet")))]
+fn new_terminals_get_the_folder_environment() {
+    let _serial = crate::environment::test_serial();
+    crate::environment::set(Some(crate::environment::Overlay {
+        folder: std::env::temp_dir(),
+        vars: [(
+            "KUREHA_TEST_TERMINAL".to_string(),
+            Some("dev-shell".to_string()),
+        )]
+        .into(),
+        source: "test.env".into(),
+    }));
+    let terminal = Terminal::new();
+    terminal.open(std::env::temp_dir());
+    wait_until(&terminal, |t| t.status() == TerminalStatus::Running);
+    assert!(terminal.send_input(b"exec /bin/sh -i\r"));
+    assert!(terminal.send_input(b"printf 'ENV:%s:END\\n' \"$KUREHA_TEST_TERMINAL\"\r"));
+    wait_until(&terminal, |t| text(t).contains("ENV:dev-shell:END"));
+    crate::environment::set(None);
+    terminal.close();
+}
+
+#[test]
+#[cfg(all(unix, not(target_os = "scarlet")))]
 fn backend_close_reaps_shell_and_last_terminal_drop_cancels() {
     let mut pty = backend::Pty::open(&std::env::temp_dir(), (80, 16)).unwrap();
     pty.write(b"exec /bin/sh -i\r").unwrap();

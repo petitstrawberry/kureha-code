@@ -67,6 +67,7 @@ commands = ["todo.list"]
 [capabilities]               # 書かなければ何もできない
 workspace = "read"           # "none" | "read" | "read-write"
 process = []                 # 起動してよい実行ファイル名
+environment = false          # 開いたフォルダの環境変数を提供する(direnvなど)
 network = []                 # 接続してよいホスト名
 clock = false                # 時刻・乱数。falseならクエリは決定的になる
 
@@ -92,6 +93,10 @@ key = "Alt+Shift+T"
 
 [[contributes.formatters]]   # Format Document と保存時の整形を引き受ける
 languages = ["markdown"]
+
+[contributes.environment]    # capabilities.environment が必要
+files = [".envrc"]           # フォルダ直下にあれば、この拡張に環境を問い合わせる
+watch = ["flake.nix"]        # 保存したら問い合わせ直す(files も含む)
 ```
 
 ## 入口は2種類
@@ -521,7 +526,70 @@ macOSのリリースビルドで40〜70 ms。`format_tools_budget`)。変わら�
 削除、ワーカーへの反映、言語サーバーの許可。`format_tools_end_to_end` は実際のruffで、許可前の拒否、
 整形、構文エラー時の不変、取り消し後の拒否を通す。
 
+### 段階5: フォルダの環境(実装済み)
+
+`src/environment.rs`(上書きの保持と適用)、`environment_ui.rs`(いつ問い合わせるか)、`runtime.rs` の
+`environment` 呼び出し。
+
+Nixの開発シェル(`nix develop`、direnvの `use flake`)では、言語サーバーや整形器がそのシェルの `PATH` にしかない。
+拡張が開いているフォルダの環境変数を返し、Kurehaはそれを起動するプログラムすべてに渡す。
+
+**上書きのしかた**
+
+- Kureha自身の環境は変えない(`set_var` は他のスレッドがあると健全でない)。言語サーバー、新しいターミナル、
+  拡張のプログラムを起動する箇所が `environment::apply` で上書きを `Command` に載せ、プログラムは
+  `environment::var_os("PATH")` で探す。
+- 上書きは1つだけで、1つのフォルダのもの。値が文字列なら設定、`null` なら削除。
+- フォルダが変わると消して問い合わせ直す。古い問い合わせへの返事は捨てる。
+- 言語サーバーは上書きが変わったときに起動し直す(開発シェルにしかないサーバーが失敗していたら、そこで
+  再挑戦する)。同じ内容が返ってきたときは起動し直さない。起動済みのターミナルはそのままで、新しく開いた
+  ものから効く。
+- 読み込み中は、そのフォルダ(とその中)の言語サーバーを待たせる。開発シェルの外の同名のサーバーを
+  先に起動しないように。フォルダを開いた直後、拡張と設定(許可)の読み込みが終わるまでも、最大3秒待たせる。
+
+**権限**。`PATH` や `DYLD_INSERT_LIBRARIES` を変えられるのは、すべての起動にプログラムを差し込めるのと同じ。
+
+- マニフェストに `[capabilities] environment = true` と `[contributes.environment]` が要り、WASMも要る。
+- 問い合わせるのは、ユーザーが **Extensions: Allow <拡張id> to Set the Environment** で許可した拡張だけ。
+  設定の `[extensions] allow_environment = ["id"]` に保存する。**Extensions: Stop <拡張id> Setting the
+  Environment** で取り消すか、拡張を無効にすると、上書きはすぐ消える。
+- 許可していなければ、フォルダごとに1度だけ許可のしかたを知らせる。
+- 環境を作るプログラム(direnv)の起動には、別に `process` の許可が要る。
+
+**問い合わせ**
+
+- いつ: 毎回のアイドル処理で、フォルダの提供者(有効で許可済みのもの)が前回問い合わせたものと違えば問い合わせる。
+  つまり、フォルダを開いたとき(拡張と設定の読み込みが終わってから)、許可したとき、無効にした拡張を戻したとき。
+  ほかに、`watch` のファイルをそのフォルダ直下で保存したとき、**Environment: Reload**、提供する拡張の
+  コマンドが成功したとき(direnv: Allow .envrc)、その拡張にプログラムの許可を出したとき。
+  失敗しても自動では繰り返さない。
+- どの拡張に: 有効な提供者のうち、`files` のどれかがフォルダ直下にある最初のもの。
+- 呼び出しは `{"kind": "environment", "folder": "..."}`、返事は `{"environment": {"NAME": "値" | null}}`。
+  空の名前、`=` やNULを含む名前、文字列でもnullでもない値は拒否する。
+- この呼び出しの `process` は、作業ディレクトリが常にそのフォルダ、時間は最大15分(Nixの初回のビルド)。
+  上書きを含まないKureha自身の環境で動き、Kureha自身の `PATH` で探す(direnvは今の環境との差分を返すので、
+  上書きの上で動かすと差分がずれる)。コマンドと整形が起動するプログラムは上書きを受け取る。
+- 読み込み中はステータスバーに進捗を出し、終わったら変数の数か失敗を知らせる。失敗したら上書きを消す。
+
+**SDK**: `Request::Environment { folder }` と `Reply::environment([("PATH", Some(...)), ("OLD", None)])`。
+
+**例: direnv**(`examples/extensions/direnv`)。`direnv export json` の結果をそのまま返す。未承認の
+`.envrc` には「direnv: Allow .envrc」(`direnv allow` を実行する)を案内する。
+
+確認: `environment.rs` のテストで、起動するプログラムへの設定と削除、`PATH` の解決、待たせるフォルダの範囲。
+`runtime` のテストで、環境の呼び出しのプログラムがフォルダで上書きなしに動き15分まで待てること、
+コマンドのプログラムは上書きを受け取ること、返事の検証。ターミナルのテストで、新しいシェルが上書きを受け取ること。
+UIのテストで、設定の読み込み前の待機、許可前の案内(1度だけ)、許可、読み込み中の待機と進捗、開発シェルの
+`PATH` にしかないプログラムの起動(言語サーバーの起動経路で)、保存での読み直し、フォルダの切り替えと古い返事の
+破棄、失敗、無効化と再有効化、同じ返事で再起動しないこと、取り消し、保存済みの許可での起動時の読み込み。
+設定ファイルへの保存。`real_direnv_guest_exports_the_folder_environment`
+は本物のdirenvで、未承認の案内と承認後の変数を通す。`real_direnv_dev_shell_reaches_language_servers` は
+本物のdirenvの拡張・direnv・Nixで、`use flake` の開発シェルにしかないプログラムが言語サーバーの起動経路で
+見つかること(`hello` の開発シェルで2.6秒)。
+
 ### 次にやること
+
+- Gitの操作(`src/git/command.rs`)の起動にも `environment::apply` を使う。
 
 - 言語サーバーの整形を保存時にも使う。「すべて保存」でも整形する。
 - 外部ツールのリンター。プロセスはクエリの中では使えないので、診断や `decorations` に出すには、
@@ -532,7 +600,8 @@ macOSのリリースビルドで40〜70 ms。`format_tools_budget`)。変わら�
   VS Codeの「ワークスペースの信頼」に当たる仕組みで、設定ファイルのコードを実行するツール(Prettierなど)には
   こちらのほうが安全。
 - macOSでFinderから起動するとPATHが最小限(`/usr/bin:/bin:...`)になり、Homebrewやnixのツールが
-  見つからない。言語サーバーも同じ問題を抱えているので、ログインシェルのPATHを取り込むかを決める。
+  見つからない。言語サーバーも、環境を作るdirenv自体も同じ問題を抱えているので、ログインシェルのPATHを
+  取り込むかを決める。
 - Scarlet実機でのfuel計測と、予算の見直し。
 - `decorations` の結果をエディタに描く(見えている範囲だけ問い合わせ、版でキャッシュ)。
 - 拡張一覧と読み込みエラーを見られる画面(コマンドパレットの項目から開く)。

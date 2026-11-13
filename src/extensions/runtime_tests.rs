@@ -493,6 +493,7 @@ fn host_state(programs: &[&str], granted: &[&str], call: Call) -> HostState {
         },
         call,
         runs: 0,
+        folder: None,
     }
 }
 fn host_request(state: &mut HostState, request: Value) -> Value {
@@ -613,6 +614,127 @@ fn processes_run_in_the_document_or_workspace_folder() {
     });
     assert!(pwd(&mut state, None).is_dir());
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An environment is computed in its folder from Kureha's own environment
+/// (not the overlay it is about to replace), and may take minutes; the
+/// programs of commands see the overlay.
+#[cfg(unix)]
+#[test]
+fn environment_calls_run_in_the_folder_without_the_overlay() {
+    let _serial = crate::environment::test_serial();
+    let base = std::env::temp_dir().join(format!("kureha-process-env-{}", std::process::id()));
+    let folder = base.join("project");
+    std::fs::create_dir_all(&folder).unwrap();
+    crate::environment::set(Some(crate::environment::Overlay {
+        folder: folder.clone(),
+        vars: std::collections::BTreeMap::from([("KUREHA_TEST_SHELL".into(), Some("dev".into()))]),
+        source: "ex.fmt".into(),
+    }));
+    let run = |state: &mut HostState, timeout_ms: u64| {
+        host_request(
+            state,
+            json!({
+                "op": "process",
+                "program": "sh",
+                "args": ["-c", "pwd -P; echo \"${KUREHA_TEST_SHELL-base}\""],
+                "cwd": "workspace",
+                "timeout_ms": timeout_ms,
+            }),
+        )
+    };
+    let mut state = host_state(&["sh"], &["sh"], Call::Environment);
+    state.folder = Some(folder.clone());
+    state.document = None;
+    let reply = run(&mut state, 10 * 60 * 1000);
+    assert_eq!(
+        reply["stdout"].as_str().unwrap(),
+        format!("{}\nbase\n", folder.canonicalize().unwrap().display()),
+        "{reply}"
+    );
+    let mut state = host_state(&["sh"], &["sh"], Call::Task);
+    state.document = Some(DocumentSnapshot {
+        path: folder.join("notes.txt"),
+        workspace: Some(folder.clone()),
+        ..snapshot("")
+    });
+    assert!(
+        host_error(
+            &mut state,
+            json!({"op": "process", "program": "sh", "timeout_ms": 10 * 60 * 1000})
+        )
+        .contains("timeout_ms")
+    );
+    let reply = run(&mut state, 5000);
+    assert!(
+        reply["stdout"].as_str().unwrap().ends_with("\ndev\n"),
+        "{reply}"
+    );
+    crate::environment::set(None);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Runs the direnv example (`examples/extensions/direnv`) with the `direnv`
+/// first on PATH, in a folder, and checks one variable (`NAME=value`) or an
+/// error (`error:<part of it>`):
+/// `KUREHA_TEST_DIRENV_WASM=<.wasm> KUREHA_TEST_DIRENV_FOLDER=<dir>
+/// KUREHA_TEST_DIRENV_EXPECT=FOO=bar cargo test real_direnv -- --ignored`
+#[test]
+#[ignore]
+fn real_direnv_guest_exports_the_folder_environment() {
+    let setting = |name: &str| {
+        std::env::var(name).unwrap_or_else(|_| panic!("set {name}; see the comment above"))
+    };
+    let wasm = std::fs::read(setting("KUREHA_TEST_DIRENV_WASM")).unwrap();
+    let folder = PathBuf::from(setting("KUREHA_TEST_DIRENV_FOLDER"));
+    let expect = setting("KUREHA_TEST_DIRENV_EXPECT");
+    let access = Access {
+        extension: "example.direnv".into(),
+        programs: vec!["direnv".into()],
+        grants: Grants::new(std::collections::BTreeMap::from([(
+            "example.direnv".to_string(),
+            ["direnv".to_string()].into(),
+        )])),
+    };
+    let mut runtime = Runtime::with_access(&wasm, Budgets::default(), access).unwrap();
+    let result = runtime.environment(&folder);
+    println!("{result:?}");
+    match (expect.strip_prefix("error:"), result) {
+        (Some(part), Err(CallError::Extension(error))) => {
+            assert!(error.contains(part), "{error}")
+        }
+        (None, Ok(vars)) => {
+            let (name, value) = expect.split_once('=').unwrap();
+            assert_eq!(vars.get(name).cloned().flatten().as_deref(), Some(value));
+        }
+        (_, other) => panic!("expected {expect}, got {other:?}"),
+    }
+}
+
+#[test]
+fn environment_replies_are_validated() {
+    let ask = |reply: &str| {
+        let wasm = Guest::new().replying(reply).wasm();
+        Runtime::new(&wasm, Budgets::default())
+            .unwrap()
+            .environment(Path::new("/project"))
+    };
+    let vars =
+        ask(r#"{"environment":{"PATH":"/nix/store/a/bin:/usr/bin","GOROOT":null}}"#).unwrap();
+    assert_eq!(vars["PATH"].as_deref(), Some("/nix/store/a/bin:/usr/bin"));
+    assert_eq!(vars["GOROOT"], None);
+    assert!(ask(r#"{"environment":{}}"#).unwrap().is_empty());
+    for reply in [
+        r#"{}"#,
+        r#"{"environment":["PATH"]}"#,
+        r#"{"environment":{"A=B":"x"}}"#,
+    ] {
+        assert!(matches!(ask(reply), Err(CallError::Protocol(_))), "{reply}");
+    }
+    assert!(matches!(
+        ask(r#"{"error":"direnv: .envrc is blocked"}"#),
+        Err(CallError::Extension(e)) if e.contains("blocked")
+    ));
 }
 
 #[cfg(unix)]

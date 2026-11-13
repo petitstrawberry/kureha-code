@@ -206,7 +206,7 @@ fn extension_server(
             process::permission_hint(id, program)
         ));
     }
-    let path = process::resolve(program, std::env::var_os("PATH").as_deref())
+    let path = process::resolve(program, kureha_code::environment::var_os("PATH").as_deref())
         .ok_or_else(|| format!("`{program}` was not found on PATH"))?;
     Ok((path.to_string_lossy().into_owned(), server.args.clone()))
 }
@@ -628,11 +628,15 @@ impl App {
             let service = &mut rt.language;
             for doc in &snapshots {
                 if let Some(lang) = language(&doc.path) {
-                    service.ensure(
-                        lang,
-                        root.as_deref()
-                            .unwrap_or_else(|| doc.path.parent().unwrap_or(Path::new("/"))),
-                    );
+                    let root = root
+                        .as_deref()
+                        .unwrap_or_else(|| doc.path.parent().unwrap_or(Path::new("/")));
+                    // With Nix the server may only exist in the folder's dev
+                    // shell: wait while its environment is being read.
+                    if kureha_code::environment::is_pending(root) {
+                        continue;
+                    }
+                    service.ensure(lang, root);
                 }
             }
             for session in service.sessions.values_mut() {

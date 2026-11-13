@@ -1,0 +1,22 @@
+[extension]
+id = "example.direnv"
+name = "direnv"
+version = "0.1.0"
+api = 1
+wasm = "target/wasm32-unknown-unknown/release/kureha_direnv.wasm"
+
+# Both need your permission: "Extensions: Allow example.direnv to Run direnv"
+# and "Extensions: Allow example.direnv to Set the Environment".
+[capabilities]
+process = ["direnv"]
+environment = true
+
+# Asked when a folder with `.envrc` opens, and again when one of `watch` is
+# saved in it.
+[contributes.environment]
+files = [".envrc"]
+watch = [".envrc", "flake.nix", "flake.lock", "shell.nix", "default.nix", "devenv.nix"]
+
+[[contributes.commands]]
+id = "direnv.allow"
+title = "Allow .envrc"
