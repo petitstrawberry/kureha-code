@@ -80,7 +80,8 @@ const MENU: &[&str] = &[
 ];
 
 enum Purpose {
-    Command,
+    /// A command of the extension with this id.
+    Command(String),
     /// `save` holds the path and deadline when formatting precedes a save.
     Format {
         save: Option<(PathBuf, Instant)>,
@@ -111,6 +112,8 @@ pub(super) struct State {
     keys_reported: bool,
     /// The disabled set this window last handed to the registry.
     synced_disabled: std::collections::BTreeSet<String>,
+    /// The environment grants this window last handed over.
+    synced_environment: std::collections::BTreeSet<String>,
 }
 
 #[cfg(test)]
@@ -132,7 +135,7 @@ pub(super) fn registry() -> Option<&'static Registry> {
     }
     kureha_code::extensions::loaded()
 }
-fn start_host() -> Option<&'static Host> {
+pub(super) fn start_host() -> Option<&'static Host> {
     #[cfg(test)]
     if let Some((_, host, _)) = TEST.get() {
         return Some(host);
@@ -190,13 +193,19 @@ pub(super) fn formatter_for(language: &str, choice: Option<&str>) -> Formatter {
     }
 }
 
-/// A palette entry that grants or withdraws one declared program.
+/// A palette entry that grants or withdraws one declared program, or (with
+/// an empty `program`) the right to set the environment.
 pub(super) struct PermissionCommand {
     pub extension: &'static Extension,
     pub program: &'static str,
     pub allow: bool,
     pub label: String,
     pub keywords: String,
+}
+impl PermissionCommand {
+    pub fn environment(&self) -> bool {
+        self.program.is_empty()
+    }
 }
 /// "Allow" entries for declared programs the user has not granted, "Stop"
 /// entries for granted ones. Labels name the extension id and the program
@@ -231,6 +240,30 @@ pub(super) fn permission_commands() -> Vec<PermissionCommand> {
                 keywords: format!("{} permission process program", extension.manifest.name),
             }
         })
+        .chain(
+            registry
+                .extensions
+                .iter()
+                .filter(|e| e.manifest.capabilities.environment)
+                .map(|extension| {
+                    let id = extension.manifest.id.as_str();
+                    let allow = !kureha_code::environment::allows(id);
+                    PermissionCommand {
+                        extension,
+                        program: "",
+                        allow,
+                        label: if allow {
+                            kureha_code::environment::allow_command_label(id)
+                        } else {
+                            kureha_code::environment::revoke_command_label(id)
+                        },
+                        keywords: format!(
+                            "{} permission environment direnv nix",
+                            extension.manifest.name
+                        ),
+                    }
+                }),
+        )
         .collect()
 }
 
@@ -368,6 +401,39 @@ impl App {
         if changed {
             kureha_code::extensions::set_disabled(&preferences.disabled_extensions);
         }
+        let changed = {
+            let mut rt = self.runtime.lock().unwrap();
+            let synced = &mut rt.extensions.synced_environment;
+            let changed = *synced != preferences.allow_environment;
+            if changed {
+                *synced = preferences.allow_environment.clone();
+            }
+            changed
+        };
+        if changed {
+            kureha_code::environment::set_allowed(&preferences.allow_environment);
+        }
+    }
+    /// Lets `extension` set the folder's environment, or stops it, and saves
+    /// the choice. Allowing loads it now; stopping removes it.
+    pub(super) fn set_environment_permission(&self, extension: &str, allowed: bool) {
+        self.change_preferences(super::preferences::Change::AllowEnvironment {
+            extension: extension.into(),
+            allowed,
+        });
+        self.notify(
+            super::messages::Level::Info,
+            if allowed {
+                format!(
+                    "{extension} may now set the environment of every program Kureha starts for the open folder"
+                )
+            } else {
+                format!("{extension} no longer sets the environment")
+            },
+        );
+        if allowed {
+            self.request_environment();
+        }
     }
     /// Turns `extension` on or off and saves the choice. Its contributions
     /// (commands, keys, formatters, themes in lists, languages) follow at
@@ -418,6 +484,15 @@ impl App {
         } else {
             format!("{name} ({id}) can no longer run {program}")
         });
+        // direnv's extension, say, needs its program to load the environment.
+        let provides = registry().is_some_and(|registry| {
+            registry
+                .environment_providers()
+                .any(|(e, _)| e.manifest.id == id)
+        });
+        if allow && provides {
+            self.request_environment();
+        }
     }
     fn pending<R>(&self, f: impl FnOnce(&mut HashMap<u64, Pending>) -> R) -> R {
         f(&mut self.runtime.lock().unwrap().extensions.pending)
@@ -519,7 +594,14 @@ impl App {
         let version = snapshot.version;
         match host.command(extension, command, snapshot) {
             Some(request) => {
-                self.remember(request, text, id, version, label.clone(), Purpose::Command);
+                self.remember(
+                    request,
+                    text,
+                    id,
+                    version,
+                    label.clone(),
+                    Purpose::Command(extension.to_string()),
+                );
                 self.status.set(format!("{label}…"));
             }
             None => self.status.set("The extension worker has stopped".into()),
@@ -811,12 +893,29 @@ impl App {
             let (id, result) = match reply {
                 Reply::Command { id, result } | Reply::Format { id, result } => (id, result),
                 Reply::Decorations { .. } => continue,
+                Reply::Environment { id, result } => {
+                    self.environment_answered(id, result);
+                    continue;
+                }
             };
             let Some(pending) = self.pending(|map| map.remove(&id)) else {
                 continue;
             };
             match pending.purpose {
-                Purpose::Command => self.apply_command(&pending, result),
+                Purpose::Command(ref extension) => {
+                    // A command of the folder's environment provider (allowing
+                    // `.envrc`, say) may change the environment: read it again.
+                    let reload = result.is_ok()
+                        && registry().is_some_and(|registry| {
+                            registry
+                                .environment_providers()
+                                .any(|(e, _)| e.manifest.id == *extension)
+                        });
+                    self.apply_command(&pending, result);
+                    if reload {
+                        self.request_environment();
+                    }
+                }
                 Purpose::Format { .. } => self.apply_format(pending, result),
             }
         }
@@ -824,7 +923,7 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::EditDelta;
     use kureha_code::extensions::runtime::Budgets;
@@ -898,7 +997,7 @@ mod tests {
     }
 
     /// A module whose every non-activate call spins `loops` times, then answers `reply`.
-    fn guest(reply: &str, loops: u32) -> Vec<u8> {
+    pub(crate) fn guest(reply: &str, loops: u32) -> Vec<u8> {
         let activate = "{}";
         let data = format!("{activate}{reply}");
         let escaped: String = data
@@ -1108,7 +1207,7 @@ mod tests {
         app.activate(id);
         id
     }
-    fn wait(app: &App, what: &str, done: impl Fn(&App) -> bool) {
+    pub(crate) fn wait(app: &App, what: &str, done: impl Fn(&App) -> bool) {
         let until = Instant::now() + Duration::from_secs(30);
         while !done(app) {
             assert!(

@@ -1,5 +1,6 @@
 pub mod editing;
 pub mod editor;
+pub mod environment;
 pub mod explorer;
 pub mod extensions;
 pub mod files;

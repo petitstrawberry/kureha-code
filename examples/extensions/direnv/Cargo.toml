@@ -1,0 +1,17 @@
+[package]
+name = "kureha-direnv"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kureha-extension = { path = "../sdk" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

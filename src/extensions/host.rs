@@ -44,6 +44,11 @@ enum Request {
         document: DocumentSnapshot,
         options: FormatOptions,
     },
+    Environment {
+        id: u64,
+        extension: String,
+        folder: std::path::PathBuf,
+    },
 }
 
 #[derive(Debug)]
@@ -60,6 +65,11 @@ pub enum Reply {
         id: u64,
         result: Result<CommandOutcome, String>,
     },
+    /// Variables to set, or (`None`) to remove.
+    Environment {
+        id: u64,
+        result: Result<std::collections::BTreeMap<String, Option<String>>, String>,
+    },
 }
 
 impl Request {
@@ -67,7 +77,8 @@ impl Request {
         match self {
             Self::Command { extension, .. }
             | Self::Decorations { extension, .. }
-            | Self::Format { extension, .. } => extension,
+            | Self::Format { extension, .. }
+            | Self::Environment { extension, .. } => extension,
         }
     }
     /// The reply for a request that never reached a lane.
@@ -82,6 +93,10 @@ impl Request {
                 result: Err(reason),
             },
             Self::Format { id, .. } => Reply::Format {
+                id,
+                result: Err(reason),
+            },
+            Self::Environment { id, .. } => Reply::Environment {
                 id,
                 result: Err(reason),
             },
@@ -221,6 +236,25 @@ impl Lane {
                     Err(format!("{extension} does not format {language}"))
                 };
                 Reply::Format { id, result }
+            }
+            Request::Environment {
+                id,
+                extension,
+                folder,
+            } => {
+                let declared = self.extension.manifest.capabilities.environment
+                    && self.extension.manifest.contributes.environment.is_some();
+                let result = if !declared {
+                    Err(format!("{extension} does not supply an environment"))
+                } else if !crate::environment::allows(&extension) {
+                    Err(format!(
+                        "{extension} needs your permission to set the environment; run \"{}\" from the command palette",
+                        crate::environment::allow_command_label(&extension)
+                    ))
+                } else {
+                    self.run(|runtime| runtime.environment(&folder))
+                };
+                Reply::Environment { id, result }
             }
         }
     }
@@ -362,6 +396,14 @@ impl Host {
             options,
         })
     }
+    /// Asks `extension` for `folder`'s environment. `None` if the worker is gone.
+    pub fn environment(&self, extension: &str, folder: std::path::PathBuf) -> Option<u64> {
+        self.send(|id| Request::Environment {
+            id,
+            extension: extension.into(),
+            folder,
+        })
+    }
     /// The grants this worker checks, to update when the settings change.
     pub fn grants(&self) -> &Grants {
         &self.grants
@@ -442,7 +484,8 @@ mod tests {
             if let Some(reply) = host.poll().into_iter().find(|reply| match reply {
                 Reply::Command { id: got, .. }
                 | Reply::Decorations { id: got, .. }
-                | Reply::Format { id: got, .. } => *got == id,
+                | Reply::Format { id: got, .. }
+                | Reply::Environment { id: got, .. } => *got == id,
             }) {
                 return reply;
             }

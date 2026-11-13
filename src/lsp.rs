@@ -125,6 +125,9 @@ impl Client {
     /// own startup worker if even that latency is unsuitable for their UI.
     pub fn spawn(program: &str, args: &[String], cwd: &Path) -> Result<Self, String> {
         let mut command = Command::new(program);
+        // The open folder's environment (a dev shell's PATH, say); a bare
+        // program name is then looked up in its PATH.
+        crate::environment::apply(&mut command);
         #[cfg(target_os = "scarlet")]
         configure_scarlet_child(&mut command, program, |key| std::env::var_os(key));
         let child = command

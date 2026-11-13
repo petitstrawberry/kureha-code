@@ -77,6 +77,13 @@ pub enum Request<'a> {
         document: Document,
         range: Range<usize>,
     },
+    /// The environment for the programs Kureha starts in `folder` (with
+    /// `[contributes.environment]`). Programs run in that folder, from
+    /// Kureha's own environment, for up to 15 minutes. Reply with
+    /// [`Reply::environment`].
+    Environment {
+        folder: &'a str,
+    },
     /// Format the whole document. Reply with edits (or none).
     Format {
         document: Document,
@@ -94,6 +101,10 @@ impl<'a> Request<'a> {
             Some("command") => match (message["command"].as_str(), document()) {
                 (Some(id), Some(document)) => Self::Command { id, document },
                 _ => Self::Other(message),
+            },
+            Some("environment") => match message["folder"].as_str() {
+                Some(folder) => Self::Environment { folder },
+                None => Self::Other(message),
             },
             Some("format") => {
                 let options = &message["options"];
@@ -291,6 +302,18 @@ impl Reply {
     /// A successful reply that changes nothing.
     pub fn unchanged() -> Self {
         Self(json!({"edits": []}))
+    }
+    /// An environment: each variable set to a value, or (`None`) removed.
+    pub fn environment<I, K>(vars: I) -> Self
+    where
+        I: IntoIterator<Item = (K, Option<String>)>,
+        K: Into<String>,
+    {
+        let vars: serde_json::Map<String, Value> = vars
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.map_or(Value::Null, Value::String)))
+            .collect();
+        Self(json!({ "environment": vars }))
     }
     pub fn with_status(mut self, message: impl Into<String>) -> Self {
         self.0["status"] = Value::String(message.into());

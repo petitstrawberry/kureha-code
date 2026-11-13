@@ -167,6 +167,10 @@ enum Call {
     Activate,
     Query,
     Task,
+    /// Computing a folder's environment: a task whose programs run in that
+    /// folder, from the base environment, for up to
+    /// [`process::MAX_ENVIRONMENT_TIMEOUT`].
+    Environment,
 }
 
 struct HostState {
@@ -178,6 +182,8 @@ struct HostState {
     call: Call,
     /// Processes started in the current call.
     runs: u32,
+    /// The folder of an environment call.
+    folder: Option<PathBuf>,
 }
 
 /// Takes `units` from the caller's fuel, failing like an instruction would.
@@ -251,9 +257,10 @@ fn process_directory(document: Option<&DocumentSnapshot>, place: &str) -> Option
 /// document bytes piped to it, which the caller charges as fuel.
 fn run_process(state: &mut HostState, request: &Value) -> (Value, usize) {
     let error = |message: String| (json!({ "error": message }), 0);
-    if state.call != Call::Task {
-        return error("programs can only run in commands and formatters".into());
+    if !matches!(state.call, Call::Task | Call::Environment) {
+        return error("programs can only run in commands, formatters and environments".into());
     }
+    let environment = state.call == Call::Environment;
     let Some(program) = request.get("program").and_then(Value::as_str) else {
         return error("`program` must be a string".into());
     };
@@ -310,14 +317,19 @@ fn run_process(state: &mut HostState, request: &Value) -> (Value, usize) {
         },
         (None, false) => None,
     };
+    let longest = if environment {
+        process::MAX_ENVIRONMENT_TIMEOUT
+    } else {
+        process::MAX_TIMEOUT
+    };
     let timeout = match request.get("timeout_ms") {
         None => process::DEFAULT_TIMEOUT,
         Some(ms) => match ms.as_u64().map(Duration::from_millis) {
-            Some(t) if !t.is_zero() && t <= process::MAX_TIMEOUT => t,
+            Some(t) if !t.is_zero() && t <= longest => t,
             _ => {
                 return error(format!(
                     "`timeout_ms` must be between 1 and {}",
-                    process::MAX_TIMEOUT.as_millis()
+                    longest.as_millis()
                 ));
             }
         },
@@ -329,10 +341,22 @@ fn run_process(state: &mut HostState, request: &Value) -> (Value, usize) {
     if !matches!(place, "document" | "workspace") {
         return error("`cwd` must be \"document\" or \"workspace\"".into());
     }
-    let Some(cwd) = process_directory(state.document.as_ref(), place) else {
+    let cwd = match &state.folder {
+        // An environment is computed in its folder, whatever `cwd` says.
+        Some(folder) if environment => Some(folder.clone()),
+        _ => process_directory(state.document.as_ref(), place),
+    };
+    let Some(cwd) = cwd else {
         return error("no folder is available to run the program in".into());
     };
-    let Some(path) = process::resolve(program, std::env::var_os("PATH").as_deref()) else {
+    // Programs see the overlay (a dev shell's PATH, say), except the one
+    // computing it, which starts from Kureha's own environment.
+    let search = if environment {
+        std::env::var_os("PATH")
+    } else {
+        crate::environment::var_os("PATH")
+    };
+    let Some(path) = process::resolve(program, search.as_deref()) else {
         return error(format!("`{program}` was not found on PATH"));
     };
     state.runs += 1;
@@ -347,6 +371,7 @@ fn run_process(state: &mut HostState, request: &Value) -> (Value, usize) {
         stdin,
         cwd,
         timeout,
+        overlay: !environment,
     }) {
         Ok(output) => json!({
             "status": output.status,
@@ -499,6 +524,7 @@ impl Runtime {
                 access,
                 call: Call::Activate,
                 runs: 0,
+                folder: None,
             },
         );
         store.limiter(|state| &mut state.limits);
@@ -572,8 +598,14 @@ impl Runtime {
         state.call = match message.get("kind").and_then(Value::as_str) {
             Some("activate") => Call::Activate,
             Some("command" | "format") => Call::Task,
+            Some("environment") => Call::Environment,
             _ => Call::Query,
         };
+        state.folder = message
+            .get("folder")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .filter(|_| state.call == Call::Environment);
         let result = self.exchange(&bytes);
         self.last_fuel = fuel.saturating_sub(self.store.get_fuel().unwrap_or(0));
         let state = self.store.data_mut();
@@ -644,6 +676,23 @@ impl Runtime {
         let text = document.text.clone();
         let reply = self.invoke(&message, self.budgets.task, Some(document))?;
         parse_command_reply(&text, &reply).map_err(CallError::Protocol)
+    }
+
+    /// Asks for the environment of `folder`: variables to set or (`None`)
+    /// to remove.
+    pub fn environment(
+        &mut self,
+        folder: &Path,
+    ) -> Result<std::collections::BTreeMap<String, Option<String>>, CallError> {
+        let message = json!({
+            "kind": "environment",
+            "folder": folder.to_string_lossy(),
+        });
+        let reply = self.invoke(&message, self.budgets.task, None)?;
+        let vars = reply
+            .get("environment")
+            .ok_or_else(|| CallError::Protocol("missing `environment`".into()))?;
+        crate::environment::parse_exported(&vars.to_string()).map_err(CallError::Protocol)
     }
 
     /// Asks for decorations within `range` of the document.

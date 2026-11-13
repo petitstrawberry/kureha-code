@@ -21,6 +21,7 @@ use std::{
     thread,
 };
 mod editing_ui;
+mod environment_ui;
 mod extension_ui;
 mod git_diff_view;
 mod git_ui;
@@ -108,6 +109,7 @@ enum ClipboardJob {
 #[derive(Default)]
 struct Runtime {
     extensions: extension_ui::State,
+    environment: environment_ui::State,
     git: git_ui::State,
     window_drag_requested: bool,
     terminal_return_focus: Option<u64>,
@@ -1363,6 +1365,8 @@ impl App {
                 self.complete_open(group, path, String::new(), Some(image))
             }
             (FileOperation::Save { id, revision }, Ok(Completion::Save(path, disk_text))) => {
+                // Saving `.envrc` or `flake.nix` asks for the environment again.
+                self.environment_file_saved(&path);
                 let (exists, clean, name) = {
                     let mut rt = self.runtime.lock().unwrap();
                     let exists = rt.workspace.saved(id, revision, path);
@@ -1619,6 +1623,7 @@ impl Application for App {
             self.status.set(report);
         }
         self.poll_extensions();
+        self.poll_environment();
         self.poll_git();
         self.expire_messages();
         if kureha_code::syntax::poll() {
