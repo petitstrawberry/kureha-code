@@ -587,3 +587,71 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// The real direnv extension, direnv and Nix, through the app's own flow:
+/// `KUREHA_TEST_DIRENV_EXTENSIONS=<folder with the built direnv example>
+/// KUREHA_TEST_DIRENV_PROJECT=<folder with an allowed `.envrc`>
+/// KUREHA_TEST_DIRENV_PROGRAM=<a program only its dev shell has>
+/// cargo test real_direnv_dev_shell -- --ignored`
+#[cfg(all(test, unix))]
+#[test]
+#[ignore]
+fn real_direnv_dev_shell_reaches_language_servers() {
+    use kureha_code::extensions::{Registry, host::Host, runtime::Budgets};
+    let setting = |name: &str| {
+        std::env::var(name).unwrap_or_else(|_| panic!("set {name}; see the comment above"))
+    };
+    let (extensions, project, program) = (
+        PathBuf::from(setting("KUREHA_TEST_DIRENV_EXTENSIONS")),
+        PathBuf::from(setting("KUREHA_TEST_DIRENV_PROJECT")),
+        setting("KUREHA_TEST_DIRENV_PROGRAM"),
+    );
+    let registry: &'static Registry = Box::leak(Box::new(Registry::load(&extensions)));
+    assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+    let host: &'static Host = Box::leak(Box::new(Host::start(
+        registry,
+        Budgets::default(),
+        Default::default(),
+    )));
+    super::extension_ui::use_test_extensions(registry, host);
+    let app = App::with_document();
+    app.preferences.update(|p| {
+        p.allow_environment.insert("example.direnv".into());
+        p.allow_process
+            .insert("example.direnv".into(), ["direnv".to_string()].into());
+    });
+    app.sync_process_grants(&app.preferences.get());
+    assert!(
+        kureha_code::lsp::Client::spawn(&program, &[], &project).is_err(),
+        "`{program}` is already on PATH"
+    );
+    app.runtime.lock().unwrap().explorer.root = Some(project.clone());
+    let started = Instant::now();
+    app.poll_environment();
+    while environment::overlay().is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(600),
+            "no environment; {}",
+            app.status.get()
+        );
+        assert!(
+            environment::is_pending(&project),
+            "stopped waiting: {}",
+            app.status.get()
+        );
+        app.poll_extensions();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    println!(
+        "{} in {:.1} s",
+        app.status.get(),
+        started.elapsed().as_secs_f64()
+    );
+    let found =
+        kureha_code::extensions::process::resolve(&program, environment::var_os("PATH").as_deref())
+            .expect("the dev shell's PATH has it");
+    println!("{program}: {}", found.display());
+    assert!(found.starts_with("/nix/store"), "{}", found.display());
+    assert!(kureha_code::lsp::Client::spawn(&program, &[], &project).is_ok());
+    environment::set(None);
+}
