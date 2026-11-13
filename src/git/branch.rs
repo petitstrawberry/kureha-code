@@ -1,25 +1,23 @@
-//! Local branches: listing them, creating one, and switching the work tree
-//! to one, as `git switch` does.
+//! Local branches, read and changed through the system Git command.
 //!
-//! A switch only runs on a clean work tree (nothing staged or changed in
-//! tracked files), checked again under `index.lock`. Everything is validated
-//! before the first write: the target's blobs, files the switch would put
-//! where an untracked or ignored file is, open documents with unsaved edits
-//! that the switch would change, and a branch checked out in another work
-//! tree. Then files are removed, written through gix's checkout (which
-//! refuses `.git` and `..` paths and writing through symbolic links), the
-//! index is rebuilt from the target tree, and `HEAD` moves only if it still
-//! points where it did.
+//! Git owns checkout, locks, hooks and filters. Before switching, compare the
+//! trees to protect open documents with unsaved edits and report the paths
+//! the UI needs to reload.
 
-use std::path::{Path, PathBuf};
+use super::command;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 /// `path` with its folder resolved (`/tmp` and `/private/tmp` agree), so
 /// paths of files that do not exist yet compare too.
 pub fn resolved(path: &Path) -> PathBuf {
     match (path.parent(), path.file_name()) {
         (Some(parent), Some(name)) => std::fs::canonicalize(parent)
-            .map(|parent| parent.join(name))
-            .unwrap_or_else(|_| path.to_path_buf()),
+            .unwrap_or_else(|_| resolved(parent))
+            .join(name),
         _ => path.to_path_buf(),
     }
 }
@@ -35,158 +33,85 @@ pub struct Branch {
     pub elsewhere: Option<PathBuf>,
 }
 
-/// Local branches, sorted by name.
-pub(super) fn list(repo: &gix::Repository) -> Result<Vec<Branch>, String> {
-    let err = |e: gix::Error| e.to_string();
-    let current = repo.head_name().map_err(err)?;
-    let mut elsewhere = std::collections::BTreeMap::new();
-    let here = std::fs::canonicalize(repo.git_dir()).ok();
-    if let Ok(worktrees) = repo.worktrees_including_main() {
-        for worktree in worktrees.flatten() {
-            if std::fs::canonicalize(worktree.git_dir()).ok() == here {
-                continue;
-            }
-            if let (Ok(Some(name)), Some(dir)) = (worktree.head_name(), worktree.workdir()) {
-                elsewhere.insert(name, dir.to_path_buf());
-            }
-        }
-    }
-    let references = repo.references().map_err(err)?;
+/// Local branches, sorted by name. NUL delimiters preserve spaces, newlines
+/// and non-UTF-8 bytes in linked work tree paths.
+pub(super) fn list(workdir: &Path) -> Result<Vec<Branch>, String> {
+    let bytes = command::run(
+        workdir,
+        [
+            "for-each-ref",
+            "--sort=refname",
+            "--format=%(refname:strip=2)%00%(HEAD)%00%(worktreepath)%00",
+            "refs/heads/",
+        ],
+    )?;
+    let mut fields = bytes.split(|byte| *byte == 0);
     let mut branches = Vec::new();
-    for reference in references.local_branches().map_err(err)? {
-        let reference = reference.map_err(|e| e.to_string())?;
-        let full = reference.name().to_owned();
+    while let Some(name) = fields.next() {
+        // for-each-ref appends a newline after each formatted record.
+        let name = name.strip_prefix(b"\n").unwrap_or(name);
+        if name.is_empty() {
+            break;
+        }
+        let current = fields.next().ok_or("Missing Git branch HEAD field")? == b"*";
+        let elsewhere = fields.next().ok_or("Missing Git branch worktree field")?;
         branches.push(Branch {
-            name: full.shorten().to_string(),
-            current: current.as_ref() == Some(&full),
-            elsewhere: elsewhere.get(&full).cloned(),
+            name: String::from_utf8_lossy(name).into_owned(),
+            current,
+            elsewhere: if current || elsewhere.is_empty() {
+                None
+            } else {
+                Some(command::path(elsewhere)?)
+            },
         });
     }
-    branches.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(branches)
 }
 
-/// `refs/heads/<name>`, if `name` is a valid branch name.
-pub fn full_name(name: &str) -> Result<gix::refs::FullName, String> {
+/// `refs/heads/<name>`, if `name` is a valid literal branch name.
+///
+/// This also runs while typing in the branch picker, so use Git's refname
+/// rules without starting a child process for each keystroke. The eventual
+/// `git branch` or `git switch` still validates the name itself.
+pub fn full_name(name: &str) -> Result<String, String> {
     let name = name.trim();
-    if name.is_empty() || name.starts_with('-') || name == "HEAD" {
-        return Err(format!("`{name}` is not a valid branch name"));
-    }
-    gix::refs::FullName::try_from(format!("refs/heads/{name}"))
-        .map_err(|_| format!("`{name}` is not a valid branch name"))
-}
-
-fn head_target(repo: &gix::Repository) -> Result<gix::refs::Target, String> {
-    let head = repo.find_reference("HEAD").map_err(|e| e.to_string())?;
-    Ok(head.inner.target)
-}
-
-/// Moves `HEAD` to `branch` if it still points at `expected`, and records
-/// it in `HEAD`'s reflog as Git does (`git switch -` reads it back).
-fn move_head(
-    repo: &gix::Repository,
-    expected: gix::refs::Target,
-    branch: &gix::refs::FullName,
-    from: &str,
-) -> Result<(), String> {
-    use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog};
-    let old = repo.head_id().map(|id| id.detach()).ok();
-    let message = format!("checkout: moving from {from} to {}", branch.shorten());
-    repo.edit_reference(RefEdit {
-        change: Change::Update {
-            log: LogChange {
-                mode: RefLog::AndReference,
-                force_create_reflog: false,
-                message: message.clone().into(),
-            },
-            expected: PreviousValue::MustExistAndMatch(expected),
-            new: gix::refs::Target::Symbolic(branch.clone()),
-        },
-        name: "HEAD"
-            .try_into()
-            .map_err(|e: gix::validate::reference::name::Error| e.to_string())?,
-        deref: false,
-    })
-    .map_err(|e| e.to_string())?;
-    // gix writes no reflog entry when HEAD stays symbolic.
-    let new = repo.head_id().map_err(|e| e.to_string())?.detach();
-    append_head_reflog(repo, old, new, &message)
-}
-
-fn append_head_reflog(
-    repo: &gix::Repository,
-    old: Option<gix::ObjectId>,
-    new: gix::ObjectId,
-    message: &str,
-) -> Result<(), String> {
-    use std::io::Write;
-    if repo.config_snapshot().boolean("core.logAllRefUpdates") == Some(false) {
-        return Ok(());
-    }
-    let Some(Ok(committer)) = repo.committer() else {
-        return Ok(());
-    };
-    let old = old.unwrap_or_else(|| gix::ObjectId::null(repo.object_hash()));
-    let mut line = format!("{old} {new} ").into_bytes();
-    committer.write_to(&mut line).map_err(|e| e.to_string())?;
-    line.extend_from_slice(format!("\t{message}\n").as_bytes());
-    let path = repo.git_dir().join("logs").join("HEAD");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .and_then(|mut file| file.write_all(&line))
-        .map_err(|e| format!("{}: {e}", path.display()))
-}
-
-fn head_label(repo: &gix::Repository) -> String {
-    match repo.head_name() {
-        Ok(Some(name)) => name.shorten().to_string(),
-        _ => repo
-            .head_id()
-            .map(|id| id.to_hex_with_len(7).to_string())
-            .unwrap_or_else(|_| "HEAD".into()),
-    }
-}
-
-/// Creates `name` at `HEAD`'s commit and, if `switch`, checks it out: the
-/// files are the same, so only `HEAD` moves.
-/// Branch changes are logged with who made them, as Git does.
-const IDENTITY: &str = "Set user.name and user.email in your Git configuration";
-
-pub(super) fn create(repo: &gix::Repository, name: &str, switch: bool) -> Result<String, String> {
-    let full = full_name(name)?;
-    repo.committer()
-        .ok_or(IDENTITY)?
-        .map_err(|e| e.to_string())?;
-    if repo
-        .try_find_reference(full.as_ref())
-        .map_err(|e| e.to_string())?
-        .is_some()
-    {
-        return Err(format!("Branch {} already exists", full.shorten()));
-    }
-    let commit = repo
-        .head_id()
-        .map_err(|_| "Commit something first: the branch needs a commit to start from".to_string())?
-        .detach();
-    let from = head_label(repo);
-    let expected = head_target(repo)?;
-    repo.reference(
-        full.as_ref(),
-        commit,
-        gix::refs::transaction::PreviousValue::MustNotExist,
-        format!("branch: Created from {from}"),
-    )
-    .map_err(|e| e.to_string())?;
-    if switch {
-        move_head(repo, expected, &full, &from)?;
-        Ok(format!("Created and switched to {}", full.shorten()))
+    let invalid = name.is_empty()
+        || name.starts_with('-')
+        || name == "HEAD"
+        || name.ends_with('.')
+        || name.contains("..")
+        || name.contains("@{")
+        || name
+            .bytes()
+            .any(|byte| byte <= b' ' || byte == 0x7f || b"~^:?*[\\".contains(&byte))
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part.starts_with('.') || part.ends_with(".lock"));
+    if invalid {
+        Err(format!("`{name}` is not a valid branch name"))
     } else {
-        Ok(format!("Created {}", full.shorten()))
+        Ok(format!("refs/heads/{name}"))
+    }
+}
+
+/// Creates a local branch, optionally checking it out. Git handles unborn
+/// branches too (`switch -c` can rename the branch before its first commit).
+pub(super) fn create(workdir: &Path, name: &str, switch: bool) -> Result<Switched, String> {
+    full_name(name)?;
+    let name = name.trim();
+    if switch {
+        let before = worktree_files(workdir)?;
+        command::run(workdir, ["switch", "-c", name])?;
+        Ok(Switched {
+            message: format!("Created and switched to {name}"),
+            changed: changed_files(workdir, before),
+        })
+    } else {
+        command::run(workdir, ["branch", "--", name])?;
+        Ok(Switched {
+            message: format!("Created {name}"),
+            changed: Vec::new(),
+        })
     }
 }
 
@@ -196,340 +121,154 @@ pub struct Switched {
     pub changed: Vec<PathBuf>,
 }
 
-/// Switches the work tree to `name`. `keep` lists files (absolute) open
-/// with unsaved edits; the switch refuses to change any of them.
-#[cfg(not(target_os = "scarlet"))]
-pub(super) fn switch(
-    repo: &gix::Repository,
-    name: &str,
-    keep: &[PathBuf],
-) -> Result<Switched, String> {
-    use gix::index::entry::{Flags, Mode, Stage, Stat};
-    let err = |e: gix::Error| e.to_string();
-    let full = full_name(name)?;
-    let short = full.shorten().to_string();
-    if repo.head_name().map_err(err)?.as_ref() == Some(&full) {
-        return Err(format!("Already on {short}"));
-    }
-    repo.committer()
-        .ok_or(IDENTITY)?
-        .map_err(|e| e.to_string())?;
-    if let Some(state) = repo.state() {
-        return Err(format!(
-            "Git is {}; finish it with git",
-            super::imp::in_progress_label(&state)
-        ));
-    }
-    let workdir = repo
-        .workdir()
-        .ok_or("The repository has no work tree")?
-        .to_path_buf();
-    if let Some(other) = list(repo)?
-        .into_iter()
-        .find(|branch| branch.name == short)
-        .and_then(|branch| branch.elsewhere)
-    {
-        return Err(format!("{short} is checked out in {}", other.display()));
-    }
-    // Filters defined only in the repository's config would not run here, so
-    // the written files would differ from what `git switch` writes.
-    super::write::refuse_repository_filters(repo)?;
-    let target = repo
-        .find_reference(full.as_ref())
+#[derive(PartialEq, Eq)]
+struct FileStamp {
+    modified: Option<SystemTime>,
+    len: u64,
+    link: Option<PathBuf>,
+    #[cfg(unix)]
+    changed: (i64, i64),
+}
+
+/// Track disk changes made by checkout hooks as well as by the tree switch.
+/// Metadata avoids reading every blob or running clean filters to compare
+/// content; include non-ignored untracked files that can also be open.
+fn worktree_files(workdir: &Path) -> Result<BTreeMap<PathBuf, Option<FileStamp>>, String> {
+    let bytes = command::run(
+        workdir,
+        [
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+    )?;
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            let path = command::path(path)?;
+            let absolute = workdir.join(&path);
+            let stamp = std::fs::symlink_metadata(&absolute)
+                .ok()
+                .map(|metadata| FileStamp {
+                    modified: metadata.modified().ok(),
+                    len: metadata.len(),
+                    link: std::fs::read_link(&absolute).ok(),
+                    #[cfg(unix)]
+                    changed: {
+                        use std::os::unix::fs::MetadataExt;
+                        (metadata.ctime(), metadata.ctime_nsec())
+                    },
+                });
+            Ok((path, stamp))
+        })
+        .collect()
+}
+
+fn changed_files(workdir: &Path, before: BTreeMap<PathBuf, Option<FileStamp>>) -> Vec<PathBuf> {
+    let Ok(after) = worktree_files(workdir) else {
+        // The checkout already succeeded. If inspection fails, reload all
+        // known documents rather than reporting that the operation failed.
+        return before.into_keys().collect();
+    };
+    let mut changed: Vec<_> = before
+        .keys()
+        .chain(after.keys())
+        .filter(|path| before.get(*path) != after.get(*path))
+        .cloned()
+        .collect();
+    changed.sort();
+    changed.dedup();
+    changed
+}
+
+fn changed_paths(workdir: &Path, target: &str) -> Result<Vec<PathBuf>, String> {
+    // Resolve exact refs before comparing; tags named like branches and
+    // revision-like branch names must not select a different tree.
+    let target = command::run(
+        workdir,
+        ["rev-parse", "--verify", &format!("{target}^{{tree}}")],
+    )?;
+    let target = std::str::from_utf8(&target)
         .map_err(|e| e.to_string())?
-        .peel_to_commit()
-        .map_err(|e| e.to_string())?;
-    let new_tree = target.tree().map_err(err)?;
-    let old_tree = repo
-        .find_tree(repo.head_tree_id_or_empty().map_err(err)?)
-        .map_err(err)?;
-
-    let mut locked = super::write::lock_index(repo)?;
-    if dirty(repo)? {
-        return Err(
-            "Commit or unstage the changes first: switching needs a clean work tree".into(),
-        );
-    }
-    let changes = repo
-        .diff_tree_to_tree(
-            &old_tree,
-            &new_tree,
-            gix::diff::Options::default().with_rewrites(None),
-        )
-        .map_err(err)?;
-    use gix::object::tree::diff::ChangeDetached as C;
-    let mut removed = Vec::new();
-    let mut written = Vec::new();
-    for change in &changes {
-        let (location, old, new) = match change {
-            C::Addition {
-                location,
-                entry_mode,
-                id,
-                ..
-            } => (location, None, Some((*entry_mode, *id))),
-            C::Deletion {
-                location,
-                entry_mode,
-                ..
-            } => (location, Some(*entry_mode), None),
-            C::Modification {
-                location,
-                previous_entry_mode,
-                entry_mode,
-                id,
-                ..
-            } => (
-                location,
-                Some(*previous_entry_mode),
-                Some((*entry_mode, *id)),
-            ),
-            C::Rewrite { .. } => return Err("Unexpected rename while switching".into()),
-        };
-        let path = gix::path::from_bstr(gix::bstr::ByteSlice::as_bstr(location.as_slice()))
+        .trim();
+    let head = command::output(workdir, ["rev-parse", "--verify", "--quiet", "HEAD^{tree}"])?;
+    let bytes = if head.status.success() {
+        let head = std::str::from_utf8(&head.stdout)
             .map_err(|e| e.to_string())?
-            .into_owned();
-        if old.is_some_and(|mode| !mode.is_tree()) && new.is_none_or(|(mode, _)| mode.is_tree()) {
-            removed.push((path.clone(), old.unwrap()));
-        }
-        if let Some((mode, id)) = new.filter(|(mode, _)| !mode.is_tree()) {
-            if old.is_some_and(|old| !old.is_tree())
-                && old != Some(mode)
-                && (old.unwrap().is_commit() || mode.is_commit())
-            {
-                return Err(format!(
-                    "{} changes between a submodule and a file; switch with git",
-                    path.display()
-                ));
-            }
-            written.push((path, mode, id));
-        }
-    }
-    // Validate before the first write.
-    let touched: Vec<&PathBuf> = removed
-        .iter()
-        .map(|(path, _)| path)
-        .chain(written.iter().map(|(path, ..)| path))
-        .collect();
-    let keep: Vec<PathBuf> = keep.iter().map(|path| resolved(path)).collect();
-    if let Some(open) = touched
-        .iter()
-        .find(|path| keep.contains(&resolved(&workdir.join(path))))
-    {
-        return Err(format!(
-            "Save or close {} first: the switch changes it",
-            open.display()
-        ));
-    }
-    // On a case-insensitive file system, `Case.txt` on disk answers for
-    // `case.txt`; a path the switch removes is no collision.
-    let ignore_case = repo
-        .filesystem_options()
-        .map(|fs| fs.ignore_case)
-        .unwrap_or(false);
-    let fold = |path: &Path| path.to_string_lossy().to_lowercase();
-    let removed_here = |path: &Path| {
-        removed
-            .iter()
-            .any(|(gone, _)| gone == path || (ignore_case && fold(gone) == fold(path)))
+            .trim();
+        command::run(
+            workdir,
+            [
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+                head,
+                target,
+                "--",
+            ],
+        )?
+    } else if head.status.code() == Some(1) {
+        // No HEAD tree on an unborn branch: all target entries are new.
+        command::run(workdir, ["ls-tree", "-r", "--name-only", "-z", target])?
+    } else {
+        return command::checked(head).map(|_| Vec::new());
     };
-    let tracked = |path: &Path| -> Result<bool, String> {
-        Ok(old_tree
-            .lookup_entry_by_path(path)
-            .map_err(err)?
-            .is_some_and(|entry| !entry.mode().is_tree()))
-    };
-    for (path, mode, id) in &written {
-        if !mode.is_commit() {
-            repo.find_object(*id).map_err(err)?;
-        }
-        // Something on disk that the old tree does not track would be lost.
-        let mut probe = PathBuf::new();
-        for component in path.components() {
-            probe.push(component);
-            let on_disk = std::fs::symlink_metadata(workdir.join(&probe));
-            let Ok(metadata) = on_disk else { break };
-            let last = probe == *path;
-            // A folder where a file goes is fine if the switch empties it.
-            let emptied =
-                last && metadata.is_dir() && only_removed(&workdir, &probe, &removed_here);
-            if (last || !metadata.is_dir())
-                && !emptied
-                && !tracked(&probe)?
-                && !removed_here(&probe)
-            {
-                return Err(format!(
-                    "{} would be overwritten by the switch; move it away first",
-                    probe.display()
-                ));
-            }
-            if !metadata.is_dir() {
-                break;
-            }
-        }
-    }
+    let mut paths = bytes
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(command::path)
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
 
-    // Remove first, so a case-only rename or a file turning into a folder
-    // never deletes what was just written.
-    for (path, mode) in &removed {
-        if mode.is_commit() {
-            continue; // A submodule's folder stays, as Git leaves it.
-        }
-        let full_path = workdir.join(path);
-        match std::fs::remove_file(&full_path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{}: {e}", path.display())),
-        }
-        let mut parent = full_path.parent();
-        while let Some(dir) = parent.filter(|dir| *dir != workdir) {
-            if std::fs::remove_dir(dir).is_err() {
-                break;
-            }
-            parent = dir.parent();
-        }
-    }
-    // Write the target's files through gix's checkout.
-    let mut index = gix::index::State::new(repo.object_hash());
-    for (path, mode, id) in &written {
-        use gix::objs::tree::EntryKind;
-        let mode = match mode.kind() {
-            EntryKind::Blob => Mode::FILE,
-            EntryKind::BlobExecutable => Mode::FILE_EXECUTABLE,
-            EntryKind::Link => Mode::SYMLINK,
-            EntryKind::Commit => Mode::COMMIT,
-            EntryKind::Tree => continue,
-        };
-        let name = path.to_str().ok_or("Only UTF-8 paths are supported")?;
-        index.dangerously_push_entry(Stat::default(), *id, Flags::empty(), mode, name.into());
-    }
-    index.sort_entries();
-    // `.gitattributes` from the files being written (the target's), else from
-    // the work tree (unchanged between the branches).
-    let mut options = repo
-        .checkout_options(gix::worktree::stack::state::attributes::Source::IdMappingThenWorktree)
-        .map_err(err)?;
-    options.overwrite_existing = true;
-    options.destination_is_initially_empty = false;
-    let outcome = gix::worktree::state::checkout(
-        &mut index,
-        workdir.clone(),
-        repo.objects.clone().into_arc().map_err(|e| e.to_string())?,
-        &gix::progress::Discard,
-        &gix::progress::Discard,
-        &std::sync::atomic::AtomicBool::new(false),
-        options,
-    )
-    .map_err(err)?;
-    if let Some(error) = outcome.errors.first() {
-        return Err(format!("{}: {}", error.path, error.error));
-    }
-    if let Some(collision) = outcome.collisions.first() {
-        return Err(format!("{} collides with another file", collision.path));
-    }
-    // The index is the target tree, with stat data where it is known.
-    let mut new_index = repo.index_from_tree(&new_tree.id).map_err(err)?;
-    let old = &locked.index;
-    let written_stats: std::collections::HashMap<&gix::bstr::BStr, Stat> = index
-        .entries()
+/// Switches to a local branch. `keep` lists absolute paths of unsaved
+/// documents; Git cannot see those edits, so protect them before checkout.
+/// Other checkout decisions (including carrying local edits) belong to Git.
+pub(super) fn switch(workdir: &Path, name: &str, keep: &[PathBuf]) -> Result<Switched, String> {
+    let full = full_name(name)?;
+    let name = name.trim();
+    let mut changed = changed_paths(workdir, &full)?;
+    let keep: Vec<PathBuf> = keep
         .iter()
-        .map(|entry| (entry.path(&index), entry.stat))
+        .flat_map(|path| [Some(resolved(path)), std::fs::canonicalize(path).ok()])
+        .flatten()
         .collect();
-    let paths = new_index.path_backing().to_owned();
-    for entry in new_index.entries_mut() {
-        let path = entry.path_in(&paths);
-        if let Some(stat) = written_stats.get(path) {
-            entry.stat = *stat;
-        } else if let Some(previous) = old.entry_by_path_and_stage(path, Stage::Unconflicted)
-            && previous.id == entry.id
-            && previous.mode == entry.mode
+    for path in &changed {
+        let absolute = resolved(&workdir.join(path));
+        // Include ancestor collisions: a file may replace a directory that
+        // contains an unsaved document, or the reverse.
+        if keep
+            .iter()
+            .any(|open| open.starts_with(&absolute) || absolute.starts_with(open))
         {
-            entry.stat = previous.stat;
+            return Err(format!(
+                "Save or close {} first: the switch changes it",
+                path.display()
+            ));
         }
     }
-    locked.index =
-        gix::index::File::from_state(new_index.into(), locked.index.path().to_path_buf());
-    let from = head_label(repo);
-    let expected = head_target(repo)?;
-    locked.write()?;
-    move_head(repo, expected, &full, &from)?;
-    let mut changed: Vec<PathBuf> = touched.into_iter().cloned().collect();
+    let before = worktree_files(workdir)?;
+    command::run(workdir, ["switch", "--no-guess", "--", name])?;
+    changed.extend(changed_files(workdir, before));
     changed.sort();
     changed.dedup();
     Ok(Switched {
-        message: format!("Switched to {short}"),
+        message: format!("Switched to {name}"),
         changed,
     })
 }
 
-/// Whether everything below `folder` (relative to `workdir`) is a file the
-/// switch removes, so removing them leaves nothing behind.
-#[cfg(not(target_os = "scarlet"))]
-fn only_removed(workdir: &Path, folder: &Path, removed: &dyn Fn(&Path) -> bool) -> bool {
-    let Ok(entries) = std::fs::read_dir(workdir.join(folder)) else {
-        return false;
-    };
-    entries.flatten().all(|entry| {
-        let path = folder.join(entry.file_name());
-        match entry.file_type() {
-            Ok(kind) if kind.is_dir() => only_removed(workdir, &path, removed),
-            Ok(_) => removed(&path),
-            Err(_) => false,
-        }
-    })
-}
-
-/// Anything staged or changed in tracked files, conflicts and `git add -N`
-/// included. Untracked files do not count; the switch checks those it would
-/// overwrite.
-#[cfg(not(target_os = "scarlet"))]
-fn dirty(repo: &gix::Repository) -> Result<bool, String> {
-    let iter = repo
-        .status(gix::progress::Discard)
-        .map_err(|e| e.to_string())?
-        .untracked_files(gix::status::UntrackedFiles::None)
-        .index_worktree_submodules(None)
-        .index_worktree_rewrites(None)
-        .into_iter(None)
-        .map_err(|e| e.to_string())?;
-    for item in iter {
-        let item = item.map_err(|e| e.to_string())?;
-        if let gix::status::Item::IndexWorktree(gix::status::index_worktree::Item::Modification {
-            status,
-            ..
-        }) = &item
-            && matches!(
-                status,
-                gix::status::plumbing::index_as_worktree::EntryStatus::NeedsUpdate(_)
-            )
-        {
-            continue;
-        }
-        if matches!(
-            item,
-            gix::status::Item::IndexWorktree(
-                gix::status::index_worktree::Item::DirectoryContents { .. }
-            )
-        ) {
-            continue;
-        }
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-/// Switching rewrites files through gix's checkout, which needs a backend
-/// Scarlet does not have yet.
-#[cfg(target_os = "scarlet")]
-pub(super) fn switch(
-    _repo: &gix::Repository,
-    _name: &str,
-    _keep: &[PathBuf],
-) -> Result<Switched, String> {
-    Err("Switching branches is not available on Scarlet yet".into())
-}
-
-#[cfg(all(test, unix))]
+#[cfg(all(test, unix, not(target_os = "scarlet")))]
 mod tests {
     use super::*;
     use crate::git::{
@@ -589,6 +328,7 @@ mod tests {
         repo.write(".gitattributes", "crlf.txt text eol=crlf\n");
         repo.write("a.txt", "a\n");
         repo.write("keep.txt", "keep\n");
+        repo.write("unchanged.txt", "unchanged\n");
         repo.write("crlf.txt", "one\ntwo\n");
         repo.write("tool.sh", "echo hi\n");
         std::fs::set_permissions(
@@ -674,13 +414,13 @@ mod tests {
     }
 
     #[test]
-    fn refusals_leave_the_tree_index_and_head_alone() {
+    fn git_errors_leave_the_tree_index_and_head_alone() {
         let repo = branches("refuse-switch");
         let index = repo.0.join(".git/index");
         let state = |repo: &Repo| {
             (
                 snapshot(&repo.0),
-                std::fs::read(&index).unwrap(),
+                repo.git(&["ls-files", "--stage"]),
                 repo.git(&["symbolic-ref", "HEAD"]),
             )
         };
@@ -703,41 +443,35 @@ mod tests {
         };
         // A tracked change, staged or not.
         repo.write("a.txt", "edited\n");
-        refuse(&repo, Vec::new(), "clean work tree");
+        refuse(&repo, Vec::new(), "would be overwritten");
         repo.git(&["add", "a.txt"]);
-        refuse(&repo, Vec::new(), "clean work tree");
+        refuse(&repo, Vec::new(), "would be overwritten");
         repo.git(&["reset", "-q", "--hard"]);
-        // Untracked and ignored files the switch would overwrite.
+        // Untracked files the switch would overwrite.
         repo.write("new.txt", "mine\n");
-        refuse(&repo, Vec::new(), "new.txt would be overwritten");
-        std::fs::remove_file(repo.0.join("new.txt")).unwrap();
-        repo.write(".git/info/exclude", "new.txt\n");
-        repo.write("new.txt", "ignored but mine\n");
-        refuse(&repo, Vec::new(), "new.txt would be overwritten");
+        refuse(&repo, Vec::new(), "would be overwritten");
         std::fs::remove_file(repo.0.join("new.txt")).unwrap();
         // An open document with unsaved edits that the switch changes.
         refuse(&repo, vec![repo.0.join("a.txt")], "Save or close a.txt");
         // Checked out in another work tree.
-        let linked = repo.0.with_extension("linked");
-        let _ = std::fs::remove_dir_all(&linked);
-        repo.git(&["worktree", "add", "-q", linked.to_str().unwrap(), "side"]);
-        refuse(&repo, Vec::new(), "is checked out in");
-        repo.git(&["worktree", "remove", "--force", linked.to_str().unwrap()]);
-        // Already there; a merge in progress.
-        let error = switch(&repo, "main").unwrap_err();
-        assert_eq!(error, "Already on main");
+        let linked = Repo(repo.0.with_extension("linked"));
+        repo.git(&["worktree", "add", "-q", linked.0.to_str().unwrap(), "side"]);
+        refuse(&repo, Vec::new(), "worktree");
+        repo.git(&["worktree", "remove", "--force", linked.0.to_str().unwrap()]);
+        // Git treats switching to the current branch as a successful no-op.
+        assert!(switch(&repo, "main").unwrap().is_empty());
+        let before = state(&repo);
+        assert!(switch(&repo, "missing").is_err());
+        assert_eq!(before, state(&repo));
+        std::fs::write(index.with_extension("lock"), "owned by another Git process").unwrap();
+        assert!(switch(&repo, "side").unwrap_err().contains("index.lock"));
+        assert_eq!(before, state(&repo));
+        std::fs::remove_file(index.with_extension("lock")).unwrap();
+        // Git rejects switching during a merge itself.
         let head = repo.git(&["rev-parse", "HEAD"]);
         std::fs::write(repo.0.join(".git/MERGE_HEAD"), &head).unwrap();
         refuse(&repo, Vec::new(), "merging");
         std::fs::remove_file(repo.0.join(".git/MERGE_HEAD")).unwrap();
-        // A file the switch does not touch may have unsaved edits.
-        repo.write("untouched.txt", "u\n");
-        repo.git(&["add", "untouched.txt"]);
-        repo.git(&["commit", "-q", "-m", "untouched"]);
-        switch(&repo, "side")
-            .map(|_| ())
-            .unwrap_or_else(|e| panic!("{e}"));
-        let _ = std::fs::remove_dir_all(&linked);
     }
 
     #[test]
@@ -753,11 +487,7 @@ mod tests {
             )
             .map(|done| done.message)
         };
-        assert!(
-            create("topic", true)
-                .unwrap_err()
-                .starts_with("Commit something first")
-        );
+        assert!(create("topic", false).is_err());
         repo.write("a.txt", "a\n");
         repo.git(&["add", "."]);
         repo.git(&["commit", "-q", "-m", "init"]);
@@ -779,9 +509,8 @@ mod tests {
         for bad in ["", "-x", "a..b", "a b", "HEAD", "x.lock", "topic"] {
             assert!(create(bad, false).is_err(), "{bad:?} was accepted");
         }
-        let names: Vec<_> = repo
-            .read("")
-            .branches
+        let names: Vec<_> = list(&repo.0)
+            .unwrap()
             .into_iter()
             .map(|b| (b.name, b.current))
             .collect();
@@ -793,5 +522,279 @@ mod tests {
                 ("topic".into(), false)
             ]
         );
+    }
+
+    #[test]
+    fn unborn_and_linked_worktree_branches() {
+        let repo = Repo::new("branch-unborn-linked");
+        assert!(list(&repo.0).unwrap().is_empty());
+        apply(
+            &repo.0,
+            &Operation::CreateBranch {
+                name: "first".into(),
+                switch: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(repo.git(&["symbolic-ref", "HEAD"]), "refs/heads/first\n");
+        repo.write("a.txt", "first\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-q", "-m", "first"]);
+        repo.git(&["switch", "--orphan", "empty"]);
+        let error = apply(
+            &repo.0,
+            &Operation::Switch {
+                name: "first".into(),
+                keep: vec![repo.0.join("a.txt")],
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("Save or close a.txt"), "{error}");
+        assert_eq!(switch(&repo, "first").unwrap(), [PathBuf::from("a.txt")]);
+
+        let linked = Repo(repo.0.with_extension("linked\n\"quoted"));
+        repo.git(&[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.0.to_str().unwrap(),
+        ]);
+        let other = list(&repo.0)
+            .unwrap()
+            .into_iter()
+            .find(|b| b.name == "linked")
+            .unwrap();
+        assert!(!other.current);
+        assert_eq!(
+            other.elsewhere,
+            Some(std::fs::canonicalize(&linked.0).unwrap())
+        );
+        let here = list(&linked.0)
+            .unwrap()
+            .into_iter()
+            .find(|b| b.name == "linked")
+            .unwrap();
+        assert!(here.current);
+        assert!(here.elsewhere.is_none());
+        apply(
+            &linked.0,
+            &Operation::CreateBranch {
+                name: "third".into(),
+                switch: false,
+            },
+        )
+        .unwrap();
+        apply(
+            &linked.0,
+            &Operation::Switch {
+                name: "third".into(),
+                keep: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            repo.git_in(&linked.0, &["symbolic-ref", "HEAD"]),
+            "refs/heads/third\n"
+        );
+        assert_eq!(repo.git(&["symbolic-ref", "HEAD"]), "refs/heads/first\n");
+        repo.git(&["worktree", "remove", linked.0.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn unsaved_documents_and_symlink_aliases_are_protected() {
+        let repo = branches("switch-unsaved");
+        std::os::unix::fs::symlink("a.txt", repo.0.join("document-alias")).unwrap();
+        std::os::unix::fs::symlink(&repo.0, repo.0.join("folder-alias")).unwrap();
+        // Existing files, files that do not exist yet, a file-to-directory
+        // change, and buffers opened through file or directory symlinks.
+        for path in [
+            "a.txt",
+            "new.txt",
+            "swap/inner.txt",
+            "document-alias",
+            "folder-alias/a.txt",
+        ] {
+            let before = snapshot(&repo.0);
+            let error = apply(
+                &repo.0,
+                &Operation::Switch {
+                    name: "side".into(),
+                    keep: vec![repo.0.join(path)],
+                },
+            )
+            .unwrap_err();
+            assert!(error.contains("Save or close"), "{path}: {error}");
+            assert_eq!(snapshot(&repo.0), before);
+            assert_eq!(repo.git(&["symbolic-ref", "HEAD"]), "refs/heads/main\n");
+        }
+        // An unchanged file can retain both local changes and buffer edits.
+        repo.write("unchanged.txt", "local edits\n");
+        repo.git(&["add", "unchanged.txt"]);
+        let done = apply(
+            &repo.0,
+            &Operation::Switch {
+                name: "side".into(),
+                keep: vec![repo.0.join("unchanged.txt")],
+            },
+        )
+        .unwrap();
+        assert!(!done.changed.contains(&PathBuf::from("unchanged.txt")));
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("unchanged.txt")).unwrap(),
+            "local edits\n"
+        );
+        assert_eq!(
+            repo.git(&["diff", "--cached", "--name-only"]),
+            "unchanged.txt\n"
+        );
+    }
+
+    #[test]
+    fn ignored_files_follow_git_checkout_semantics() {
+        let repo = branches("switch-ignored");
+        repo.write(".git/info/exclude", "new.txt\n");
+        repo.write("new.txt", "ignored file\n");
+        switch(&repo, "side").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("new.txt")).unwrap(),
+            "new\n"
+        );
+    }
+
+    #[test]
+    fn checkout_hooks_and_filters_run_and_hook_edits_are_reloaded() {
+        use std::os::unix::fs::PermissionsExt;
+        let repo = Repo::new("switch-hooks-filters");
+        repo.git(&["config", "filter.case.clean", "tr a-z A-Z"]);
+        repo.git(&["config", "filter.case.smudge", "tr A-Z a-z"]);
+        repo.write(".gitattributes", "*.txt filter=case\n");
+        repo.write("a.txt", "main\n");
+        repo.write("hook.txt", "before\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-q", "-m", "main"]);
+        repo.git(&["switch", "-q", "-c", "side"]);
+        repo.write("a.txt", "side\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-q", "-m", "side"]);
+        repo.git(&["switch", "-q", "main"]);
+        repo.git(&["config", "core.hooksPath", ".git/custom-hooks"]);
+        repo.write(".git/custom-hooks/post-checkout", "#!/bin/sh\nprintf 'hook %s\\n' \"$3\" >> hook.txt\nprintf 'created by hook\\n' > hook-created.txt\n");
+        std::fs::set_permissions(
+            repo.0.join(".git/custom-hooks/post-checkout"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+
+        let changed = switch(&repo, "side").unwrap();
+        assert!(changed.contains(&PathBuf::from("a.txt")));
+        assert!(changed.contains(&PathBuf::from("hook.txt")));
+        assert!(changed.contains(&PathBuf::from("hook-created.txt")));
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("a.txt")).unwrap(),
+            "side\n"
+        );
+        assert_eq!(repo.git(&["show", "HEAD:a.txt"]), "SIDE\n");
+        let done = apply(
+            &repo.0,
+            &Operation::CreateBranch {
+                name: "created".into(),
+                switch: true,
+            },
+        )
+        .unwrap();
+        assert!(done.changed.contains(&PathBuf::from("hook.txt")));
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("hook.txt")).unwrap(),
+            "before\nhook 1\nhook 1\n"
+        );
+    }
+
+    #[test]
+    fn changed_paths_preserve_literal_names() {
+        #[cfg(not(target_os = "macos"))]
+        use std::os::unix::ffi::OsStringExt;
+        let repo = Repo::new("switch-literal-paths");
+        let mut paths: Vec<PathBuf> = [
+            "[glob].txt",
+            ":(top)literal",
+            "-option",
+            "line\nbreak",
+            "日本語.txt",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        // APFS rejects invalid UTF-8 names at creation time.
+        #[cfg(not(target_os = "macos"))]
+        paths.push(std::ffi::OsString::from_vec(b"non-utf8-\xff.txt".to_vec()).into());
+        for path in &paths {
+            std::fs::write(repo.0.join(path), "main\n").unwrap();
+        }
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-q", "-m", "main"]);
+        repo.git(&["switch", "-q", "-c", "side"]);
+        for path in &paths {
+            std::fs::write(repo.0.join(path), "side\n").unwrap();
+        }
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-q", "-m", "side"]);
+        repo.git(&["switch", "-q", "main"]);
+        let error = apply(
+            &repo.0,
+            &Operation::Switch {
+                name: "side".into(),
+                keep: vec![repo.0.join(paths.last().unwrap())],
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("Save or close"), "{error}");
+        paths.sort();
+        assert_eq!(switch(&repo, "side").unwrap(), paths);
+        for path in &paths {
+            assert_eq!(std::fs::read(repo.0.join(path)).unwrap(), b"side\n");
+        }
+    }
+
+    #[test]
+    fn branch_name_validation_matches_git_without_spawning_in_the_picker() {
+        let repo = Repo::new("branch-validation");
+        for name in [
+            "",
+            "-x",
+            "HEAD",
+            "a..b",
+            "a b",
+            "a\tb",
+            "a\u{7f}b",
+            ".hidden",
+            "a/.b",
+            "a.lock",
+            "a.lock/b",
+            "a/",
+            "/a",
+            "a//b",
+            "a.",
+            "a./b",
+            "a~b",
+            "a^b",
+            "a:b",
+            "a?b",
+            "a*b",
+            "a[b",
+            "a\\b",
+            "@{1}",
+            "@",
+            "topic",
+            "feature/x",
+            "日本語",
+            " padded ",
+        ] {
+            let git =
+                command::output(&repo.0, ["check-ref-format", "--branch", name.trim()]).unwrap();
+            assert_eq!(full_name(name).is_ok(), git.status.success(), "{name:?}");
+        }
+        assert!(full_name("nul\0byte").is_err());
     }
 }

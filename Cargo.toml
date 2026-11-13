@@ -17,9 +17,6 @@ syntect = { version = "5.3", default-features = false, features = ["default-fanc
 floem-editor-core = { git = "https://github.com/lapce/floem", rev = "31fa8f444c37f4c314f47d88c23ffdbc25f2ab53" }
 # Extension runtime. Interpreted everywhere so the same package runs on Scarlet.
 wasmi = { version = "2.0.0", default-features = false, features = ["std", "validate", "auto-dispatch"] }
-# Read-only Git status (branch and changed files). Pinned exactly to the
-# release the Scarlet forks below were made and checked against.
-gix = { version = "=0.90.0", default-features = false, features = ["status", "sha1"] }
 
 [target.'cfg(target_os = "scarlet")'.dependencies]
 # Loop dispatch avoids relying on sibling-call optimisation on Scarlet stacks.
@@ -30,10 +27,6 @@ scarlet-fs = { git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3
 scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "eea9900e9974a3054214ac8189d1f0bb05520d04", default-features = false, features = ["std", "platform-sws"] }
 
 [target.'cfg(not(target_os = "scarlet"))'.dependencies]
-# Checkout, for switching branches. Not on Scarlet yet: gix-worktree-state's
-# io-close dependency has no Scarlet backend. Features of target-specific
-# dependencies only apply to builds for that target.
-gix = { version = "=0.90.0", default-features = false, features = ["status", "sha1", "worktree-mutation"] }
 ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
 scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "eea9900e9974a3054214ac8189d1f0bb05520d04", default-features = false, features = ["std", "platform-winit"] }
 
@@ -49,23 +42,3 @@ toml = "0.8"
 
 [profile.release]
 panic = "abort"
-
-# Scarlet support for gix's dependencies (see docs/git.md). Each fork adds a
-# Scarlet backend or cfg on a branch named after the release it is based on;
-# other targets build the same code as the registry packages. Cargo.lock keeps
-# them in use; if `cargo update` warns that a patch was not used, a newer
-# release replaced that fork and the fork needs rebasing onto it.
-[patch.crates-io]
-# scarlet-0.9.12: native MemoryMap/MemoryUnmap/MemoryProtect; files on
-# filesystems that cannot map (the initramfs) are read into private memory.
-memmap2 = { git = "https://github.com/petitstrawberry/memmap2-rs", rev = "891288b3bc0b1fb082ee380fe3886e86d9cf34a0" }
-# scarlet-0.4.3: the native GetRandom system call.
-getrandom = { git = "https://github.com/petitstrawberry/getrandom", rev = "829c209320eebd7e725f686d6f0321e2e11300d0" }
-# scarlet-0.2.29: file times through std only.
-filetime = { git = "https://github.com/petitstrawberry/filetime", rev = "df3f25e90ad80cf52b61f3470df86ea8d5a1d608" }
-# scarlet-gix-0.90.0: no Unix-only user lookups on Scarlet.
-gix-sec = { git = "https://github.com/petitstrawberry/gitoxide", rev = "21d5c3cee190b7338558d2d9357449052a0b3a9e" }
-gix-config-value = { git = "https://github.com/petitstrawberry/gitoxide", rev = "21d5c3cee190b7338558d2d9357449052a0b3a9e" }
-# scarlet-3.27.0: named temporary files and rename, which gix uses for locks
-# and objects; what Scarlet cannot do safely stays unsupported.
-tempfile = { git = "https://github.com/petitstrawberry/tempfile", rev = "8aaf0d61eeab7e8ae8e1ddb4b927438e901a02cc" }

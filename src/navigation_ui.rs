@@ -549,6 +549,10 @@ impl App {
         self.show_navigation(Mode::Themes { code_only });
     }
     pub(super) fn show_branch_picker(&self) {
+        if !self.git_can_operate() {
+            self.show_git();
+            return;
+        }
         self.show_navigation(Mode::Branches);
     }
     pub(super) fn show_message_history(&self) {
@@ -2622,7 +2626,8 @@ mod tests {
         assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
         wait("the branch is created", &|| app.git_status.get() == "feature/new");
         assert_eq!(git(&["symbolic-ref", "HEAD"]), "refs/heads/feature/new\n");
-        assert_eq!(app.status.get(), "Created and switched to feature/new");
+        assert!(app.messages.progress.get().is_empty());
+        assert!(!app.messages.history().iter().any(|m| m.text.starts_with("Created and switched to ")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

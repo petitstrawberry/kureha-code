@@ -1,17 +1,10 @@
-//! Git state for the workbench: the branch and the changed files of the
-//! repository that contains the open folder, computed on a worker thread.
-//! [`diff`] reads the lines of one change; [`write`] stages and commits.
-//!
-//! Opening a folder must never run that folder's code. Git configuration can
-//! name commands (clean/smudge filters, for example) and secrets; settings like
-//! these are read only from the user's and the system's configuration, never
-//! from the repository's own `.git/config`, whoever owns it. Reading never
-//! writes: the index is read, never refreshed or locked.
-//!
-//! On Scarlet, gix runs on patched dependencies (memory maps, file times,
-//! entropy; see `docs/git.md`).
+//! Git state for the workbench, read by the installed `git` command on a
+//! worker thread. Repository settings, including filters and fsmonitor, follow
+//! Git's normal behavior. Git integration is disabled on Scarlet and when the
+//! executable is unavailable. Background reads do not refresh the index.
 
 pub mod branch;
+mod command;
 pub mod diff;
 pub mod write;
 
@@ -102,9 +95,7 @@ pub struct Snapshot {
     pub staged: Vec<Entry>,
     /// Changes from the index to the work tree, untracked files included.
     pub unstaged: Vec<Entry>,
-    /// The repository has hooks that `git commit` would run; Kureha does not.
-    pub hooks: bool,
-    /// A merge, rebase or similar is in progress (committing is left to Git).
+    /// A merge, rebase or similar is in progress.
     pub in_progress: Option<String>,
     /// Local branches.
     pub branches: Vec<branch::Branch>,
@@ -147,6 +138,8 @@ impl Snapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
+    /// No Git backend is available; stop background polling.
+    Unavailable(String),
     NotRepository,
     Ready(Snapshot),
     Failed(String),
@@ -155,251 +148,214 @@ pub enum Outcome {
 /// Reads the repository containing `folder`. Stops early, with an error, when
 /// `interrupt` is set.
 pub fn read(folder: &Path, interrupt: Arc<AtomicBool>) -> Outcome {
-    // `.git` (a folder, or a file for linked work trees) here or above.
+    if let Err(reason) = command::availability() {
+        return Outcome::Unavailable(reason);
+    }
+    // Skip discovery processes for ordinary folders. Linked worktrees use a
+    // .git file; Git itself resolves and validates it below.
     if !folder.ancestors().any(|dir| dir.join(".git").exists()) {
         return Outcome::NotRepository;
     }
-    imp::read(folder, interrupt)
+    match snapshot(folder, &interrupt) {
+        Ok(Some(snapshot)) => Outcome::Ready(snapshot),
+        Ok(None) => Outcome::NotRepository,
+        Err(error) => Outcome::Failed(error),
+    }
 }
 
-mod imp {
-    use super::*;
-    use gix::{bstr::ByteSlice, status::index_worktree, status::plumbing::index_as_worktree};
-
-    pub(super) fn open(folder: &Path) -> Result<Option<gix::Repository>, String> {
-        // Command- and secret-bearing settings (filters, credentials, signing,
-        // remotes, submodules) only from outside the repository.
-        let options = gix::open::Options::default().filter_config_section(|meta| {
-            meta.source.kind() != gix::config::source::Kind::Repository
-        });
-        let mapping = gix::sec::trust::Mapping {
-            full: options.clone(),
-            reduced: options,
-        };
-        let mut repo =
-            gix::ThreadSafeRepository::discover_opts(folder, Default::default(), mapping)
-                .map_err(|e| e.to_string())?
-                .to_thread_local();
-        if !cfg!(unix) {
-            // Without Unix permissions (Scarlet) every file reads as not
-            // executable; keep the recorded modes, as Git does with
-            // core.fileMode=false, instead of reporting or staging a change.
-            let mut config = repo.config_snapshot_mut();
-            config
-                .set_value(&gix::config::tree::Core::FILE_MODE, "false")
-                .map_err(|e| e.to_string())?;
-            config.commit().map_err(|e| e.to_string())?;
-        }
-        Ok(Some(repo))
+fn snapshot(folder: &Path, interrupt: &AtomicBool) -> Result<Option<Snapshot>, String> {
+    if command::read(folder, ["rev-parse", "--is-inside-work-tree"], interrupt)? != b"true\n" {
+        return Ok(None);
     }
-
-    fn head(repo: &gix::Repository) -> Result<super::Head, String> {
-        let head = repo.head().map_err(|e| e.to_string())?;
-        Ok(match head.kind {
-            gix::head::Kind::Symbolic(reference) => {
-                super::Head::Branch(reference.name.shorten().to_string())
-            }
-            gix::head::Kind::Unborn(name) => super::Head::Unborn(name.shorten().to_string()),
-            gix::head::Kind::Detached { target, .. } => {
-                super::Head::Detached(target.to_hex_with_len(7).to_string())
-            }
-        })
-    }
-
-    pub fn read(folder: &Path, interrupt: Arc<AtomicBool>) -> Outcome {
-        match snapshot(folder, interrupt) {
-            Ok(Some(snapshot)) => Outcome::Ready(snapshot),
-            Ok(None) => Outcome::NotRepository,
-            Err(e) => Outcome::Failed(e),
-        }
-    }
-
-    fn snapshot(folder: &Path, interrupt: Arc<AtomicBool>) -> Result<Option<Snapshot>, String> {
-        let Some(repo) = open(folder)? else {
-            return Ok(None);
-        };
-        // Bare repositories have no files to compare.
-        let Some(workdir) = repo.workdir().map(Path::to_path_buf) else {
-            return Ok(None);
-        };
-        // Where the open folder sits inside the work tree, compared on
-        // resolved paths so `/tmp` and `/private/tmp` agree.
-        let resolved =
-            |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let inside = resolved(folder)
-            .strip_prefix(resolved(&workdir))
-            .map(Path::to_path_buf)
-            .map_err(|_| "the folder is not inside the repository's work tree".to_string())?;
-        let mut snapshot = Snapshot {
-            head: head(&repo)?,
-            changes: BTreeMap::new(),
-            untracked_folders: Vec::new(),
-            total: 0,
-            workdir: workdir.clone(),
-            staged: Vec::new(),
-            unstaged: Vec::new(),
-            hooks: has_hooks(&repo),
-            in_progress: repo
-                .state()
-                .map(|state| in_progress_label(&state).to_string()),
-            branches: super::branch::list(&repo)?,
-        };
-        // A path staged and also changed again counts once, like `git status`.
-        let mut seen = std::collections::HashSet::new();
-        let mut note = |relative: &Path,
-                        change: Change,
-                        folder_entry: bool,
-                        staged: Option<Option<PathBuf>>,
-                        snapshot: &mut Snapshot| {
-            if seen.insert(relative.to_path_buf()) {
-                snapshot.total += 1;
-            }
-            let list = match &staged {
-                Some(_) => &mut snapshot.staged,
-                None => &mut snapshot.unstaged,
-            };
-            if list.len() < MAX_CHANGES {
-                list.push(Entry {
-                    path: relative.to_path_buf(),
-                    change,
-                    source: staged.flatten(),
-                    folder: folder_entry,
-                });
-            }
-            let Ok(below) = relative.strip_prefix(&inside) else {
-                return;
-            };
-            let path = folder.join(below);
-            if folder_entry {
-                snapshot.untracked_folders.push(path);
-            } else if snapshot.changes.len() < MAX_CHANGES || snapshot.changes.contains_key(&path) {
-                let entry = snapshot.changes.entry(path).or_insert(change);
-                *entry = (*entry).max(change);
-            }
-        };
-        let status = repo
-            .status(gix::progress::Discard)
-            .map_err(|e| e.to_string())?
-            .untracked_files(gix::status::UntrackedFiles::Collapsed)
-            .index_worktree_submodules(None)
-            .index_worktree_rewrites(None)
-            .should_interrupt_owned(interrupt)
-            .into_iter(None)
-            .map_err(|e| e.to_string())?;
-        for item in status {
-            let item = item.map_err(|e| e.to_string())?;
-            match item {
-                gix::status::Item::IndexWorktree(item) => {
-                    let relative = gix::path::from_bstr(item.rela_path())
-                        .map_err(|e| e.to_string())?
-                        .into_owned();
-                    let relative = relative.as_path();
-                    match &item {
-                        index_worktree::Item::DirectoryContents { entry, .. } => {
-                            let folder_entry =
-                                entry.disk_kind == Some(gix::dir::entry::Kind::Directory);
-                            note(
-                                relative,
-                                Change::Untracked,
-                                folder_entry,
-                                None,
-                                &mut snapshot,
-                            );
-                        }
-                        _ => {
-                            use index_as_worktree::EntryStatus;
-                            let change = match &item {
-                                index_worktree::Item::Modification { status, .. } => match status {
-                                    EntryStatus::Conflict { .. } => Some(Change::Conflicted),
-                                    EntryStatus::IntentToAdd => Some(Change::Added),
-                                    EntryStatus::Change(index_as_worktree::Change::Removed) => {
-                                        Some(Change::Deleted)
-                                    }
-                                    EntryStatus::Change(_) => Some(Change::Modified),
-                                    EntryStatus::NeedsUpdate(_) => None,
-                                },
-                                index_worktree::Item::Rewrite { .. } => Some(Change::Renamed),
-                                index_worktree::Item::DirectoryContents { .. } => None,
-                            };
-                            if let Some(change) = change {
-                                note(relative, change, false, None, &mut snapshot);
-                            }
-                        }
-                    }
-                }
-                gix::status::Item::TreeIndex(change) => {
-                    use gix::diff::index::ChangeRef;
-                    let path = |location: &gix::bstr::BStr| {
-                        gix::path::from_bstr(location)
-                            .map(|path| path.into_owned())
-                            .map_err(|e| e.to_string())
-                    };
-                    let (location, change, source) = match &change {
-                        ChangeRef::Addition { location, .. } => (location, Change::Added, None),
-                        ChangeRef::Deletion { location, .. } => (location, Change::Deleted, None),
-                        ChangeRef::Modification { location, .. } => {
-                            (location, Change::Modified, None)
-                        }
-                        ChangeRef::Rewrite {
-                            location,
-                            source_location,
-                            ..
-                        } => (
-                            location,
-                            Change::Renamed,
-                            Some(path(source_location.as_bstr())?),
-                        ),
-                    };
-                    let relative = path(location.as_bstr())?;
-                    note(&relative, change, false, Some(source), &mut snapshot);
-                }
-            }
-        }
-        snapshot.staged.sort_by(|a, b| a.path.cmp(&b.path));
-        snapshot.unstaged.sort_by(|a, b| a.path.cmp(&b.path));
-        Ok(Some(snapshot))
-    }
-
-    /// Hooks `git commit` runs, in the configured hooks folder.
-    fn has_hooks(repo: &gix::Repository) -> bool {
-        // Every source counts here, the repository's own config included: this
-        // only decides whether to say that hooks are not run.
-        let configured = repo
-            .config_snapshot()
-            .string("core.hooksPath")
-            .map(|value| value.to_string())
-            .map(|value| match value.strip_prefix("~/") {
-                Some(rest) => std::env::var_os("HOME").map_or_else(
-                    || PathBuf::from(&value),
-                    |home| PathBuf::from(home).join(rest),
-                ),
-                None => PathBuf::from(value),
-            });
-        let folder = match configured {
-            Some(path) if path.is_absolute() => path,
-            Some(path) => repo.workdir().unwrap_or(repo.git_dir()).join(path),
-            None => repo.common_dir().join("hooks"),
-        };
+    let workdir = command::workdir(folder)?;
+    let output = command::read(
+        &workdir,
         [
-            "pre-commit",
-            "prepare-commit-msg",
-            "commit-msg",
-            "post-commit",
-        ]
-        .iter()
-        .any(|hook| folder.join(hook).is_file())
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "--no-ahead-behind",
+            "-z",
+            "--untracked-files=normal",
+            "--ignore-submodules=dirty",
+            "--renames",
+        ],
+        interrupt,
+    )?;
+    let mut snapshot = parse_status(folder, &workdir, &output)?;
+    if interrupt.load(Ordering::Relaxed) {
+        return Err("Git read interrupted".into());
     }
+    snapshot.branches = branch::list(&workdir)?;
+    let git_dir = command::read(&workdir, ["rev-parse", "--absolute-git-dir"], interrupt)?;
+    let git_dir = command::path(git_dir.strip_suffix(b"\n").unwrap_or(&git_dir))?;
+    snapshot.in_progress = [
+        ("rebase-merge", "rebasing"),
+        ("rebase-apply", "rebasing or applying patches"),
+        ("MERGE_HEAD", "merging"),
+        ("CHERRY_PICK_HEAD", "cherry-picking"),
+        ("REVERT_HEAD", "reverting"),
+        ("BISECT_LOG", "bisecting"),
+    ]
+    .into_iter()
+    .find_map(|(file, label)| git_dir.join(file).exists().then(|| label.into()));
+    Ok(Some(snapshot))
+}
 
-    pub(super) fn in_progress_label(state: &gix::state::InProgress) -> &'static str {
-        use gix::state::InProgress::*;
-        match state {
-            ApplyMailbox | ApplyMailboxRebase => "applying patches",
-            Bisect => "bisecting",
-            CherryPick | CherryPickSequence => "cherry-picking",
-            Merge => "merging",
-            Rebase | RebaseInteractive => "rebasing",
-            Revert | RevertSequence => "reverting",
+/// Porcelain v2 uses NUL records and fixed field counts; filenames can contain
+/// spaces, newlines and (on Unix) arbitrary bytes.
+fn parse_status(folder: &Path, workdir: &Path, output: &[u8]) -> Result<Snapshot, String> {
+    let resolved = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let inside = resolved(folder)
+        .strip_prefix(resolved(workdir))
+        .map(Path::to_path_buf)
+        .map_err(|_| "The folder is not inside the repository's work tree")?;
+    let mut snapshot = Snapshot {
+        head: Head::Unborn(String::new()),
+        changes: BTreeMap::new(),
+        untracked_folders: Vec::new(),
+        total: 0,
+        workdir: workdir.to_path_buf(),
+        staged: Vec::new(),
+        unstaged: Vec::new(),
+        in_progress: None,
+        branches: Vec::new(),
+    };
+    let mut head = None;
+    let mut oid = None;
+    let mut seen = std::collections::HashSet::new();
+    let mut records = output
+        .split(|b| *b == 0)
+        .filter(|record| !record.is_empty());
+    while let Some(record) = records.next() {
+        if let Some(value) = record.strip_prefix(b"# branch.head ") {
+            head = Some(String::from_utf8_lossy(value).into_owned());
+            continue;
         }
+        if let Some(value) = record.strip_prefix(b"# branch.oid ") {
+            oid = Some(String::from_utf8_lossy(value).into_owned());
+            continue;
+        }
+        if record.starts_with(b"# ") || record.starts_with(b"! ") {
+            continue;
+        }
+        let (path, source, xy, conflict, is_folder) = match record.first() {
+            Some(b'?') if record.starts_with(b"? ") => {
+                let raw = &record[2..];
+                let folder = raw.ends_with(b"/");
+                (
+                    command::path(raw.strip_suffix(b"/").unwrap_or(raw))?,
+                    None,
+                    *b".?",
+                    false,
+                    folder,
+                )
+            }
+            Some(kind @ (b'1' | b'2' | b'u')) => {
+                let count = match kind {
+                    b'1' => 9,
+                    b'2' => 10,
+                    _ => 11,
+                };
+                let fields: Vec<_> = record.splitn(count, |b| *b == b' ').collect();
+                if fields.len() != count || fields[1].len() != 2 || fields[count - 1].is_empty() {
+                    return Err("Invalid Git status record".into());
+                }
+                let source = if *kind == b'2' {
+                    Some(command::path(
+                        records.next().ok_or("Missing Git rename source")?,
+                    )?)
+                } else {
+                    None
+                };
+                (
+                    command::path(fields[count - 1])?,
+                    source,
+                    [fields[1][0], fields[1][1]],
+                    *kind == b'u',
+                    false,
+                )
+            }
+            _ => return Err("Invalid Git status record".into()),
+        };
+        // `git rm --cached` can report the same path as both a staged
+        // deletion and an untracked file. Count it once, as the UI always has.
+        if seen.insert(path.clone()) {
+            snapshot.total += 1;
+        }
+        let staged = if conflict { None } else { status_change(xy[0]) };
+        let unstaged = if conflict {
+            Some(Change::Conflicted)
+        } else {
+            status_change(xy[1])
+        };
+        for (change, list, source) in [
+            (staged, &mut snapshot.staged, source.clone()),
+            (
+                unstaged,
+                &mut snapshot.unstaged,
+                if matches!(xy[1], b'R' | b'C') {
+                    source
+                } else {
+                    None
+                },
+            ),
+        ] {
+            if let Some(change) = change {
+                if list.len() < MAX_CHANGES {
+                    list.push(Entry {
+                        path: path.clone(),
+                        change,
+                        source,
+                        folder: is_folder,
+                    });
+                }
+            }
+        }
+        let Some(change) = staged.max(unstaged) else {
+            continue;
+        };
+        // When the opened folder is inside a collapsed untracked directory,
+        // every file under that opened folder still needs the untracked mark.
+        if is_folder && inside.starts_with(&path) {
+            if snapshot.untracked_folders.len() < MAX_CHANGES {
+                snapshot.untracked_folders.push(folder.to_path_buf());
+            }
+        } else if let Ok(relative) = path.strip_prefix(&inside) {
+            let full = folder.join(relative);
+            if is_folder {
+                if snapshot.untracked_folders.len() < MAX_CHANGES {
+                    snapshot.untracked_folders.push(full);
+                }
+            } else if snapshot.changes.len() < MAX_CHANGES || snapshot.changes.contains_key(&full) {
+                let mark = snapshot.changes.entry(full).or_insert(change);
+                *mark = (*mark).max(change);
+            }
+        }
+    }
+    let head = head.ok_or("Git did not report HEAD")?;
+    let oid = oid.ok_or("Git did not report the HEAD object")?;
+    snapshot.head = if head == "(detached)" {
+        Head::Detached(oid.chars().take(7).collect())
+    } else if oid == "(initial)" {
+        Head::Unborn(head)
+    } else {
+        Head::Branch(head)
+    };
+    snapshot.staged.sort_by(|a, b| a.path.cmp(&b.path));
+    snapshot.unstaged.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(snapshot)
+}
+
+fn status_change(code: u8) -> Option<Change> {
+    match code {
+        b'A' => Some(Change::Added),
+        b'D' => Some(Change::Deleted),
+        b'M' | b'T' => Some(Change::Modified),
+        b'R' | b'C' => Some(Change::Renamed),
+        b'U' => Some(Change::Conflicted),
+        b'?' => Some(Change::Untracked),
+        _ => None,
     }
 }
 
@@ -421,7 +377,6 @@ impl Watcher {
         let flag = interrupt.clone();
         std::thread::Builder::new()
             .name("kureha-git".into())
-            // Scarlet's default thread stack (64 KiB) is too small for gix.
             .stack_size(STACK_SIZE)
             .spawn(move || {
                 while let Ok(mut request) = inbox.recv() {
@@ -456,6 +411,12 @@ impl Watcher {
     /// The newest answer since the last poll. Never blocks.
     pub fn poll(&self) -> Option<Answer> {
         self.answers.lock().unwrap().try_iter().last()
+    }
+}
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        self.interrupt.store(true, Ordering::Relaxed);
     }
 }
 
@@ -625,9 +586,9 @@ mod tests {
     }
 
     #[test]
-    fn filters_from_the_repositorys_own_config_never_run() {
+    fn status_uses_repository_filters_like_git() {
         let repo = Repo::new("filter");
-        let marker = repo.0.with_extension("filter-ran");
+        let marker = repo.0.join(".git/filter-ran");
         let _ = std::fs::remove_file(&marker);
         repo.write(".gitattributes", "* filter=kureha-test\n");
         repo.write("a.txt", "hello\n");
@@ -640,7 +601,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(1100));
         repo.write("a.txt", "jello\n");
         let snapshot = repo.read("");
-        assert!(!marker.exists(), "the repository's clean filter ran");
+        assert!(marker.exists(), "git status should honor the clean filter");
         assert_eq!(
             changes(&repo, &snapshot),
             [("a.txt".to_string(), Change::Modified)]
@@ -687,6 +648,138 @@ mod tests {
             [&repo.0.join("sub").join("inner.txt")]
         );
         assert_eq!(snapshot.total, 2);
+    }
+
+    #[test]
+    fn an_open_folder_inside_an_untracked_directory_is_marked() {
+        let repo = Repo::new("untracked-inside");
+        repo.write("fresh/nested/a.txt", "new\n");
+        let snapshot = repo.read("fresh/nested");
+        assert_eq!(snapshot.total, 1);
+        assert_eq!(
+            snapshot.change(&repo.0.join("fresh/nested/a.txt")),
+            Some(Change::Untracked)
+        );
+    }
+
+    #[test]
+    fn staged_deletion_and_untracked_copy_count_once() {
+        let repo = Repo::new("deleted-and-untracked");
+        repo.write("a.txt", "keep on disk\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-qm", "initial"]);
+        repo.git(&["rm", "--cached", "a.txt"]);
+        let snapshot = repo.read("");
+        assert_eq!(snapshot.total, 1);
+        assert_eq!(snapshot.staged[0].change, Change::Deleted);
+        assert_eq!(snapshot.unstaged[0].change, Change::Untracked);
+        assert_eq!(
+            snapshot.change(&repo.0.join("a.txt")),
+            Some(Change::Deleted)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn status_preserves_unusual_path_bytes_and_rename_sources() {
+        use std::os::unix::ffi::OsStrExt;
+        let repo = Repo::new("status paths\nwith newline");
+        repo.write("old\nname.txt", "rename me\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-qm", "initial"]);
+        repo.git(&["mv", "old\nname.txt", "new\t name.txt"]);
+        let name = std::ffi::OsStr::new("日本語.txt");
+        std::fs::write(repo.0.join(name), "new\n").unwrap();
+        repo.write(":(glob)*.txt", "literal\n");
+        let snapshot = repo.read("");
+        assert_eq!(snapshot.total, 3);
+        assert_eq!(snapshot.staged[0].path, Path::new("new\t name.txt"));
+        assert_eq!(
+            snapshot.staged[0].source.as_deref(),
+            Some(Path::new("old\nname.txt"))
+        );
+        assert_eq!(snapshot.change(&repo.0.join(name)), Some(Change::Untracked));
+        // APFS rejects non-UTF-8 filenames; exercise the NUL parser directly
+        // for byte sequences that filesystems such as ext4 can store.
+        let raw = b"# branch.head main\0# branch.oid (initial)\0? non-utf8-\xff.txt\0";
+        let parsed = parse_status(&repo.0, &repo.0, raw).unwrap();
+        assert_eq!(
+            parsed.unstaged[0].path.as_os_str().as_bytes(),
+            b"non-utf8-\xff.txt"
+        );
+    }
+
+    #[test]
+    fn merge_conflicts_are_reported_once_and_can_be_resolved() {
+        let repo = Repo::new("status-conflict");
+        repo.write("a.txt", "base\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-qm", "base"]);
+        repo.git(&["switch", "-c", "side"]);
+        repo.write("a.txt", "side\n");
+        repo.git(&["commit", "-qam", "side"]);
+        repo.git(&["switch", "main"]);
+        repo.write("a.txt", "main\n");
+        repo.git(&["commit", "-qam", "main"]);
+        assert!(
+            !command::output(&repo.0, ["merge", "--no-edit", "side"])
+                .unwrap()
+                .status
+                .success()
+        );
+        let snapshot = repo.read("");
+        assert_eq!(snapshot.total, 1);
+        assert_eq!(snapshot.in_progress.as_deref(), Some("merging"));
+        assert_eq!(snapshot.unstaged[0].change, Change::Conflicted);
+        repo.write("a.txt", "resolved\n");
+        write::apply(&repo.0, &write::Operation::Stage(vec!["a.txt".into()])).unwrap();
+        write::apply(&repo.0, &write::Operation::Commit("resolve merge".into())).unwrap();
+        assert_eq!(repo.read("").total, 0);
+        assert_eq!(
+            repo.git(&["rev-list", "--parents", "-1", "HEAD"])
+                .split_whitespace()
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn missing_git_disables_the_backend() {
+        const CHILD: &str = "KUREHA_TEST_GIT_MISSING";
+        if std::env::var_os(CHILD).is_some() {
+            let folder = Path::new(".");
+            assert_eq!(
+                read(folder, Arc::new(AtomicBool::new(false))),
+                Outcome::Unavailable(command::MISSING.into())
+            );
+            assert_eq!(
+                write::apply(folder, &write::Operation::Commit("test".into())).unwrap_err(),
+                command::MISSING
+            );
+            assert_eq!(
+                diff::read(folder, Path::new("Cargo.toml"), diff::Side::Unstaged).unwrap_err(),
+                command::MISSING
+            );
+            return;
+        }
+        // Change PATH only in a fresh test process, so parallel tests and the
+        // process-wide Git availability cache remain independent.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "git::tests::missing_git_disables_the_backend",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

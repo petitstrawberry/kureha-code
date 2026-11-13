@@ -29,6 +29,7 @@ const SLOW_READ_FACTOR: u32 = 10;
 pub(super) struct State {
     watcher: Option<Watcher>,
     started: bool,
+    unavailable: Option<String>,
     /// Bumped whenever the folder changes; older answers are ignored.
     generation: u64,
     folder: Option<PathBuf>,
@@ -69,7 +70,7 @@ pub(super) struct Panel {
     selected: Ui<Option<usize>>,
     message: Ui<String>,
     message_selection: Ui<scarlet_ui::views::TextSelection>,
-    /// The last answer from the writer, or why nothing can be done.
+    /// An operation failure or the reason Git is unavailable.
     notice: Ui<String>,
     busy: Ui<bool>,
 }
@@ -164,7 +165,7 @@ fn change_color(change: Change, colors: &kureha_code::theme::WorkbenchColors) ->
 fn status_text(outcome: &Outcome) -> String {
     match outcome {
         Outcome::Ready(snapshot) => snapshot.summary(),
-        Outcome::NotRepository => String::new(),
+        Outcome::NotRepository | Outcome::Unavailable(_) => String::new(),
         Outcome::Failed(error) => format!("Git: {}", error.lines().next().unwrap_or(error)),
     }
 }
@@ -203,6 +204,7 @@ impl App {
         let (answer, cleared, failed_to_start) = {
             let mut rt = self.runtime.lock().unwrap();
             let state = &mut rt.git;
+            if state.unavailable.is_some() { return; }
             let mut failed_to_start = None;
             if !state.started {
                 state.started = true;
@@ -251,6 +253,7 @@ impl App {
             self.status.set(error);
         }
         let mut marks_changed = cleared;
+        if cleared { self.git_panel.notice.set(String::new()); }
         if cleared && !self.git_status.get().is_empty() {
             self.git_status.set(String::new());
         }
@@ -261,6 +264,14 @@ impl App {
             }
             let snapshot = match outcome {
                 Outcome::Ready(snapshot) => Some(snapshot),
+                Outcome::Unavailable(reason) => {
+                    self.git_panel.notice.set(reason.clone());
+                    let mut rt = self.runtime.lock().unwrap();
+                    rt.git.unavailable = Some(reason);
+                    rt.git.watcher = None;
+                    marks_changed = true;
+                    None
+                }
                 _ => None,
             };
             let mut rt = self.runtime.lock().unwrap();
@@ -326,7 +337,7 @@ impl App {
                     Operation::Switch { name, .. } => format!("Switching to {name}…"),
                 };
                 self.git_panel.busy.set(true);
-                self.git_panel.notice.set(doing.clone());
+                self.git_panel.notice.set(String::new());
                 let id = self.progress(doing);
                 self.runtime.lock().unwrap().git.progress.push_back(id);
             }
@@ -363,11 +374,10 @@ impl App {
                     if matches!(operation, Operation::Commit(_)) {
                         self.git_panel.message.set(String::new());
                     }
-                    if matches!(operation, Operation::Switch { .. }) {
+                    if matches!(operation, Operation::Switch { .. } | Operation::CreateBranch { switch: true, .. }) {
                         self.reload_switched(&done.changed);
                     }
-                    self.notify(super::messages::Level::Info, done.message.clone());
-                    self.git_panel.notice.set(done.message);
+                    self.git_panel.notice.set(String::new());
                 }
                 Err(e) => {
                     self.notify(super::messages::Level::Error, e.clone());
@@ -392,6 +402,9 @@ impl App {
                 entries.into_iter().map(|e| e.path).collect(),
             ));
         }
+    }
+    pub(super) fn git_can_operate(&self) -> bool {
+        self.runtime.lock().unwrap().git.snapshot.is_some()
     }
     /// Local branches of the open repository, from the latest read.
     pub(super) fn git_branches(&self) -> Vec<kureha_code::git::branch::Branch> {
@@ -710,9 +723,9 @@ impl App {
     pub(super) fn git_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let colors = theme.colors();
-        let (snapshot, pending) = {
+        let (snapshot, pending, unavailable) = {
             let rt = self.runtime.lock().unwrap();
-            (rt.git.snapshot.clone(), rt.git.pending)
+            (rt.git.snapshot.clone(), rt.git.pending, rt.git.unavailable.clone())
         };
         let refresh = self.clone();
         let commit = self.clone();
@@ -730,9 +743,7 @@ impl App {
         let notice = self.git_panel.notice.get();
         // Kept apart from the notice so a writer's answer never hides it.
         let warning = if let Some(state) = snapshot.as_ref().and_then(|s| s.in_progress.as_ref()) {
-            format!("Git is {state}; finish it with git")
-        } else if snapshot.as_ref().is_some_and(|s| s.hooks) {
-            "This repository has commit hooks; Kureha does not run them".into()
+            format!("Git is {state}")
         } else {
             String::new()
         };
@@ -740,11 +751,11 @@ impl App {
             "git:",
             self.git_panel.rows.get().iter().map(GitRow::key),
         );
-        let empty = match self.git_status.get() {
+        let empty = unavailable.unwrap_or_else(|| match self.git_status.get() {
             status if status.starts_with("Git: ") => status,
             _ if self.runtime.lock().unwrap().explorer.root.is_none() => "No folder open".into(),
             _ => "Not a Git repository".into(),
-        };
+        });
         let header = hstack! {
             Text::new("Source Control").font_size(13.0).color(colors.foreground),
             Spacer::new(),
@@ -790,7 +801,9 @@ impl App {
                 if_view!(!warning.is_empty(),
                     Text::new(warning.clone()).font_size(11.0).color(colors.warning).line_limit(None),
                     VStack::new(())),
-                Text::new(notice).font_size(11.0).color(colors.muted).line_limit(None),
+                if_view!(!notice.is_empty(),
+                    Text::new(notice).font_size(11.0).color(colors.error).line_limit(None),
+                    VStack::new(())),
                 ListView::new(self.git_panel.rows.clone(), self.git_panel.selected.clone(), 27.0, move |index, row: GitRow, selected| {
                     rows.git_row(row, selected == Some(index), &row_theme)
                 }).item_key(|row| row.key().into())
@@ -1004,6 +1017,33 @@ mod tests {
     use kureha_code::git::Change;
     use std::process::Command;
 
+    #[test]
+    fn missing_git_disables_operations_without_repeated_errors() {
+        const CHILD: &str = "KUREHA_TEST_GIT_UI_MISSING";
+        if std::env::var_os(CHILD).is_none() {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "git_ui::tests::missing_git_disables_operations_without_repeated_errors", "--nocapture"])
+                .env(CHILD, "1").env("PATH", "").output().unwrap();
+            assert!(output.status.success(), "{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            return;
+        }
+        let app = App::with_document();
+        app.open_folder(std::env::current_dir().unwrap());
+        app.show_git();
+        wait(&app, "Git is disabled", |app| app.runtime.lock().unwrap().git.unavailable.is_some());
+        for _ in 0..3 { app.refresh_git(); app.poll_git(); }
+        app.show_branch_picker();
+        app.git_commit();
+        assert!(!app.git_can_operate());
+        assert!(app.runtime.lock().unwrap().git.watcher.is_none());
+        assert!(app.runtime.lock().unwrap().git.writer.is_none());
+        assert!(app.git_status.get().is_empty());
+        assert!(app.git_panel.rows.get().is_empty());
+        assert!(!app.git_panel.busy.get());
+        assert!(app.messages.progress.get().is_empty());
+        assert!(!app.nav.is_open());
+    }
+
     fn git(dir: &std::path::Path, args: &[&str]) {
         let output = Command::new("git")
             .args([
@@ -1190,7 +1230,8 @@ mod tests {
                 && file(app, "lib.rs", true).is_some()
                 && file(app, "lib.rs", false).is_none()
         });
-        assert_eq!(app.git_panel.notice.get(), "Staged 3 files");
+        assert!(app.git_panel.notice.get().is_empty());
+        assert!(app.messages.progress.get().is_empty());
         render_preview(&app, "git-sidebar.png");
         render_preview_sized(&app, "git-sidebar-narrow.png", 760.0);
 
@@ -1199,7 +1240,9 @@ mod tests {
         wait(&app, "the commit is made", |app| {
             app.git_status.get() == "main" && !app.git_panel.busy.get()
         });
-        assert!(app.git_panel.notice.get().starts_with("Committed "));
+        assert!(app.git_panel.notice.get().is_empty());
+        assert!(app.messages.progress.get().is_empty());
+        assert!(!app.messages.history().iter().any(|m| m.text.starts_with("Committed ")));
         assert_eq!(app.git_panel.message.get(), "");
         assert!(app.git_panel.rows.get().is_empty());
         let log = Command::new("git")
@@ -1259,7 +1302,9 @@ mod tests {
         wait(&app, "the switch is done", |app| {
             app.git_status.get() == "side" && !app.git_panel.busy.get()
         });
-        assert_eq!(app.status.get(), "Switched to side");
+        assert!(app.git_panel.notice.get().is_empty());
+        assert!(app.messages.progress.get().is_empty());
+        assert!(!app.messages.history().iter().any(|m| m.text.starts_with("Switched to ")));
         let rt = app.runtime.lock().unwrap();
         let doc = rt.workspace.get(a).unwrap();
         assert_eq!(doc.editor.document.as_str(), "side\n");

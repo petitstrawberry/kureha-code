@@ -86,6 +86,12 @@ are never overwritten. This helper writes to `dist/macos/Kureha Code.app` or
 to Applications. On Linux, run `bin/kureha-code` inside the generated directory;
 desktop launchers need its `bin` on `PATH` and `share` on `XDG_DATA_DIRS`.
 
+## Git
+
+Git integration requires `git` on `PATH`. It is disabled when Git is unavailable
+and on Scarlet until Git is ported there. See [Git support](docs/git.md) for
+operations and configuration behavior.
+
 ## Configuration
 
 Open the Settings tab with **Kureha Code → Settings…** (`⌘,` on macOS, `Ctrl+,` elsewhere).
