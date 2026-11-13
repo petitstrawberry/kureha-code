@@ -111,6 +111,7 @@ impl App {
             return;
         }
         self.project.blur();
+        self.git_panel.blur();
         if self.focused_group.get() != group {
             self.invalidate_clipboard();
             self.focused_group.set(group);
