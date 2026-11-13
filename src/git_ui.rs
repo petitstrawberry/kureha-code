@@ -38,7 +38,6 @@ fn status_text(outcome: &Outcome) -> String {
         Outcome::Ready(snapshot) => snapshot.summary(),
         Outcome::NotRepository => String::new(),
         Outcome::Failed(error) => format!("Git: {}", error.lines().next().unwrap_or(error)),
-        Outcome::Unsupported => "Git: not available on Scarlet yet".into(),
     }
 }
 
@@ -148,7 +147,7 @@ impl App {
     }
 }
 
-#[cfg(all(test, not(target_os = "scarlet")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use kureha_code::git::Change;

@@ -75,7 +75,7 @@
             pname = "kureha-code-unwrapped";
             version = manifest.package.version;
             inherit src;
-            cargoHash = "sha256-DxVAaE92Xq7vJ5JuuGQhFViaoHE+33iB0XMz6qcO4Io=";
+            cargoHash = "sha256-kyd8FMGJN1agw2XUCHGuHhmCCdAOWj7mA7IEVgPNbV0=";
             nativeBuildInputs = [ pkgs.pkg-config ];
             # Git tests build their fixture repositories with the git command line.
             nativeCheckInputs = [ pkgs.python3 pkgs.git ];

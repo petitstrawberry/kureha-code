@@ -7,8 +7,8 @@
 //! from the repository's own `.git/config`, whoever owns it. Nothing is
 //! written: the index is read, never refreshed or locked.
 //!
-//! Scarlet has no Git support yet (see `docs/git.md`); there the worker only
-//! reports whether a repository is present.
+//! On Scarlet, gix runs on patched dependencies (memory maps, file times,
+//! entropy; see `docs/git.md`).
 
 use std::{
     collections::BTreeMap,
@@ -22,6 +22,8 @@ use std::{
 
 /// Changed paths kept per snapshot; the count still includes the rest.
 pub const MAX_CHANGES: usize = 20_000;
+/// The worker's stack, the same as the file worker's (`kureha-file`).
+const STACK_SIZE: usize = 2 * 1024 * 1024;
 
 /// How a path differs from `HEAD`, in ascending order of significance, so a
 /// folder shows the most significant change below it.
@@ -118,8 +120,6 @@ pub enum Outcome {
     NotRepository,
     Ready(Snapshot),
     Failed(String),
-    /// A repository is present, but this platform cannot read it yet.
-    Unsupported,
 }
 
 /// Reads the repository containing `folder`. Stops early, with an error, when
@@ -132,7 +132,6 @@ pub fn read(folder: &Path, interrupt: Arc<AtomicBool>) -> Outcome {
     imp::read(folder, interrupt)
 }
 
-#[cfg(not(target_os = "scarlet"))]
 mod imp {
     use super::*;
     use gix::{bstr::ByteSlice, status::index_worktree, status::plumbing::index_as_worktree};
@@ -278,17 +277,6 @@ mod imp {
     }
 }
 
-#[cfg(target_os = "scarlet")]
-mod imp {
-    use super::*;
-
-    /// A repository is present (checked by the caller), but gix cannot read
-    /// one here yet.
-    pub fn read(_folder: &Path, _interrupt: Arc<AtomicBool>) -> Outcome {
-        Outcome::Unsupported
-    }
-}
-
 type Request = (u64, PathBuf);
 type Answer = (u64, PathBuf, Outcome);
 
@@ -307,6 +295,8 @@ impl Watcher {
         let flag = interrupt.clone();
         std::thread::Builder::new()
             .name("kureha-git".into())
+            // Scarlet's default thread stack (64 KiB) is too small for gix.
+            .stack_size(STACK_SIZE)
             .spawn(move || {
                 while let Ok(mut request) = inbox.recv() {
                     // Only the newest request matters.
@@ -343,7 +333,7 @@ impl Watcher {
     }
 }
 
-#[cfg(all(test, not(target_os = "scarlet")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::{process::Command, time::Duration};
@@ -606,7 +596,7 @@ mod tests {
 
 /// Times `read` on real repositories:
 /// `KUREHA_GIT_TIMING=/path/a:/path/b cargo test --release --lib git_read_timing -- --ignored --nocapture`
-#[cfg(all(test, not(target_os = "scarlet")))]
+#[cfg(test)]
 #[test]
 #[ignore]
 fn git_read_timing() {

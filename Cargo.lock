@@ -103,7 +103,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -665,7 +665,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -723,9 +723,8 @@ dependencies = [
 
 [[package]]
 name = "filetime"
-version = "0.2.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+version = "0.2.29+scarlet.1"
+source = "git+https://github.com/petitstrawberry/filetime?rev=df3f25e90ad80cf52b61f3470df86ea8d5a1d608#df3f25e90ad80cf52b61f3470df86ea8d5a1d608"
 dependencies = [
  "cfg-if",
  "libc",
@@ -901,9 +900,8 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
+version = "0.4.3+scarlet.1"
+source = "git+https://github.com/petitstrawberry/getrandom?rev=829c209320eebd7e725f686d6f0321e2e11300d0#829c209320eebd7e725f686d6f0321e2e11300d0"
 dependencies = [
  "cfg-if",
  "libc",
@@ -1069,9 +1067,8 @@ dependencies = [
 
 [[package]]
 name = "gix-config-value"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cdada8bd9c97dc6522505c08226d9c88f0a1286f2c06b9e1bf51c3bf7ad7b2b"
+version = "0.21.1+scarlet.1"
+source = "git+https://github.com/petitstrawberry/gitoxide?rev=21d5c3cee190b7338558d2d9357449052a0b3a9e#21d5c3cee190b7338558d2d9357449052a0b3a9e"
 dependencies = [
  "bitflags 2.13.2",
  "bstr",
@@ -1534,9 +1531,8 @@ dependencies = [
 
 [[package]]
 name = "gix-sec"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9598d1f35baec7038c2d278bfcc18f1d8951f41dcc3f51ab6175661dfe5a6137"
+version = "0.16.1+scarlet.1"
+source = "git+https://github.com/petitstrawberry/gitoxide?rev=21d5c3cee190b7338558d2d9357449052a0b3a9e#21d5c3cee190b7338558d2d9357449052a0b3a9e"
 dependencies = [
  "bitflags 2.13.2",
  "gix-path",
@@ -1675,7 +1671,7 @@ dependencies = [
  "bstr",
  "bytes",
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.4.3+scarlet.1",
  "gix-error",
  "prodash",
  "unicode-normalization",
@@ -2100,7 +2096,7 @@ version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3"
 dependencies = [
- "getrandom 0.4.3",
+ "getrandom 0.4.3+scarlet.1",
  "libc",
 ]
 
@@ -2287,9 +2283,8 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "memmap2"
-version = "0.9.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b0ca1155a9ecc25aa12e8313a119f32edf0255fea2f44839c4ac0a12b2ac157"
+version = "0.9.12+scarlet.2"
+source = "git+https://github.com/petitstrawberry/memmap2-rs?rev=891288b3bc0b1fb082ee380fe3886e86d9cf34a0#891288b3bc0b1fb082ee380fe3886e86d9cf34a0"
 dependencies = [
  "libc",
 ]
@@ -2792,7 +2787,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3217,7 +3212,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3928,10 +3923,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4764,7 +4759,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

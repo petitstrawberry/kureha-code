@@ -1,6 +1,6 @@
 {
   "generator": "cargo-about",
-  "cargo_lock_sha256": "804cc85c7c806855b4858c0886fb2b4d0a450247f04ccd8e6679bd8c9494c5e2",
+  "cargo_lock_sha256": "087f85959772745038d6c2ae02f5606fba42ed2273fa96c3679e9fb0ddc94e0a",
   "entries": [
     {
       "name": "ab_glyph",
@@ -699,7 +699,7 @@
     },
     {
       "name": "filetime",
-      "version": "0.2.29",
+      "version": "0.2.29+scarlet.1",
       "texts": [
         23
       ],
@@ -870,7 +870,7 @@
     },
     {
       "name": "getrandom",
-      "version": "0.4.3",
+      "version": "0.4.3+scarlet.1",
       "texts": [
         72
       ],
@@ -960,7 +960,7 @@
     },
     {
       "name": "gix-config-value",
-      "version": "0.21.1",
+      "version": "0.21.1+scarlet.1",
       "texts": [
         146
       ],
@@ -1221,7 +1221,7 @@
     },
     {
       "name": "gix-sec",
-      "version": "0.16.1",
+      "version": "0.16.1+scarlet.1",
       "texts": [
         146
       ],
@@ -1860,7 +1860,7 @@
     },
     {
       "name": "memmap2",
-      "version": "0.9.12",
+      "version": "0.9.12+scarlet.2",
       "texts": [
         83
       ],
