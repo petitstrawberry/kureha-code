@@ -173,9 +173,21 @@ mod imp {
             full: options.clone(),
             reduced: options,
         };
-        gix::ThreadSafeRepository::discover_opts(folder, Default::default(), mapping)
-            .map(|repo| Some(repo.to_thread_local()))
-            .map_err(|e| e.to_string())
+        let mut repo =
+            gix::ThreadSafeRepository::discover_opts(folder, Default::default(), mapping)
+                .map_err(|e| e.to_string())?
+                .to_thread_local();
+        if !cfg!(unix) {
+            // Without Unix permissions (Scarlet) every file reads as not
+            // executable; keep the recorded modes, as Git does with
+            // core.fileMode=false, instead of reporting or staging a change.
+            let mut config = repo.config_snapshot_mut();
+            config
+                .set_value(&gix::config::tree::Core::FILE_MODE, "false")
+                .map_err(|e| e.to_string())?;
+            config.commit().map_err(|e| e.to_string())?;
+        }
+        Ok(Some(repo))
     }
 
     fn head(repo: &gix::Repository) -> Result<super::Head, String> {

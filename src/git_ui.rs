@@ -585,7 +585,9 @@ impl App {
             .unwrap_or_default();
         let notice = self.git_panel.notice.get();
         // Kept apart from the notice so a writer's answer never hides it.
-        let warning = if let Some(state) = snapshot.as_ref().and_then(|s| s.in_progress.as_ref()) {
+        let warning = if !kureha_code::git::write::AVAILABLE {
+            "Staging and committing are not available on Scarlet yet".into()
+        } else if let Some(state) = snapshot.as_ref().and_then(|s| s.in_progress.as_ref()) {
             format!("Git is {state}; finish it with git")
         } else if snapshot.as_ref().is_some_and(|s| s.hooks) {
             "This repository has commit hooks; Kureha does not run them".into()
@@ -632,7 +634,7 @@ impl App {
                 Button::new(if staged == 0 { "Commit (nothing staged)".to_string() } else { format!("Commit {staged} staged") })
                     .icon(Icon::Check).icon_size(IconSize::Small)
                     .font_size(12.0).text_color(colors.foreground).material(theme.input_material())
-                    .enabled(staged > 0 && pending == 0)
+                    .enabled(staged > 0 && pending == 0 && kureha_code::git::write::AVAILABLE)
                     .on_click(move || commit.git_commit())
                     .frame(f32::INFINITY, 28.0),
                 if_view!(!warning.is_empty(),
@@ -700,6 +702,7 @@ impl App {
                         Button::new(if staged { "Unstage All" } else { "Stage All" }).header_style()
                             .font_size(11.0).padding(4.0).text_color(colors.foreground)
                             .background_color(Color::TRANSPARENT)
+                            .enabled(kureha_code::git::write::AVAILABLE)
                             .on_click(move || action.git_stage(entries.clone(), staged)),
                     }
                     .spacing(4.0)
@@ -748,6 +751,7 @@ impl App {
                         Button::new(if staged { "−" } else { "+" }).header_style()
                             .font_size(13.0).padding(4.0).text_color(colors.foreground)
                             .background_color(Color::TRANSPARENT)
+                            .enabled(kureha_code::git::write::AVAILABLE)
                             .on_click(move || action.git_stage(vec![stage.clone()], staged))
                             .frame(26.0, 27.0),
                     }

@@ -32,9 +32,17 @@ pub enum Operation {
     Commit(String),
 }
 
+/// Whether this platform can stage and commit. On Scarlet, gix takes locks
+/// and writes objects through the `tempfile` crate, which has no Scarlet
+/// backend yet: every call there fails as unsupported.
+pub const AVAILABLE: bool = !cfg!(target_os = "scarlet");
+
 /// Applies `operation` to the repository containing `folder`; the answer
 /// says what was done.
 pub fn apply(folder: &Path, operation: &Operation) -> Result<String, String> {
+    if !AVAILABLE {
+        return Err("Staging and committing are not available on Scarlet yet".into());
+    }
     let repo = imp::open(folder)?.ok_or("Not a Git repository")?;
     match operation {
         Operation::Stage(paths) => stage(&repo, paths),
@@ -67,9 +75,15 @@ fn lock_index(repo: &gix::Repository) -> Result<Locked, String> {
         None,
         0,
     )
-    .map_err(|_| {
-        "The index is locked: another Git command is running, or one left index.lock behind"
-            .to_string()
+    .map_err(|e| {
+        let mut lock = path.clone().into_os_string();
+        lock.push(".lock");
+        if Path::new(&lock).exists() {
+            "The index is locked: another Git command is running, or one left index.lock behind"
+                .to_string()
+        } else {
+            format!("Cannot lock the index: {e:?}")
+        }
     })?;
     let index =
         gix::index::File::at_or_default(&path, repo.object_hash(), false, Default::default())
