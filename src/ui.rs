@@ -344,9 +344,8 @@ impl App {
                 .frame(f32::INFINITY, f32::INFINITY)
                 .padding_insets(EdgeInsets::new(10.0, 10.0, 10.0, 0.0)),
             hstack! {
-                Text::from_state(self.status.clone()).font_size(11.0).color(theme.colors().foreground),
+                self.status_bar_left(),
                 Spacer::new(),
-                self.git_status_bar(),
                 if_view!(!self.terminal_focused(), Text::from_state(self.language_status.clone()).font_size(11.0).color(theme.colors().muted), VStack::new(())),
                 Text::from_state(self.position.clone()).font_size(11.0).color(theme.colors().muted),
             }.spacing(12.0).padding_insets(EdgeInsets::new(18.0, 8.0, 18.0, 8.0)),

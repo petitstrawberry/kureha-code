@@ -44,6 +44,8 @@ pub(super) struct State {
     pub(super) diffs: BTreeMap<TabId, DiffTab>,
     diff_answers: Option<(mpsc::Sender<DiffAnswer>, mpsc::Receiver<DiffAnswer>)>,
     diff_requests: u64,
+    /// Status bar progress items of operations sent to the writer, in order.
+    progress: std::collections::VecDeque<u64>,
 }
 
 /// A tab showing one change.
@@ -316,19 +318,22 @@ impl App {
         };
         match started {
             Ok(()) => {
+                let doing = match &operation {
+                    Operation::Stage(_) => "Staging…".to_string(),
+                    Operation::Unstage(_) => "Unstaging…".to_string(),
+                    Operation::Commit(_) => "Committing…".to_string(),
+                    Operation::CreateBranch { name, .. } => format!("Creating {name}…"),
+                    Operation::Switch { name, .. } => format!("Switching to {name}…"),
+                };
                 self.git_panel.busy.set(true);
-                self.git_panel.notice.set(
-                    match operation {
-                        Operation::Stage(_) => "Staging…",
-                        Operation::Unstage(_) => "Unstaging…",
-                        Operation::Commit(_) => "Committing…",
-                        Operation::CreateBranch { .. } => "Creating the branch…",
-                        Operation::Switch { .. } => "Switching…",
-                    }
-                    .into(),
-                );
+                self.git_panel.notice.set(doing.clone());
+                let id = self.progress(doing);
+                self.runtime.lock().unwrap().git.progress.push_back(id);
             }
-            Err(e) => self.git_panel.notice.set(e),
+            Err(e) => {
+                self.git_panel.notice.set(e.clone());
+                self.notify(super::messages::Level::Error, e);
+            }
         }
     }
     fn poll_git_writer(&self) {
@@ -348,10 +353,11 @@ impl App {
         };
         let (answers, pending) = answers;
         for (_, operation, result) in answers {
-            let branch = matches!(
-                operation,
-                Operation::Switch { .. } | Operation::CreateBranch { .. }
-            );
+            // Answers come in the order the work was sent.
+            let progress = self.runtime.lock().unwrap().git.progress.pop_front();
+            if let Some(id) = progress {
+                self.progress_done(id);
+            }
             match result {
                 Ok(done) => {
                     if matches!(operation, Operation::Commit(_)) {
@@ -360,16 +366,11 @@ impl App {
                     if matches!(operation, Operation::Switch { .. }) {
                         self.reload_switched(&done.changed);
                     }
-                    if branch {
-                        // Also where the picker was used: not only in the sidebar.
-                        self.status.set(done.message.clone());
-                    }
+                    self.notify(super::messages::Level::Info, done.message.clone());
                     self.git_panel.notice.set(done.message);
                 }
                 Err(e) => {
-                    if branch {
-                        self.status.set(e.clone());
-                    }
+                    self.notify(super::messages::Level::Error, e.clone());
                     self.git_panel.notice.set(e);
                 }
             }
@@ -651,8 +652,8 @@ impl App {
     }
 
     /// The status bar's Git items: the branch, which opens the branch list,
-    /// and the change count, which opens the Git sidebar. While a stage,
-    /// commit or switch runs, what it is doing.
+    /// and the change count, which opens the Git sidebar. Running stages,
+    /// commits and switches show as progress beside them.
     pub(super) fn git_status_bar(&self) -> impl View + Clone + use<> {
         let colors = self.theme.get().colors();
         let (branch, changes, repository) = {
@@ -682,11 +683,7 @@ impl App {
         };
         let picker = self.clone();
         let sidebar = self.clone();
-        let busy = self.git_panel.busy.get();
         hstack! {
-            if_view!(busy,
-                Text::new(self.git_panel.notice.get()).font_size(11.0).color(colors.muted),
-                VStack::new(())),
             Text::new(branch).font_size(11.0).color(colors.foreground)
                 .on_event(move |event| {
                     if clicked(event) {

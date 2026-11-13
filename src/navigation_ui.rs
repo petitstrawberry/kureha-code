@@ -24,6 +24,7 @@ enum Mode {
         code_only: bool,
     },
     Branches,
+    Messages,
 }
 #[derive(Clone, Debug)]
 enum Action {
@@ -42,6 +43,8 @@ enum Action {
     Branch(String),
     /// Create this branch at HEAD and switch to it.
     CreateBranch(String),
+    /// A row to read, such as a past message.
+    Nothing,
 }
 #[derive(Clone, Debug)]
 struct Row {
@@ -318,6 +321,12 @@ pub(super) const COMMANDS: &[CommandDescriptor] = &[
         "Primary+Shift+F"
     ),
     command!(
+        "messages-history",
+        "Messages: Show History",
+        "status notifications errors log",
+        ""
+    ),
+    command!(
         "git-switch-branch",
         "Git: Switch Branch…",
         "checkout create new branch",
@@ -541,6 +550,11 @@ impl App {
     }
     pub(super) fn show_branch_picker(&self) {
         self.show_navigation(Mode::Branches);
+    }
+    pub(super) fn show_message_history(&self) {
+        // Reading the history is the click that dismisses an error.
+        self.messages.shown.set(None);
+        self.show_navigation(Mode::Messages);
     }
     /// Local branches matching `query`, and a row to create `query` when it
     /// names no branch yet.
@@ -1046,6 +1060,32 @@ impl App {
                 service.requested = false;
                 service.displayed_query = Some(request);
             }
+            Mode::Messages => {
+                let needle = query.trim().to_lowercase();
+                let rows: Vec<Row> = self
+                    .messages
+                    .history()
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, message)| message.text.to_lowercase().contains(&needle))
+                    .map(|(index, message)| Row {
+                        label: message.text,
+                        detail: match message.level {
+                            super::messages::Level::Error => {
+                                format!("Error · {}", super::messages::ago(message.at))
+                            }
+                            super::messages::Level::Info => super::messages::ago(message.at),
+                        },
+                        key: format!("message:{index}"),
+                        action: Action::Nothing,
+                    })
+                    .collect();
+                let empty = rows.is_empty();
+                self.nav.show_rows(rows);
+                self.nav.set_hint(if empty { "No messages yet" } else { "Newest first · Esc to close" }.into());
+                service.requested = false;
+                service.displayed_query = Some(request);
+            }
             Mode::Branches => {
                 let rows = self.branch_rows(&query);
                 // Start on the first branch that is not the current one.
@@ -1236,6 +1276,7 @@ impl App {
             }
             Action::Branch(name) => self.switch_branch(name),
             Action::CreateBranch(name) => self.create_branch(name),
+            Action::Nothing => {}
         }
     }
     fn execute_navigation_command(&self, id: &str) {
@@ -1254,6 +1295,7 @@ impl App {
             "find" => self.show_find(),
             "project-search" => self.show_project_search(),
             "git-switch-branch" => self.show_branch_picker(),
+            "messages-history" => self.show_message_history(),
             "undo" => self.undo(false),
             "redo" => self.undo(true),
             "comment" => self.edit_command(super::editing_ui::Command::Comment),
@@ -1340,6 +1382,7 @@ impl App {
             Mode::Themes { code_only: false } => "Select Color Theme",
             Mode::Themes { code_only: true } => "Select Code Color Theme",
             Mode::Branches => "Switch to a branch, or name a new one",
+            Mode::Messages => "Search messages",
             _ => "Search files by name · > commands · : line",
         };
         let height = if self.nav.effective_mode() == Mode::Line {
