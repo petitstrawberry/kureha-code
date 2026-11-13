@@ -30,16 +30,46 @@ pub enum Operation {
     Unstage(Vec<PathBuf>),
     /// Commit the index with this message.
     Commit(String),
+    /// Create a branch at `HEAD`, and check it out if `switch`.
+    CreateBranch { name: String, switch: bool },
+    /// Switch to a branch; `keep` lists files (absolute) open with unsaved
+    /// edits, which the switch must not change.
+    Switch { name: String, keep: Vec<PathBuf> },
+}
+
+/// What an operation did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Done {
+    pub message: String,
+    /// Files (relative to the work tree) whose content changed on disk.
+    pub changed: Vec<PathBuf>,
+}
+impl From<String> for Done {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            changed: Vec::new(),
+        }
+    }
 }
 
 /// Applies `operation` to the repository containing `folder`; the answer
 /// says what was done.
-pub fn apply(folder: &Path, operation: &Operation) -> Result<String, String> {
+pub fn apply(folder: &Path, operation: &Operation) -> Result<Done, String> {
     let repo = imp::open(folder)?.ok_or("Not a Git repository")?;
     match operation {
-        Operation::Stage(paths) => stage(&repo, paths),
-        Operation::Unstage(paths) => unstage(&repo, paths),
-        Operation::Commit(message) => commit(&repo, message),
+        Operation::Stage(paths) => stage(&repo, paths).map(Done::from),
+        Operation::Unstage(paths) => unstage(&repo, paths).map(Done::from),
+        Operation::Commit(message) => commit(&repo, message).map(Done::from),
+        Operation::CreateBranch { name, switch } => {
+            super::branch::create(&repo, name, *switch).map(Done::from)
+        }
+        Operation::Switch { name, keep } => {
+            super::branch::switch(&repo, name, keep).map(|switched| Done {
+                message: switched.message,
+                changed: switched.changed,
+            })
+        }
     }
 }
 
@@ -54,12 +84,12 @@ fn rela(path: &Path) -> Result<&str, String> {
 }
 
 /// The index, read again while holding its lock.
-struct Locked {
+pub(super) struct Locked {
     lock: gix::lock::File,
-    index: gix::index::File,
+    pub(super) index: gix::index::File,
 }
 
-fn lock_index(repo: &gix::Repository) -> Result<Locked, String> {
+pub(super) fn lock_index(repo: &gix::Repository) -> Result<Locked, String> {
     let path = repo.index_path();
     let lock = gix::lock::File::acquire_to_update_resource(
         &path,
@@ -90,7 +120,7 @@ fn lock_index(repo: &gix::Repository) -> Result<Locked, String> {
 }
 
 impl Locked {
-    fn write(mut self) -> Result<(), String> {
+    pub(super) fn write(mut self) -> Result<(), String> {
         use std::io::Write;
         // gix writes the tree cache as it was read, which would no longer
         // match the entries; Git rebuilds it when needed.
@@ -108,7 +138,7 @@ impl Locked {
 
 /// Filters defined in the repository's own config never run in Kureha, so
 /// staging there would record different content than `git add`.
-fn refuse_repository_filters(repo: &gix::Repository) -> Result<(), String> {
+pub(super) fn refuse_repository_filters(repo: &gix::Repository) -> Result<(), String> {
     let config = repo.config_snapshot();
     let defined = config
         .plumbing()
@@ -383,7 +413,7 @@ fn commit(repo: &gix::Repository, message: &str) -> Result<String, String> {
 }
 
 type Request = (u64, PathBuf, Operation);
-type Answer = (u64, Operation, Result<String, String>);
+type Answer = (u64, Operation, Result<Done, String>);
 
 /// Applies operations on a worker thread, one at a time and in order; none
 /// is skipped or interrupted.
@@ -429,7 +459,7 @@ mod tests {
     fn stage_all(repo: &Repo) -> String {
         let snapshot = repo.read("");
         let paths = snapshot.unstaged.iter().map(|e| e.path.clone()).collect();
-        apply(&repo.0, &Operation::Stage(paths)).unwrap()
+        apply(&repo.0, &Operation::Stage(paths)).unwrap().message
     }
 
     /// What `git add` would store for `path`: mode and blob id.
@@ -514,7 +544,8 @@ mod tests {
             &repo.0,
             &Operation::Commit("Subject  \n\n\nBody\n\n".into()),
         )
-        .unwrap();
+        .unwrap()
+        .message;
         assert!(answer.starts_with("Committed "), "{answer}");
         assert_eq!(repo.git(&["status", "--porcelain"]), "");
         assert_eq!(

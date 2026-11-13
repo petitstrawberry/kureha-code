@@ -11,6 +11,7 @@
 //! On Scarlet, gix runs on patched dependencies (memory maps, file times,
 //! entropy; see `docs/git.md`).
 
+pub mod branch;
 pub mod diff;
 pub mod write;
 
@@ -105,6 +106,8 @@ pub struct Snapshot {
     pub hooks: bool,
     /// A merge, rebase or similar is in progress (committing is left to Git).
     pub in_progress: Option<String>,
+    /// Local branches.
+    pub branches: Vec<branch::Branch>,
 }
 impl Snapshot {
     /// The change of a file, including files inside untracked folders.
@@ -239,6 +242,7 @@ mod imp {
             in_progress: repo
                 .state()
                 .map(|state| in_progress_label(&state).to_string()),
+            branches: super::branch::list(&repo)?,
         };
         // A path staged and also changed again counts once, like `git status`.
         let mut seen = std::collections::HashSet::new();

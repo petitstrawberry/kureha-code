@@ -30,6 +30,10 @@ scarlet-fs = { git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3
 scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "eea9900e9974a3054214ac8189d1f0bb05520d04", default-features = false, features = ["std", "platform-sws"] }
 
 [target.'cfg(not(target_os = "scarlet"))'.dependencies]
+# Checkout, for switching branches. Not on Scarlet yet: gix-worktree-state's
+# io-close dependency has no Scarlet backend. Features of target-specific
+# dependencies only apply to builds for that target.
+gix = { version = "=0.90.0", default-features = false, features = ["status", "sha1", "worktree-mutation"] }
 ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
 scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "eea9900e9974a3054214ac8189d1f0bb05520d04", default-features = false, features = ["std", "platform-winit"] }
 

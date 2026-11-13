@@ -1,6 +1,6 @@
 {
   "generator": "cargo-about",
-  "cargo_lock_sha256": "1a59bda42d6e77aea205ee122a113126847315ef3879fb486b759c71a8adfbf7",
+  "cargo_lock_sha256": "7aaa0e2eee585cdca4a41447f4c015e60d2df1eca53573f43aac5c26dccdc83a",
   "entries": [
     {
       "name": "ab_glyph",
@@ -24,7 +24,7 @@
       "name": "adler2",
       "version": "2.0.1",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/oyvindln/adler2",
       "license": "MIT"
@@ -33,7 +33,7 @@
       "name": "ahash",
       "version": "0.8.12",
       "texts": [
-        66
+        67
       ],
       "source": "https://github.com/tkaitchuck/ahash",
       "license": "MIT"
@@ -42,7 +42,7 @@
       "name": "aho-corasick",
       "version": "1.1.5",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/BurntSushi/aho-corasick",
       "license": "MIT"
@@ -51,7 +51,7 @@
       "name": "allocator-api2",
       "version": "0.2.21",
       "texts": [
-        144
+        145
       ],
       "source": "https://github.com/zakarumych/allocator-api2",
       "license": "MIT"
@@ -60,7 +60,7 @@
       "name": "android-activity",
       "version": "0.6.1",
       "texts": [
-        140
+        141
       ],
       "source": "https://github.com/rust-mobile/android-activity",
       "license": "MIT"
@@ -69,7 +69,7 @@
       "name": "android-properties",
       "version": "0.2.2",
       "texts": [
-        120
+        121
       ],
       "source": "https://github.com/miklelappo/android-properties",
       "license": "MIT"
@@ -78,7 +78,7 @@
       "name": "android_system_properties",
       "version": "0.1.6",
       "texts": [
-        150
+        151
       ],
       "source": "https://github.com/nical/android_system_properties",
       "license": "MIT"
@@ -87,7 +87,7 @@
       "name": "arboard",
       "version": "3.7.0",
       "texts": [
-        125
+        126
       ],
       "source": "https://github.com/1Password/arboard",
       "license": "MIT"
@@ -96,7 +96,7 @@
       "name": "arc-swap",
       "version": "1.9.5",
       "texts": [
-        58
+        59
       ],
       "source": "https://github.com/vorner/arc-swap",
       "license": "MIT"
@@ -114,7 +114,7 @@
       "name": "arrayvec",
       "version": "0.7.8",
       "texts": [
-        100
+        101
       ],
       "source": "https://github.com/bluss/arrayvec",
       "license": "MIT"
@@ -123,7 +123,7 @@
       "name": "as-raw-xcb-connection",
       "version": "1.0.1",
       "texts": [
-        101
+        102
       ],
       "source": "https://github.com/psychon/as-raw-xcb-connection",
       "license": "MIT"
@@ -132,7 +132,7 @@
       "name": "ash",
       "version": "0.38.0+1.3.281",
       "texts": [
-        41
+        42
       ],
       "source": "https://github.com/ash-rs/ash",
       "license": "MIT"
@@ -141,7 +141,7 @@
       "name": "atomic-waker",
       "version": "1.1.2",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/smol-rs/atomic-waker",
       "license": "MIT"
@@ -150,7 +150,7 @@
       "name": "autocfg",
       "version": "1.5.1",
       "texts": [
-        63
+        64
       ],
       "source": "https://github.com/cuviper/autocfg",
       "license": "MIT"
@@ -159,7 +159,7 @@
       "name": "base64",
       "version": "0.23.1",
       "texts": [
-        168
+        169
       ],
       "source": "https://github.com/marshallpierce/rust-base64",
       "license": "MIT"
@@ -168,7 +168,7 @@
       "name": "bincode",
       "version": "1.3.3",
       "texts": [
-        174
+        175
       ],
       "source": "https://github.com/servo/bincode",
       "license": "MIT"
@@ -177,7 +177,7 @@
       "name": "bit-set",
       "version": "0.8.0",
       "texts": [
-        94
+        95
       ],
       "source": "https://github.com/contain-rs/bit-set",
       "license": "MIT"
@@ -186,7 +186,7 @@
       "name": "bit-vec",
       "version": "0.8.0",
       "texts": [
-        94
+        95
       ],
       "source": "https://github.com/contain-rs/bit-vec",
       "license": "MIT"
@@ -213,7 +213,7 @@
       "name": "block",
       "version": "0.1.6",
       "texts": [
-        133
+        134
       ],
       "source": "http://github.com/SSheldon/rust-block",
       "license": "MIT"
@@ -222,7 +222,7 @@
       "name": "block2",
       "version": "0.5.1",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -231,7 +231,7 @@
       "name": "bstr",
       "version": "1.13.1",
       "texts": [
-        164
+        165
       ],
       "source": "https://github.com/BurntSushi/bstr",
       "license": "MIT"
@@ -240,7 +240,7 @@
       "name": "bumpalo",
       "version": "3.20.3",
       "texts": [
-        78
+        79
       ],
       "source": "https://github.com/fitzgen/bumpalo",
       "license": "MIT"
@@ -251,14 +251,14 @@
       "license": "See attribution",
       "source": "",
       "texts": [
-        189
+        190
       ]
     },
     {
       "name": "bytecount",
       "version": "0.6.9",
       "texts": [
-        56
+        57
       ],
       "source": "https://github.com/llogiq/bytecount",
       "license": "MIT"
@@ -267,7 +267,7 @@
       "name": "bytemuck",
       "version": "1.25.2",
       "texts": [
-        115
+        116
       ],
       "source": "https://github.com/Lokathor/bytemuck",
       "license": "MIT"
@@ -276,7 +276,7 @@
       "name": "bytemuck_derive",
       "version": "1.12.1",
       "texts": [
-        115
+        116
       ],
       "source": "https://github.com/Lokathor/bytemuck",
       "license": "MIT"
@@ -285,7 +285,7 @@
       "name": "byteorder",
       "version": "1.5.0",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/BurntSushi/byteorder",
       "license": "MIT"
@@ -294,7 +294,7 @@
       "name": "byteorder-lite",
       "version": "0.1.0",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/image-rs/byteorder-lite",
       "license": "MIT"
@@ -303,7 +303,7 @@
       "name": "bytes",
       "version": "1.12.1",
       "texts": [
-        61
+        62
       ],
       "source": "https://github.com/tokio-rs/bytes",
       "license": "MIT"
@@ -312,7 +312,7 @@
       "name": "calloop",
       "version": "0.13.0",
       "texts": [
-        67
+        68
       ],
       "source": "https://github.com/Smithay/calloop",
       "license": "MIT"
@@ -321,7 +321,7 @@
       "name": "calloop-wayland-source",
       "version": "0.3.0",
       "texts": [
-        92
+        93
       ],
       "source": "https://github.com/smithay/calloop-wayland-source",
       "license": "MIT"
@@ -348,7 +348,7 @@
       "name": "cfg_aliases",
       "version": "0.2.2",
       "texts": [
-        119
+        120
       ],
       "source": "https://github.com/katharostech/cfg_aliases",
       "license": "MIT"
@@ -366,7 +366,7 @@
       "name": "clru",
       "version": "0.6.3",
       "texts": [
-        84
+        85
       ],
       "source": "https://github.com/marmeladema/clru-rs",
       "license": "MIT"
@@ -384,7 +384,7 @@
       "name": "color_quant",
       "version": "1.1.0",
       "texts": [
-        161
+        162
       ],
       "source": "https://github.com/image-rs/color_quant.git",
       "license": "MIT"
@@ -393,7 +393,7 @@
       "name": "combine",
       "version": "4.6.9",
       "texts": [
-        155
+        156
       ],
       "source": "https://github.com/Marwes/combine",
       "license": "MIT"
@@ -402,7 +402,7 @@
       "name": "concurrent-queue",
       "version": "2.5.0",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/smol-rs/concurrent-queue",
       "license": "MIT"
@@ -447,7 +447,7 @@
       "name": "core_detect",
       "version": "1.0.0",
       "texts": [
-        60
+        61
       ],
       "source": "https://github.com/thomcc/core_detect",
       "license": "MIT"
@@ -456,7 +456,7 @@
       "name": "core_maths",
       "version": "0.1.1",
       "texts": [
-        130
+        131
       ],
       "source": "https://github.com/robertbastian/core_maths",
       "license": "MIT"
@@ -465,16 +465,61 @@
       "name": "crc32fast",
       "version": "1.5.3",
       "texts": [
-        113
+        114
       ],
       "source": "https://github.com/srijs/rust-crc32fast",
+      "license": "MIT"
+    },
+    {
+      "name": "crossbeam",
+      "version": "0.8.5",
+      "texts": [
+        166
+      ],
+      "source": "https://github.com/crossbeam-rs/crossbeam",
+      "license": "MIT"
+    },
+    {
+      "name": "crossbeam-channel",
+      "version": "0.5.17",
+      "texts": [
+        166
+      ],
+      "source": "https://github.com/crossbeam-rs/crossbeam",
+      "license": "MIT"
+    },
+    {
+      "name": "crossbeam-deque",
+      "version": "0.8.8",
+      "texts": [
+        166
+      ],
+      "source": "https://github.com/crossbeam-rs/crossbeam",
+      "license": "MIT"
+    },
+    {
+      "name": "crossbeam-epoch",
+      "version": "0.9.21",
+      "texts": [
+        166
+      ],
+      "source": "https://github.com/crossbeam-rs/crossbeam",
+      "license": "MIT"
+    },
+    {
+      "name": "crossbeam-queue",
+      "version": "0.3.14",
+      "texts": [
+        166
+      ],
+      "source": "https://github.com/crossbeam-rs/crossbeam",
       "license": "MIT"
     },
     {
       "name": "crossbeam-utils",
       "version": "0.8.23",
       "texts": [
-        165
+        166
       ],
       "source": "https://github.com/crossbeam-rs/crossbeam",
       "license": "MIT"
@@ -483,7 +528,7 @@
       "name": "ctor",
       "version": "0.10.1",
       "texts": [
-        147
+        148
       ],
       "source": "https://github.com/mmastrac/rust-ctor",
       "license": "MIT"
@@ -492,7 +537,7 @@
       "name": "cursor-icon",
       "version": "1.2.0",
       "texts": [
-        93
+        94
       ],
       "source": "https://github.com/rust-windowing/cursor-icon",
       "license": "MIT"
@@ -501,7 +546,7 @@
       "name": "dashmap",
       "version": "6.2.1",
       "texts": [
-        114
+        115
       ],
       "source": "https://github.com/xacrimon/dashmap",
       "license": "MIT"
@@ -510,7 +555,7 @@
       "name": "deranged",
       "version": "0.5.9",
       "texts": [
-        95
+        96
       ],
       "source": "https://github.com/jhpratt/deranged",
       "license": "MIT"
@@ -519,7 +564,7 @@
       "name": "dispatch",
       "version": "0.2.0",
       "texts": [
-        133
+        134
       ],
       "source": "http://github.com/SSheldon/rust-dispatch",
       "license": "MIT"
@@ -537,7 +582,7 @@
       "name": "document-features",
       "version": "0.2.12",
       "texts": [
-        81
+        82
       ],
       "source": "https://github.com/slint-ui/document-features",
       "license": "MIT"
@@ -546,7 +591,7 @@
       "name": "downcast-rs",
       "version": "1.2.1",
       "texts": [
-        80
+        81
       ],
       "source": "https://github.com/marcianx/downcast-rs",
       "license": "MIT"
@@ -556,7 +601,7 @@
       "version": "0.1.2",
       "texts": [
         4,
-        133
+        134
       ],
       "source": "https://github.com/rust-windowing/winit",
       "license": "Apache-2.0 AND MIT"
@@ -567,14 +612,14 @@
       "license": "MIT",
       "source": "https://github.com/dracula/dracula-theme",
       "texts": [
-        184
+        185
       ]
     },
     {
       "name": "drm",
       "version": "0.14.1",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/Smithay/drm-rs",
       "license": "MIT"
@@ -583,7 +628,7 @@
       "name": "drm-ffi",
       "version": "0.9.1",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/Smithay/drm-rs",
       "license": "MIT"
@@ -592,7 +637,7 @@
       "name": "drm-fourcc",
       "version": "2.2.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/danielzfranklin/drm-fourcc-rs",
       "license": "MIT"
@@ -601,9 +646,18 @@
       "name": "drm-sys",
       "version": "0.8.1",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/Smithay/drm-rs",
+      "license": "MIT"
+    },
+    {
+      "name": "dua-core",
+      "version": "4.2.0",
+      "texts": [
+        134
+      ],
+      "source": "https://github.com/Byron/dua-cli",
       "license": "MIT"
     },
     {
@@ -629,7 +683,7 @@
       "version": "0.8.44",
       "texts": [
         10,
-        108
+        109
       ],
       "source": "https://github.com/hsivonen/encoding_rs",
       "license": "BSD-3-Clause AND MIT"
@@ -638,7 +692,7 @@
       "name": "equivalent",
       "version": "1.0.3",
       "texts": [
-        48
+        49
       ],
       "source": "https://github.com/indexmap-rs/equivalent",
       "license": "MIT"
@@ -665,7 +719,7 @@
       "name": "fancy-regex",
       "version": "0.16.2",
       "texts": [
-        149
+        150
       ],
       "source": "https://github.com/fancy-regex/fancy-regex",
       "license": "MIT"
@@ -674,7 +728,7 @@
       "name": "faster-hex",
       "version": "0.10.1",
       "texts": [
-        112
+        113
       ],
       "source": "https://github.com/NervosFoundation/faster-hex",
       "license": "MIT"
@@ -683,7 +737,7 @@
       "name": "fastrand",
       "version": "2.5.0",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/smol-rs/fastrand",
       "license": "MIT"
@@ -692,7 +746,7 @@
       "name": "fdeflate",
       "version": "0.3.7",
       "texts": [
-        139
+        140
       ],
       "source": "https://github.com/image-rs/fdeflate",
       "license": "MIT"
@@ -737,7 +791,7 @@
       "name": "floem-editor-core",
       "version": "0.2.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/lapce/floem",
       "license": "MIT"
@@ -746,7 +800,7 @@
       "name": "fnv",
       "version": "1.0.7",
       "texts": [
-        50
+        51
       ],
       "source": "https://github.com/servo/rust-fnv",
       "license": "MIT"
@@ -755,7 +809,7 @@
       "name": "foldhash",
       "version": "0.1.5",
       "texts": [
-        180
+        181
       ],
       "source": "https://github.com/orlp/foldhash",
       "license": "Zlib"
@@ -764,7 +818,7 @@
       "name": "foldhash",
       "version": "0.2.0",
       "texts": [
-        180
+        181
       ],
       "source": "https://github.com/orlp/foldhash",
       "license": "Zlib"
@@ -773,7 +827,7 @@
       "name": "font-types",
       "version": "0.12.7",
       "texts": [
-        76
+        77
       ],
       "source": "https://github.com/googlefonts/fontations",
       "license": "MIT"
@@ -782,7 +836,7 @@
       "name": "fontique",
       "version": "0.11.0",
       "texts": [
-        107
+        108
       ],
       "source": "https://github.com/linebender/parley",
       "license": "MIT"
@@ -791,7 +845,7 @@
       "name": "foreign-types",
       "version": "0.5.0",
       "texts": [
-        57
+        58
       ],
       "source": "https://github.com/sfackler/foreign-types",
       "license": "MIT"
@@ -800,7 +854,7 @@
       "name": "foreign-types-macros",
       "version": "0.2.4",
       "texts": [
-        57
+        58
       ],
       "source": "https://github.com/sfackler/foreign-types",
       "license": "MIT"
@@ -809,7 +863,7 @@
       "name": "foreign-types-shared",
       "version": "0.3.1",
       "texts": [
-        57
+        58
       ],
       "source": "https://github.com/sfackler/foreign-types",
       "license": "MIT"
@@ -818,7 +872,7 @@
       "name": "futures-core",
       "version": "0.3.34",
       "texts": [
-        42
+        43
       ],
       "source": "https://github.com/rust-lang/futures-rs",
       "license": "MIT"
@@ -827,7 +881,7 @@
       "name": "futures-task",
       "version": "0.3.34",
       "texts": [
-        42
+        43
       ],
       "source": "https://github.com/rust-lang/futures-rs",
       "license": "MIT"
@@ -836,7 +890,7 @@
       "name": "futures-util",
       "version": "0.3.34",
       "texts": [
-        42
+        43
       ],
       "source": "https://github.com/rust-lang/futures-rs",
       "license": "MIT"
@@ -854,7 +908,7 @@
       "name": "getrandom",
       "version": "0.2.17",
       "texts": [
-        69
+        70
       ],
       "source": "https://github.com/rust-random/getrandom",
       "license": "MIT"
@@ -863,7 +917,7 @@
       "name": "getrandom",
       "version": "0.3.4",
       "texts": [
-        70
+        71
       ],
       "source": "https://github.com/rust-random/getrandom",
       "license": "MIT"
@@ -872,7 +926,7 @@
       "name": "getrandom",
       "version": "0.4.3+scarlet.1",
       "texts": [
-        72
+        73
       ],
       "source": "https://github.com/rust-random/getrandom",
       "license": "MIT"
@@ -881,7 +935,7 @@
       "name": "gif",
       "version": "0.14.2",
       "texts": [
-        157
+        158
       ],
       "source": "https://github.com/image-rs/image-gif",
       "license": "MIT"
@@ -890,7 +944,7 @@
       "name": "gix",
       "version": "0.90.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -899,7 +953,7 @@
       "name": "gix-actor",
       "version": "0.44.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -908,7 +962,7 @@
       "name": "gix-attributes",
       "version": "0.37.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -917,7 +971,7 @@
       "name": "gix-bitmap",
       "version": "0.6.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -926,7 +980,7 @@
       "name": "gix-chunk",
       "version": "0.10.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -935,7 +989,7 @@
       "name": "gix-command",
       "version": "0.12.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -944,7 +998,7 @@
       "name": "gix-commitgraph",
       "version": "0.42.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -953,7 +1007,7 @@
       "name": "gix-config",
       "version": "0.62.2",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -962,7 +1016,7 @@
       "name": "gix-config-value",
       "version": "0.21.1+scarlet.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -971,7 +1025,7 @@
       "name": "gix-date",
       "version": "0.18.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -980,7 +1034,7 @@
       "name": "gix-diff",
       "version": "0.70.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -989,7 +1043,7 @@
       "name": "gix-dir",
       "version": "0.32.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -998,7 +1052,7 @@
       "name": "gix-discover",
       "version": "0.57.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1007,7 +1061,7 @@
       "name": "gix-error",
       "version": "0.5.2",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1016,7 +1070,7 @@
       "name": "gix-filter",
       "version": "0.36.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1025,7 +1079,7 @@
       "name": "gix-fs",
       "version": "0.24.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1034,7 +1088,7 @@
       "name": "gix-glob",
       "version": "0.29.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1043,7 +1097,7 @@
       "name": "gix-hash",
       "version": "0.28.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1052,7 +1106,7 @@
       "name": "gix-hashtable",
       "version": "0.18.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1061,7 +1115,7 @@
       "name": "gix-ignore",
       "version": "0.24.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1079,7 +1133,7 @@
       "name": "gix-index",
       "version": "0.58.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1088,7 +1142,7 @@
       "name": "gix-lock",
       "version": "26.0.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1097,7 +1151,7 @@
       "name": "gix-macros",
       "version": "0.2.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1106,7 +1160,7 @@
       "name": "gix-object",
       "version": "0.66.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1115,7 +1169,7 @@
       "name": "gix-odb",
       "version": "0.87.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1124,7 +1178,7 @@
       "name": "gix-pack",
       "version": "0.77.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1133,7 +1187,7 @@
       "name": "gix-packetline",
       "version": "0.24.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1142,7 +1196,7 @@
       "name": "gix-parallel",
       "version": "0.50.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1151,7 +1205,7 @@
       "name": "gix-path",
       "version": "0.14.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1160,7 +1214,7 @@
       "name": "gix-pathspec",
       "version": "0.22.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1169,7 +1223,7 @@
       "name": "gix-protocol",
       "version": "0.68.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1178,7 +1232,7 @@
       "name": "gix-quote",
       "version": "0.10.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1187,7 +1241,7 @@
       "name": "gix-ref",
       "version": "0.69.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1196,7 +1250,7 @@
       "name": "gix-refspec",
       "version": "0.47.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1205,7 +1259,7 @@
       "name": "gix-revision",
       "version": "0.52.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1214,7 +1268,7 @@
       "name": "gix-revwalk",
       "version": "0.38.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1223,7 +1277,7 @@
       "name": "gix-sec",
       "version": "0.16.1+scarlet.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1232,7 +1286,7 @@
       "name": "gix-shallow",
       "version": "0.15.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1241,7 +1295,7 @@
       "name": "gix-status",
       "version": "0.37.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1250,7 +1304,7 @@
       "name": "gix-submodule",
       "version": "0.36.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1259,7 +1313,7 @@
       "name": "gix-tempfile",
       "version": "26.0.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1268,7 +1322,7 @@
       "name": "gix-trace",
       "version": "0.3.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1277,7 +1331,7 @@
       "name": "gix-transport",
       "version": "0.62.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1286,7 +1340,7 @@
       "name": "gix-traverse",
       "version": "0.64.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1295,7 +1349,7 @@
       "name": "gix-url",
       "version": "0.40.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1304,7 +1358,7 @@
       "name": "gix-utils",
       "version": "0.5.2",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1313,7 +1367,7 @@
       "name": "gix-validate",
       "version": "0.13.1",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1322,7 +1376,16 @@
       "name": "gix-worktree",
       "version": "0.59.0",
       "texts": [
-        146
+        147
+      ],
+      "source": "https://github.com/GitoxideLabs/gitoxide",
+      "license": "MIT"
+    },
+    {
+      "name": "gix-worktree-state",
+      "version": "0.37.0",
+      "texts": [
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1331,7 +1394,7 @@
       "name": "gix-zlib",
       "version": "0.4.0",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/GitoxideLabs/gitoxide",
       "license": "MIT"
@@ -1349,7 +1412,7 @@
       "name": "glow",
       "version": "0.16.0",
       "texts": [
-        144
+        145
       ],
       "source": "https://github.com/grovesNL/glow",
       "license": "MIT"
@@ -1367,7 +1430,7 @@
       "name": "gpu-alloc",
       "version": "0.6.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/zakarumych/gpu-alloc",
       "license": "MIT"
@@ -1376,7 +1439,7 @@
       "name": "gpu-alloc-types",
       "version": "0.3.1",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/zakarumych/gpu-alloc",
       "license": "MIT"
@@ -1385,7 +1448,7 @@
       "name": "gpu-allocator",
       "version": "0.27.0",
       "texts": [
-        86
+        87
       ],
       "source": "https://github.com/Traverse-Research/gpu-allocator",
       "license": "MIT"
@@ -1394,7 +1457,7 @@
       "name": "gpu-descriptor",
       "version": "0.3.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/zakarumych/gpu-descriptor",
       "license": "MIT"
@@ -1403,7 +1466,7 @@
       "name": "gpu-descriptor-types",
       "version": "0.2.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/zakarumych/gpu-descriptor",
       "license": "MIT"
@@ -1412,7 +1475,7 @@
       "name": "gpu-raw",
       "version": "1.0.0",
       "texts": [
-        131
+        132
       ],
       "source": "",
       "license": "MIT"
@@ -1423,14 +1486,14 @@
       "license": "MIT",
       "source": "https://github.com/morhetz/gruvbox/tree/ef8864bb42bf244f0295d1c5a403b27e3d139695",
       "texts": [
-        185
+        186
       ]
     },
     {
       "name": "hash32",
       "version": "0.3.1",
       "texts": [
-        62
+        63
       ],
       "source": "https://github.com/japaric/hash32",
       "license": "MIT"
@@ -1439,7 +1502,7 @@
       "name": "hashbrown",
       "version": "0.14.5",
       "texts": [
-        43
+        44
       ],
       "source": "https://github.com/rust-lang/hashbrown",
       "license": "MIT"
@@ -1448,7 +1511,7 @@
       "name": "hashbrown",
       "version": "0.15.5",
       "texts": [
-        43
+        44
       ],
       "source": "https://github.com/rust-lang/hashbrown",
       "license": "MIT"
@@ -1457,7 +1520,7 @@
       "name": "hashbrown",
       "version": "0.16.1",
       "texts": [
-        43
+        44
       ],
       "source": "https://github.com/rust-lang/hashbrown",
       "license": "MIT"
@@ -1466,7 +1529,7 @@
       "name": "hashbrown",
       "version": "0.17.1",
       "texts": [
-        43
+        44
       ],
       "source": "https://github.com/rust-lang/hashbrown",
       "license": "MIT"
@@ -1475,7 +1538,7 @@
       "name": "heapless",
       "version": "0.8.0",
       "texts": [
-        51
+        52
       ],
       "source": "https://github.com/rust-embedded/heapless",
       "license": "MIT"
@@ -1493,7 +1556,7 @@
       "name": "hermit-abi",
       "version": "0.5.3",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/hermit-os/hermit-rs",
       "license": "MIT"
@@ -1511,7 +1574,7 @@
       "name": "http",
       "version": "1.5.0",
       "texts": [
-        59
+        60
       ],
       "source": "https://github.com/hyperium/http",
       "license": "MIT"
@@ -1520,7 +1583,7 @@
       "name": "httparse",
       "version": "1.10.1",
       "texts": [
-        40
+        41
       ],
       "source": "https://github.com/seanmonstar/httparse",
       "license": "MIT"
@@ -1529,7 +1592,7 @@
       "name": "image",
       "version": "0.25.10",
       "texts": [
-        139
+        140
       ],
       "source": "https://github.com/image-rs/image",
       "license": "MIT"
@@ -1538,7 +1601,7 @@
       "name": "image-webp",
       "version": "0.2.4",
       "texts": [
-        139
+        140
       ],
       "source": "https://github.com/image-rs/image-webp",
       "license": "MIT"
@@ -1547,9 +1610,18 @@
       "name": "indexmap",
       "version": "2.14.2",
       "texts": [
-        47
+        48
       ],
       "source": "https://github.com/indexmap-rs/indexmap",
+      "license": "MIT"
+    },
+    {
+      "name": "io-close",
+      "version": "0.3.7",
+      "texts": [
+        140
+      ],
+      "source": "https://gitlab.com/wufz/io-close",
       "license": "MIT"
     },
     {
@@ -1565,7 +1637,7 @@
       "name": "itoa",
       "version": "1.0.18",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/itoa",
       "license": "MIT"
@@ -1576,14 +1648,14 @@
       "license": "MIT AND OFL-1.1",
       "source": "https://github.com/ryanoasis/nerd-fonts",
       "texts": [
-        181
+        182
       ]
     },
     {
       "name": "jiff",
       "version": "0.2.43",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/BurntSushi/jiff",
       "license": "MIT"
@@ -1592,7 +1664,7 @@
       "name": "jiff-core",
       "version": "0.1.5",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/BurntSushi/jiff",
       "license": "MIT"
@@ -1601,7 +1673,7 @@
       "name": "jiff-tzdb",
       "version": "0.1.9",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/BurntSushi/jiff",
       "license": "MIT"
@@ -1610,7 +1682,7 @@
       "name": "jiff-tzdb-platform",
       "version": "0.1.3",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/BurntSushi/jiff",
       "license": "MIT"
@@ -1619,7 +1691,7 @@
       "name": "jni",
       "version": "0.22.4",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/jni-rs/jni-rs",
       "license": "MIT"
@@ -1628,7 +1700,7 @@
       "name": "jni-macros",
       "version": "0.22.4",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/jni-rs/jni-rs",
       "license": "MIT"
@@ -1655,7 +1727,7 @@
       "name": "jni-sys-macros",
       "version": "0.4.1",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/jni-rs/jni-sys",
       "license": "MIT"
@@ -1682,7 +1754,7 @@
       "name": "khronos-egl",
       "version": "6.0.0",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/timothee-haudebourg/khronos-egl",
       "license": "MIT"
@@ -1700,7 +1772,7 @@
       "name": "kurbo",
       "version": "0.11.3",
       "texts": [
-        64
+        65
       ],
       "source": "https://github.com/linebender/kurbo",
       "license": "MIT"
@@ -1709,7 +1781,7 @@
       "name": "kureha-code",
       "version": "0.1.0",
       "texts": [
-        132
+        133
       ],
       "source": "",
       "license": "MIT"
@@ -1727,7 +1799,7 @@
       "name": "libc",
       "version": "0.2.191",
       "texts": [
-        99
+        100
       ],
       "source": "https://github.com/rust-lang/libc",
       "license": "MIT"
@@ -1745,7 +1817,7 @@
       "name": "libm",
       "version": "0.2.16",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/rust-lang/compiler-builtins",
       "license": "MIT"
@@ -1754,7 +1826,7 @@
       "name": "libredox",
       "version": "0.1.25",
       "texts": [
-        126
+        127
       ],
       "source": "https://gitlab.redox-os.org/redox-os/libredox.git",
       "license": "MIT"
@@ -1763,7 +1835,7 @@
       "name": "linebender_resource_handle",
       "version": "0.1.1",
       "texts": [
-        140
+        141
       ],
       "source": "https://github.com/linebender/raw_resource_handle",
       "license": "MIT"
@@ -1781,7 +1853,7 @@
       "name": "linux-raw-sys",
       "version": "0.12.1",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/sunfishcode/linux-raw-sys",
       "license": "MIT"
@@ -1790,7 +1862,7 @@
       "name": "linux-raw-sys",
       "version": "0.4.15",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/sunfishcode/linux-raw-sys",
       "license": "MIT"
@@ -1799,7 +1871,7 @@
       "name": "linux-raw-sys",
       "version": "0.9.4",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/sunfishcode/linux-raw-sys",
       "license": "MIT"
@@ -1808,7 +1880,7 @@
       "name": "litrs",
       "version": "1.0.1",
       "texts": [
-        82
+        83
       ],
       "source": "https://github.com/LukasKalbertodt/litrs",
       "license": "MIT"
@@ -1817,7 +1889,7 @@
       "name": "lock_api",
       "version": "0.4.14",
       "texts": [
-        46
+        47
       ],
       "source": "https://github.com/Amanieu/parking_lot",
       "license": "MIT"
@@ -1837,14 +1909,14 @@
       "license": "OFL-1.1",
       "source": "https://github.com/coz-m/MPLUS_FONTS",
       "texts": [
-        182
+        183
       ]
     },
     {
       "name": "malloc_buf",
       "version": "0.0.6",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/SSheldon/malloc_buf",
       "license": "MIT"
@@ -1853,7 +1925,7 @@
       "name": "memchr",
       "version": "2.8.3",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/BurntSushi/memchr",
       "license": "MIT"
@@ -1862,7 +1934,7 @@
       "name": "memmap2",
       "version": "0.9.12+scarlet.2",
       "texts": [
-        83
+        84
       ],
       "source": "https://github.com/RazrFalcon/memmap2-rs",
       "license": "MIT"
@@ -1880,7 +1952,7 @@
       "name": "miniz_oxide",
       "version": "0.8.9",
       "texts": [
-        138
+        139
       ],
       "source": "https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide",
       "license": "MIT"
@@ -1889,7 +1961,7 @@
       "name": "miniz_oxide",
       "version": "0.9.1",
       "texts": [
-        138
+        139
       ],
       "source": "https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide",
       "license": "MIT"
@@ -1900,7 +1972,7 @@
       "license": "MIT",
       "source": "https://github.com/microsoft/vscode",
       "texts": [
-        186
+        187
       ]
     },
     {
@@ -1916,7 +1988,7 @@
       "name": "multiversion_no_op",
       "version": "1.0.0",
       "texts": [
-        108
+        109
       ],
       "source": "https://github.com/hsivonen/multiversion_no_op",
       "license": "MIT"
@@ -1925,7 +1997,7 @@
       "name": "naga",
       "version": "24.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/gfx-rs/wgpu/tree/trunk/naga",
       "license": "MIT"
@@ -1934,7 +2006,7 @@
       "name": "ndk",
       "version": "0.9.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/rust-mobile/ndk",
       "license": "MIT"
@@ -1943,7 +2015,7 @@
       "name": "ndk-context",
       "version": "0.1.1",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/rust-windowing/android-ndk-rs",
       "license": "MIT"
@@ -1952,7 +2024,7 @@
       "name": "ndk-sys",
       "version": "0.5.0+25.2.9519653",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/rust-mobile/ndk",
       "license": "MIT"
@@ -1961,7 +2033,7 @@
       "name": "ndk-sys",
       "version": "0.6.0+11769913",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/rust-mobile/ndk",
       "license": "MIT"
@@ -1979,7 +2051,7 @@
       "name": "nonempty",
       "version": "0.12.0",
       "texts": [
-        73
+        74
       ],
       "source": "https://github.com/cloudhead/nonempty",
       "license": "MIT"
@@ -1990,7 +2062,7 @@
       "license": "MIT",
       "source": "https://github.com/nordtheme/nord",
       "texts": [
-        187
+        188
       ]
     },
     {
@@ -1999,14 +2071,14 @@
       "license": "OFL-1.1",
       "source": "https://github.com/notofonts/noto-cjk",
       "texts": [
-        183
+        184
       ]
     },
     {
       "name": "num-conv",
       "version": "0.2.2",
       "texts": [
-        97
+        98
       ],
       "source": "https://github.com/jhpratt/num-conv",
       "license": "MIT"
@@ -2024,7 +2096,7 @@
       "name": "num_enum",
       "version": "0.7.6",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/illicitonion/num_enum",
       "license": "MIT"
@@ -2033,7 +2105,7 @@
       "name": "num_enum_derive",
       "version": "0.7.6",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/illicitonion/num_enum",
       "license": "MIT"
@@ -2042,7 +2114,7 @@
       "name": "objc",
       "version": "0.2.7",
       "texts": [
-        134
+        135
       ],
       "source": "http://github.com/SSheldon/rust-objc",
       "license": "MIT"
@@ -2051,7 +2123,7 @@
       "name": "objc-sys",
       "version": "0.3.5",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2060,7 +2132,7 @@
       "name": "objc2",
       "version": "0.5.3",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2069,7 +2141,7 @@
       "name": "objc2",
       "version": "0.6.5",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2078,7 +2150,7 @@
       "name": "objc2-app-kit",
       "version": "0.2.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2087,7 +2159,7 @@
       "name": "objc2-app-kit",
       "version": "0.3.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2096,7 +2168,7 @@
       "name": "objc2-core-foundation",
       "version": "0.3.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2105,7 +2177,7 @@
       "name": "objc2-core-graphics",
       "version": "0.3.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2114,7 +2186,7 @@
       "name": "objc2-core-text",
       "version": "0.3.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2123,7 +2195,7 @@
       "name": "objc2-encode",
       "version": "4.1.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2132,7 +2204,7 @@
       "name": "objc2-foundation",
       "version": "0.2.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2141,7 +2213,7 @@
       "name": "objc2-foundation",
       "version": "0.3.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2150,7 +2222,7 @@
       "name": "objc2-quartz-core",
       "version": "0.2.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2159,7 +2231,7 @@
       "name": "objc2-quartz-core",
       "version": "0.3.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2168,7 +2240,7 @@
       "name": "objc2-ui-kit",
       "version": "0.2.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/madsmtm/objc2",
       "license": "MIT"
@@ -2177,7 +2249,7 @@
       "name": "once_cell",
       "version": "1.21.4",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/matklad/once_cell",
       "license": "MIT"
@@ -2186,7 +2258,7 @@
       "name": "orbclient",
       "version": "0.3.55",
       "texts": [
-        158
+        159
       ],
       "source": "https://gitlab.redox-os.org/redox-os/orbclient",
       "license": "MIT"
@@ -2204,7 +2276,7 @@
       "name": "os_pipe",
       "version": "1.2.3",
       "texts": [
-        171
+        172
       ],
       "source": "https://github.com/oconnor663/os_pipe.rs",
       "license": "MIT"
@@ -2222,7 +2294,7 @@
       "name": "parking_lot",
       "version": "0.12.5",
       "texts": [
-        46
+        47
       ],
       "source": "https://github.com/Amanieu/parking_lot",
       "license": "MIT"
@@ -2231,7 +2303,7 @@
       "name": "parking_lot_core",
       "version": "0.9.12",
       "texts": [
-        46
+        47
       ],
       "source": "https://github.com/Amanieu/parking_lot",
       "license": "MIT"
@@ -2240,7 +2312,7 @@
       "name": "parlance",
       "version": "0.1.0",
       "texts": [
-        103
+        104
       ],
       "source": "https://github.com/linebender/parley",
       "license": "MIT"
@@ -2249,7 +2321,7 @@
       "name": "paste",
       "version": "1.0.15",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/paste",
       "license": "MIT"
@@ -2285,7 +2357,7 @@
       "name": "pin-project",
       "version": "1.1.13",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/taiki-e/pin-project",
       "license": "MIT"
@@ -2294,7 +2366,7 @@
       "name": "pin-project-internal",
       "version": "1.1.13",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/taiki-e/pin-project",
       "license": "MIT"
@@ -2303,7 +2375,7 @@
       "name": "pin-project-lite",
       "version": "0.2.17",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/taiki-e/pin-project-lite",
       "license": "MIT"
@@ -2321,7 +2393,7 @@
       "name": "plain",
       "version": "0.2.3",
       "texts": [
-        53
+        54
       ],
       "source": "https://github.com/randomites/plain",
       "license": "MIT"
@@ -2348,7 +2420,7 @@
       "name": "polling",
       "version": "3.11.0",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/smol-rs/polling",
       "license": "MIT"
@@ -2357,7 +2429,7 @@
       "name": "pollster",
       "version": "0.4.0",
       "texts": [
-        85
+        86
       ],
       "source": "https://github.com/zesterer/pollster",
       "license": "MIT"
@@ -2366,7 +2438,7 @@
       "name": "portable-atomic",
       "version": "1.15.0",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/taiki-e/portable-atomic",
       "license": "MIT"
@@ -2375,7 +2447,7 @@
       "name": "portable-atomic-util",
       "version": "0.2.8",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/taiki-e/portable-atomic-util",
       "license": "MIT"
@@ -2384,7 +2456,7 @@
       "name": "powerfmt",
       "version": "0.2.1",
       "texts": [
-        91
+        92
       ],
       "source": "https://github.com/jhpratt/powerfmt",
       "license": "MIT"
@@ -2393,7 +2465,7 @@
       "name": "presser",
       "version": "0.3.1",
       "texts": [
-        75
+        76
       ],
       "source": "https://github.com/EmbarkStudios/presser",
       "license": "MIT"
@@ -2402,7 +2474,7 @@
       "name": "proc-macro-crate",
       "version": "3.5.0",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/bkchr/proc-macro-crate",
       "license": "MIT"
@@ -2411,7 +2483,7 @@
       "name": "proc-macro2",
       "version": "1.0.107",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/proc-macro2",
       "license": "MIT"
@@ -2420,7 +2492,7 @@
       "name": "prodash",
       "version": "31.0.1",
       "texts": [
-        172
+        173
       ],
       "source": "https://github.com/GitoxideLabs/prodash",
       "license": "MIT"
@@ -2429,7 +2501,7 @@
       "name": "profiling",
       "version": "1.0.18",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/aclysma/profiling",
       "license": "MIT"
@@ -2438,7 +2510,7 @@
       "name": "pulldown-cmark",
       "version": "0.13.4",
       "texts": [
-        148
+        149
       ],
       "source": "https://github.com/raphlinus/pulldown-cmark",
       "license": "MIT"
@@ -2465,7 +2537,7 @@
       "name": "quick-xml",
       "version": "0.41.0",
       "texts": [
-        175
+        176
       ],
       "source": "https://github.com/tafia/quick-xml",
       "license": "MIT"
@@ -2474,7 +2546,7 @@
       "name": "quick-xml",
       "version": "0.42.0",
       "texts": [
-        160
+        161
       ],
       "source": "https://github.com/tafia/quick-xml",
       "license": "MIT"
@@ -2483,7 +2555,7 @@
       "name": "quote",
       "version": "1.0.47",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/quote",
       "license": "MIT"
@@ -2492,7 +2564,7 @@
       "name": "r-efi",
       "version": "5.3.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/r-efi/r-efi",
       "license": "MIT"
@@ -2501,7 +2573,7 @@
       "name": "r-efi",
       "version": "6.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/r-efi/r-efi",
       "license": "MIT"
@@ -2510,7 +2582,7 @@
       "name": "range-alloc",
       "version": "0.1.5",
       "texts": [
-        128
+        129
       ],
       "source": "https://github.com/gfx-rs/range-alloc",
       "license": "MIT"
@@ -2519,7 +2591,7 @@
       "name": "raw-window-handle",
       "version": "0.6.2",
       "texts": [
-        117
+        118
       ],
       "source": "https://github.com/rust-windowing/raw-window-handle",
       "license": "MIT"
@@ -2528,7 +2600,7 @@
       "name": "read-fonts",
       "version": "0.41.0",
       "texts": [
-        76
+        77
       ],
       "source": "https://github.com/googlefonts/fontations",
       "license": "MIT"
@@ -2537,7 +2609,7 @@
       "name": "redox_syscall",
       "version": "0.4.1",
       "texts": [
-        54
+        55
       ],
       "source": "https://gitlab.redox-os.org/redox-os/syscall",
       "license": "MIT"
@@ -2546,7 +2618,7 @@
       "name": "redox_syscall",
       "version": "0.5.18",
       "texts": [
-        54
+        55
       ],
       "source": "https://gitlab.redox-os.org/redox-os/syscall",
       "license": "MIT"
@@ -2555,7 +2627,7 @@
       "name": "redox_syscall",
       "version": "0.9.5",
       "texts": [
-        54
+        55
       ],
       "source": "https://gitlab.redox-os.org/redox-os/kernel",
       "license": "MIT"
@@ -2591,7 +2663,7 @@
       "name": "renderdoc-sys",
       "version": "1.1.0",
       "texts": [
-        87
+        88
       ],
       "source": "https://github.com/ebkalderon/renderdoc-rs",
       "license": "MIT"
@@ -2610,7 +2682,7 @@
       "name": "roxmltree",
       "version": "0.21.1",
       "texts": [
-        163
+        164
       ],
       "source": "https://github.com/RazrFalcon/roxmltree",
       "license": "MIT"
@@ -2619,7 +2691,7 @@
       "name": "rustc-hash",
       "version": "1.1.0",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/rust-lang-nursery/rustc-hash",
       "license": "MIT"
@@ -2628,7 +2700,7 @@
       "name": "rustc_version",
       "version": "0.4.1",
       "texts": [
-        46
+        47
       ],
       "source": "https://github.com/djc/rustc-version-rs",
       "license": "MIT"
@@ -2637,7 +2709,7 @@
       "name": "rustix",
       "version": "0.38.44",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/bytecodealliance/rustix",
       "license": "MIT"
@@ -2646,7 +2718,7 @@
       "name": "rustix",
       "version": "1.1.5",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/bytecodealliance/rustix",
       "license": "MIT"
@@ -2655,7 +2727,7 @@
       "name": "rustls",
       "version": "0.23.45",
       "texts": [
-        45
+        46
       ],
       "source": "https://github.com/rustls/rustls",
       "license": "MIT"
@@ -2664,7 +2736,7 @@
       "name": "rustls-pki-types",
       "version": "1.15.1",
       "texts": [
-        90
+        91
       ],
       "source": "https://github.com/rustls/pki-types",
       "license": "MIT"
@@ -2682,7 +2754,7 @@
       "name": "rustversion",
       "version": "1.0.23",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/rustversion",
       "license": "MIT"
@@ -2700,7 +2772,7 @@
       "name": "same-file",
       "version": "1.0.6",
       "texts": [
-        162
+        163
       ],
       "source": "https://github.com/BurntSushi/same-file",
       "license": "MIT"
@@ -2709,7 +2781,7 @@
       "name": "sbus",
       "version": "1.0.0",
       "texts": [
-        131
+        132
       ],
       "source": "",
       "license": "MIT"
@@ -2718,7 +2790,7 @@
       "name": "sbus-client",
       "version": "1.0.0",
       "texts": [
-        131
+        132
       ],
       "source": "",
       "license": "MIT"
@@ -2727,7 +2799,7 @@
       "name": "scarlet-abi",
       "version": "1.0.0",
       "texts": [
-        131
+        132
       ],
       "source": "",
       "license": "MIT"
@@ -2736,7 +2808,7 @@
       "name": "scarlet-desktop-config",
       "version": "1.0.0",
       "texts": [
-        131
+        132
       ],
       "source": "",
       "license": "MIT"
@@ -2745,7 +2817,7 @@
       "name": "scarlet-fs",
       "version": "1.0.0",
       "texts": [
-        131
+        132
       ],
       "source": "",
       "license": "MIT"
@@ -2754,7 +2826,7 @@
       "name": "scarlet-os",
       "version": "1.0.0",
       "texts": [
-        131
+        132
       ],
       "source": "",
       "license": "MIT"
@@ -2763,7 +2835,7 @@
       "name": "scarlet-scroll-motion",
       "version": "0.1.0",
       "texts": [
-        132
+        133
       ],
       "source": "",
       "license": "MIT"
@@ -2772,7 +2844,7 @@
       "name": "scarlet-sys",
       "version": "1.0.0",
       "texts": [
-        131
+        132
       ],
       "source": "",
       "license": "MIT"
@@ -2781,7 +2853,7 @@
       "name": "scarlet-ui",
       "version": "1.0.0",
       "texts": [
-        132
+        133
       ],
       "source": "",
       "license": "MIT"
@@ -2790,7 +2862,7 @@
       "name": "scarlet-ui-core",
       "version": "1.0.0",
       "texts": [
-        132
+        133
       ],
       "source": "",
       "license": "MIT"
@@ -2799,7 +2871,7 @@
       "name": "scarlet-ui-icons-tabler",
       "version": "1.0.0",
       "texts": [
-        122
+        123
       ],
       "source": "",
       "license": "MIT"
@@ -2808,7 +2880,7 @@
       "name": "scarlet-ui-macros",
       "version": "1.0.0",
       "texts": [
-        132
+        133
       ],
       "source": "",
       "license": "MIT"
@@ -2817,7 +2889,7 @@
       "name": "scarlet-ui-platform-sws",
       "version": "1.0.0",
       "texts": [
-        132
+        133
       ],
       "source": "",
       "license": "MIT"
@@ -2826,7 +2898,7 @@
       "name": "scarlet-ui-platform-winit",
       "version": "1.0.0",
       "texts": [
-        132
+        133
       ],
       "source": "",
       "license": "MIT"
@@ -2835,7 +2907,7 @@
       "name": "scarlet-ui-renderer-sgfx",
       "version": "1.0.0",
       "texts": [
-        132
+        133
       ],
       "source": "",
       "license": "MIT"
@@ -2853,7 +2925,7 @@
       "name": "scopeguard",
       "version": "1.2.0",
       "texts": [
-        49
+        50
       ],
       "source": "https://github.com/bluss/scopeguard",
       "license": "MIT"
@@ -2862,7 +2934,7 @@
       "name": "sctk-adwaita",
       "version": "0.10.1",
       "texts": [
-        124
+        125
       ],
       "source": "https://github.com/PolyMeilex/sctk-adwaita",
       "license": "MIT"
@@ -2880,7 +2952,7 @@
       "name": "semver",
       "version": "1.0.28",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/semver",
       "license": "MIT"
@@ -2889,7 +2961,7 @@
       "name": "serde",
       "version": "1.0.229",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/serde-rs/serde",
       "license": "MIT"
@@ -2898,7 +2970,7 @@
       "name": "serde_core",
       "version": "1.0.229",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/serde-rs/serde",
       "license": "MIT"
@@ -2907,7 +2979,7 @@
       "name": "serde_derive",
       "version": "1.0.229",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/serde-rs/serde",
       "license": "MIT"
@@ -2916,7 +2988,7 @@
       "name": "serde_json",
       "version": "1.0.154",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/serde-rs/json",
       "license": "MIT"
@@ -2925,7 +2997,7 @@
       "name": "serde_spanned",
       "version": "0.6.9",
       "texts": [
-        96
+        97
       ],
       "source": "https://github.com/toml-rs/toml",
       "license": "MIT"
@@ -2934,7 +3006,7 @@
       "name": "sgfx",
       "version": "1.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/petitstrawberry/sgfx",
       "license": "MIT"
@@ -2943,7 +3015,7 @@
       "name": "sgfx",
       "version": "1.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/petitstrawberry/sgfx",
       "license": "MIT"
@@ -2952,7 +3024,7 @@
       "name": "sgfx-backend-abi",
       "version": "1.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "",
       "license": "MIT"
@@ -2961,7 +3033,7 @@
       "name": "sgfx-backend-abi",
       "version": "1.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "",
       "license": "MIT"
@@ -2970,7 +3042,7 @@
       "name": "sgfx-backend-loader",
       "version": "1.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "",
       "license": "MIT"
@@ -2979,7 +3051,7 @@
       "name": "sgfx-backend-wgpu",
       "version": "1.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/petitstrawberry/sgfx",
       "license": "MIT"
@@ -2988,7 +3060,7 @@
       "name": "sgfx-core",
       "version": "1.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/petitstrawberry/sgfx",
       "license": "MIT"
@@ -2997,7 +3069,7 @@
       "name": "sha1dc",
       "version": "0.1.5",
       "texts": [
-        52
+        53
       ],
       "source": "https://github.com/srijs/sha1dc",
       "license": "MIT"
@@ -3006,7 +3078,7 @@
       "name": "shlex",
       "version": "2.0.1",
       "texts": [
-        156
+        157
       ],
       "source": "https://github.com/comex/rust-shlex",
       "license": "MIT"
@@ -3015,7 +3087,7 @@
       "name": "simd-adler32",
       "version": "0.3.10",
       "texts": [
-        136
+        137
       ],
       "source": "https://github.com/mcountryman/simd-adler32",
       "license": "MIT"
@@ -3024,7 +3096,7 @@
       "name": "simd_cesu8",
       "version": "1.2.0",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/seancroach/simd_cesu8",
       "license": "MIT"
@@ -3033,7 +3105,7 @@
       "name": "simdutf8",
       "version": "0.1.5",
       "texts": [
-        140
+        141
       ],
       "source": "https://github.com/rusticstuff/simdutf8",
       "license": "MIT"
@@ -3042,7 +3114,7 @@
       "name": "siphasher",
       "version": "1.0.4",
       "texts": [
-        146
+        147
       ],
       "source": "https://github.com/jedisct1/rust-siphash",
       "license": "MIT"
@@ -3051,7 +3123,7 @@
       "name": "slab",
       "version": "0.4.12",
       "texts": [
-        74
+        75
       ],
       "source": "https://github.com/tokio-rs/slab",
       "license": "MIT"
@@ -3060,7 +3132,7 @@
       "name": "slotmap",
       "version": "1.1.1",
       "texts": [
-        179
+        180
       ],
       "source": "https://github.com/orlp/slotmap",
       "license": "Zlib"
@@ -3069,7 +3141,7 @@
       "name": "smallvec",
       "version": "1.16.3",
       "texts": [
-        65
+        66
       ],
       "source": "https://github.com/servo/rust-smallvec",
       "license": "MIT"
@@ -3078,7 +3150,7 @@
       "name": "smithay-client-toolkit",
       "version": "0.19.2",
       "texts": [
-        67
+        68
       ],
       "source": "https://github.com/smithay/client-toolkit",
       "license": "MIT"
@@ -3087,7 +3159,7 @@
       "name": "smol_str",
       "version": "0.2.2",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/rust-analyzer/smol_str",
       "license": "MIT"
@@ -3096,7 +3168,7 @@
       "name": "softbuffer",
       "version": "0.4.8",
       "texts": [
-        104
+        105
       ],
       "source": "https://github.com/rust-windowing/softbuffer",
       "license": "MIT"
@@ -3107,14 +3179,14 @@
       "license": "MIT",
       "source": "https://github.com/altercation/solarized",
       "texts": [
-        188
+        189
       ]
     },
     {
       "name": "spin",
       "version": "0.9.9",
       "texts": [
-        151
+        152
       ],
       "source": "https://github.com/mvdnes/spin-rs.git",
       "license": "MIT"
@@ -3132,7 +3204,7 @@
       "name": "stable_deref_trait",
       "version": "1.2.1",
       "texts": [
-        55
+        56
       ],
       "source": "https://github.com/storyyeller/stable_deref_trait",
       "license": "MIT"
@@ -3141,7 +3213,7 @@
       "name": "static_assertions",
       "version": "1.1.0",
       "texts": [
-        110
+        111
       ],
       "source": "https://github.com/nvzqz/static-assertions-rs",
       "license": "MIT"
@@ -3150,7 +3222,7 @@
       "name": "strict-num",
       "version": "0.1.1",
       "texts": [
-        88
+        89
       ],
       "source": "https://github.com/RazrFalcon/strict-num",
       "license": "MIT"
@@ -3159,7 +3231,7 @@
       "name": "strum",
       "version": "0.26.3",
       "texts": [
-        118
+        119
       ],
       "source": "https://github.com/Peternator7/strum",
       "license": "MIT"
@@ -3168,7 +3240,7 @@
       "name": "strum",
       "version": "0.27.2",
       "texts": [
-        118
+        119
       ],
       "source": "https://github.com/Peternator7/strum",
       "license": "MIT"
@@ -3177,7 +3249,7 @@
       "name": "strum_macros",
       "version": "0.26.4",
       "texts": [
-        118
+        119
       ],
       "source": "https://github.com/Peternator7/strum",
       "license": "MIT"
@@ -3186,7 +3258,7 @@
       "name": "strum_macros",
       "version": "0.27.2",
       "texts": [
-        118
+        119
       ],
       "source": "https://github.com/Peternator7/strum",
       "license": "MIT"
@@ -3204,7 +3276,7 @@
       "name": "svgtypes",
       "version": "0.15.3",
       "texts": [
-        68
+        69
       ],
       "source": "https://github.com/linebender/svgtypes",
       "license": "MIT"
@@ -3213,7 +3285,7 @@
       "name": "sws-client",
       "version": "1.0.0",
       "texts": [
-        131
+        132
       ],
       "source": "",
       "license": "MIT"
@@ -3222,7 +3294,7 @@
       "name": "sws-protocol",
       "version": "1.0.0",
       "texts": [
-        131
+        132
       ],
       "source": "",
       "license": "MIT"
@@ -3231,7 +3303,7 @@
       "name": "syn",
       "version": "2.0.119",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/syn",
       "license": "MIT"
@@ -3240,7 +3312,7 @@
       "name": "syn",
       "version": "3.0.9",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/syn",
       "license": "MIT"
@@ -3249,7 +3321,7 @@
       "name": "syntect",
       "version": "5.3.0",
       "texts": [
-        111
+        112
       ],
       "source": "https://github.com/trishume/syntect",
       "license": "MIT"
@@ -3267,7 +3339,7 @@
       "name": "termcolor",
       "version": "1.4.1",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/BurntSushi/termcolor",
       "license": "MIT"
@@ -3276,7 +3348,7 @@
       "name": "thiserror",
       "version": "1.0.69",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/thiserror",
       "license": "MIT"
@@ -3285,7 +3357,7 @@
       "name": "thiserror",
       "version": "2.0.21",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/thiserror",
       "license": "MIT"
@@ -3294,7 +3366,7 @@
       "name": "thiserror-impl",
       "version": "1.0.69",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/thiserror",
       "license": "MIT"
@@ -3303,7 +3375,7 @@
       "name": "thiserror-impl",
       "version": "2.0.21",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/thiserror",
       "license": "MIT"
@@ -3312,7 +3384,7 @@
       "name": "time",
       "version": "0.3.55",
       "texts": [
-        98
+        99
       ],
       "source": "https://github.com/time-rs/time",
       "license": "MIT"
@@ -3321,7 +3393,7 @@
       "name": "time-core",
       "version": "0.1.9",
       "texts": [
-        98
+        99
       ],
       "source": "https://github.com/time-rs/time",
       "license": "MIT"
@@ -3348,7 +3420,7 @@
       "name": "tiny-xlib",
       "version": "0.2.5",
       "texts": [
-        127
+        128
       ],
       "source": "https://github.com/rust-windowing/tiny-xlib",
       "license": "MIT"
@@ -3357,7 +3429,7 @@
       "name": "tinyvec",
       "version": "1.13.3",
       "texts": [
-        147
+        148
       ],
       "source": "https://github.com/Lokathor/tinyvec",
       "license": "MIT"
@@ -3366,7 +3438,7 @@
       "name": "tokio",
       "version": "1.54.1",
       "texts": [
-        135
+        136
       ],
       "source": "https://github.com/tokio-rs/tokio",
       "license": "MIT"
@@ -3384,7 +3456,7 @@
       "name": "toml",
       "version": "0.8.23",
       "texts": [
-        96
+        97
       ],
       "source": "https://github.com/toml-rs/toml",
       "license": "MIT"
@@ -3393,7 +3465,7 @@
       "name": "toml_datetime",
       "version": "0.6.11",
       "texts": [
-        96
+        97
       ],
       "source": "https://github.com/toml-rs/toml",
       "license": "MIT"
@@ -3402,7 +3474,7 @@
       "name": "toml_datetime",
       "version": "1.1.2+spec-1.1.0",
       "texts": [
-        96
+        97
       ],
       "source": "https://github.com/toml-rs/toml",
       "license": "MIT"
@@ -3411,7 +3483,7 @@
       "name": "toml_edit",
       "version": "0.22.27",
       "texts": [
-        96
+        97
       ],
       "source": "https://github.com/toml-rs/toml",
       "license": "MIT"
@@ -3420,7 +3492,7 @@
       "name": "toml_edit",
       "version": "0.25.17+spec-1.1.0",
       "texts": [
-        96
+        97
       ],
       "source": "https://github.com/toml-rs/toml",
       "license": "MIT"
@@ -3429,7 +3501,7 @@
       "name": "toml_parser",
       "version": "1.1.5+spec-1.1.0",
       "texts": [
-        96
+        97
       ],
       "source": "https://github.com/toml-rs/toml",
       "license": "MIT"
@@ -3438,7 +3510,7 @@
       "name": "toml_write",
       "version": "0.1.2",
       "texts": [
-        96
+        97
       ],
       "source": "https://github.com/toml-rs/toml",
       "license": "MIT"
@@ -3447,7 +3519,7 @@
       "name": "tracing",
       "version": "0.1.44",
       "texts": [
-        79
+        80
       ],
       "source": "https://github.com/tokio-rs/tracing",
       "license": "MIT"
@@ -3456,7 +3528,7 @@
       "name": "tracing-core",
       "version": "0.1.36",
       "texts": [
-        79
+        80
       ],
       "source": "https://github.com/tokio-rs/tracing",
       "license": "MIT"
@@ -3465,7 +3537,7 @@
       "name": "tree_magic_mini",
       "version": "3.2.2",
       "texts": [
-        109
+        110
       ],
       "source": "https://github.com/mbrubeck/tree_magic/",
       "license": "MIT"
@@ -3474,7 +3546,7 @@
       "name": "ttf-parser",
       "version": "0.24.1",
       "texts": [
-        68
+        69
       ],
       "source": "https://github.com/RazrFalcon/ttf-parser",
       "license": "MIT"
@@ -3483,7 +3555,7 @@
       "name": "ttf-parser",
       "version": "0.25.1",
       "texts": [
-        68
+        69
       ],
       "source": "https://github.com/harfbuzz/ttf-parser",
       "license": "MIT"
@@ -3501,7 +3573,7 @@
       "name": "unicode-bidi-mirroring",
       "version": "0.4.0",
       "texts": [
-        166
+        167
       ],
       "source": "https://github.com/RazrFalcon/unicode-bidi-mirroring",
       "license": "MIT"
@@ -3519,7 +3591,7 @@
       "name": "unicode-ccc",
       "version": "0.4.0",
       "texts": [
-        166
+        167
       ],
       "source": "https://github.com/RazrFalcon/unicode-ccc",
       "license": "MIT"
@@ -3528,8 +3600,8 @@
       "name": "unicode-ident",
       "version": "1.0.27",
       "texts": [
-        143,
-        176
+        144,
+        177
       ],
       "source": "https://github.com/dtolnay/unicode-ident",
       "license": "MIT AND Unicode-3.0"
@@ -3548,7 +3620,7 @@
       "version": "0.1.26",
       "texts": [
         34,
-        176
+        177
       ],
       "source": "https://github.com/unicode-rs/unicode-normalization",
       "license": "MIT AND Unicode-3.0"
@@ -3558,7 +3630,7 @@
       "version": "0.1.5",
       "texts": [
         34,
-        177
+        178
       ],
       "source": "https://github.com/unicode-rs/unicode-properties",
       "license": "MIT AND Unicode-3.0"
@@ -3567,7 +3639,7 @@
       "name": "unicode-script",
       "version": "0.5.8",
       "texts": [
-        141
+        142
       ],
       "source": "https://github.com/unicode-rs/unicode-script",
       "license": "MIT"
@@ -3621,7 +3693,7 @@
       "name": "ureq",
       "version": "3.4.0",
       "texts": [
-        116
+        117
       ],
       "source": "https://github.com/algesten/ureq",
       "license": "MIT"
@@ -3630,7 +3702,7 @@
       "name": "ureq-proto",
       "version": "0.6.1",
       "texts": [
-        105
+        106
       ],
       "source": "https://github.com/algesten/ureq-proto",
       "license": "MIT"
@@ -3639,7 +3711,7 @@
       "name": "utf8-zero",
       "version": "0.8.1",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/algesten/utf8-zero",
       "license": "MIT"
@@ -3648,7 +3720,7 @@
       "name": "version_check",
       "version": "0.9.5",
       "texts": [
-        173
+        174
       ],
       "source": "https://github.com/SergioBenitez/version_check",
       "license": "MIT"
@@ -3657,7 +3729,7 @@
       "name": "vt100",
       "version": "0.16.2",
       "texts": [
-        159
+        160
       ],
       "source": "https://github.com/doy/vt100-rust",
       "license": "MIT"
@@ -3666,7 +3738,7 @@
       "name": "vte",
       "version": "0.15.0",
       "texts": [
-        44
+        45
       ],
       "source": "https://github.com/alacritty/vte",
       "license": "MIT"
@@ -3675,7 +3747,7 @@
       "name": "walkdir",
       "version": "2.5.0",
       "texts": [
-        153
+        154
       ],
       "source": "https://github.com/BurntSushi/walkdir",
       "license": "MIT"
@@ -3684,7 +3756,7 @@
       "name": "wasi",
       "version": "0.11.1+wasi-snapshot-preview1",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/bytecodealliance/wasi",
       "license": "MIT"
@@ -3693,7 +3765,7 @@
       "name": "wasip2",
       "version": "1.0.4+wasi-0.2.12",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/bytecodealliance/wasi-rs",
       "license": "MIT"
@@ -3747,7 +3819,7 @@
       "name": "wasmi",
       "version": "2.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/wasmi-labs/wasmi",
       "license": "MIT"
@@ -3756,7 +3828,7 @@
       "name": "wasmi_collections",
       "version": "2.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/wasmi-labs/wasmi",
       "license": "MIT"
@@ -3765,7 +3837,7 @@
       "name": "wasmi_core",
       "version": "2.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/wasmi-labs/wasmi",
       "license": "MIT"
@@ -3774,7 +3846,7 @@
       "name": "wasmi_ir",
       "version": "2.0.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/wasmi-labs/wasmi",
       "license": "MIT"
@@ -3783,7 +3855,7 @@
       "name": "wasmparser",
       "version": "0.228.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser",
       "license": "MIT"
@@ -3810,7 +3882,7 @@
       "name": "wayland-csd-frame",
       "version": "0.3.0",
       "texts": [
-        93
+        94
       ],
       "source": "https://github.com/rust-windowing/wayland-csd-frame",
       "license": "MIT"
@@ -3882,7 +3954,7 @@
       "name": "web-time",
       "version": "1.1.0",
       "texts": [
-        129
+        130
       ],
       "source": "https://github.com/daxpedda/web-time",
       "license": "MIT"
@@ -3900,7 +3972,7 @@
       "name": "weezl",
       "version": "0.1.12",
       "texts": [
-        169
+        170
       ],
       "source": "https://github.com/image-rs/weezl",
       "license": "MIT"
@@ -3909,7 +3981,7 @@
       "name": "wgpu",
       "version": "24.0.5",
       "texts": [
-        123
+        124
       ],
       "source": "https://github.com/gfx-rs/wgpu",
       "license": "MIT"
@@ -3918,7 +3990,7 @@
       "name": "wgpu-core",
       "version": "24.0.5",
       "texts": [
-        123
+        124
       ],
       "source": "https://github.com/gfx-rs/wgpu",
       "license": "MIT"
@@ -3927,7 +3999,7 @@
       "name": "wgpu-hal",
       "version": "24.0.4",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/gfx-rs/wgpu",
       "license": "MIT"
@@ -3936,25 +4008,52 @@
       "name": "wgpu-types",
       "version": "24.0.0",
       "texts": [
-        142
+        143
       ],
       "source": "https://github.com/gfx-rs/wgpu",
+      "license": "MIT"
+    },
+    {
+      "name": "winapi",
+      "version": "0.3.9",
+      "texts": [
+        40
+      ],
+      "source": "https://github.com/retep998/winapi-rs",
+      "license": "MIT"
+    },
+    {
+      "name": "winapi-i686-pc-windows-gnu",
+      "version": "0.4.0",
+      "texts": [
+        134
+      ],
+      "source": "https://github.com/retep998/winapi-rs",
       "license": "MIT"
     },
     {
       "name": "winapi-util",
       "version": "0.1.11",
       "texts": [
-        162
+        163
       ],
       "source": "https://github.com/BurntSushi/winapi-util",
+      "license": "MIT"
+    },
+    {
+      "name": "winapi-x86_64-pc-windows-gnu",
+      "version": "0.4.0",
+      "texts": [
+        134
+      ],
+      "source": "https://github.com/retep998/winapi-rs",
       "license": "MIT"
     },
     {
       "name": "windows",
       "version": "0.58.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -3963,7 +4062,7 @@
       "name": "windows",
       "version": "0.62.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -3972,7 +4071,7 @@
       "name": "windows-collections",
       "version": "0.3.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -3981,7 +4080,7 @@
       "name": "windows-core",
       "version": "0.58.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -3990,7 +4089,7 @@
       "name": "windows-core",
       "version": "0.62.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -3999,7 +4098,7 @@
       "name": "windows-future",
       "version": "0.3.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4008,7 +4107,7 @@
       "name": "windows-implement",
       "version": "0.58.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4017,7 +4116,7 @@
       "name": "windows-implement",
       "version": "0.60.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4026,7 +4125,7 @@
       "name": "windows-interface",
       "version": "0.58.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4035,7 +4134,7 @@
       "name": "windows-interface",
       "version": "0.59.3",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4044,7 +4143,7 @@
       "name": "windows-link",
       "version": "0.2.1",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4053,7 +4152,7 @@
       "name": "windows-numerics",
       "version": "0.3.1",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4062,7 +4161,7 @@
       "name": "windows-result",
       "version": "0.2.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4071,7 +4170,7 @@
       "name": "windows-result",
       "version": "0.4.1",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4080,7 +4179,7 @@
       "name": "windows-strings",
       "version": "0.1.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4089,7 +4188,7 @@
       "name": "windows-strings",
       "version": "0.5.1",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4098,7 +4197,7 @@
       "name": "windows-sys",
       "version": "0.52.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4107,7 +4206,7 @@
       "name": "windows-sys",
       "version": "0.59.0",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4116,7 +4215,7 @@
       "name": "windows-sys",
       "version": "0.61.2",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4125,7 +4224,7 @@
       "name": "windows-targets",
       "version": "0.52.6",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4134,7 +4233,7 @@
       "name": "windows-threading",
       "version": "0.2.1",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4143,7 +4242,7 @@
       "name": "windows_aarch64_gnullvm",
       "version": "0.52.6",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4152,7 +4251,7 @@
       "name": "windows_aarch64_msvc",
       "version": "0.52.6",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4161,7 +4260,7 @@
       "name": "windows_i686_gnu",
       "version": "0.52.6",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4170,7 +4269,7 @@
       "name": "windows_i686_gnullvm",
       "version": "0.52.6",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4179,7 +4278,7 @@
       "name": "windows_i686_msvc",
       "version": "0.52.6",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4188,7 +4287,7 @@
       "name": "windows_x86_64_gnu",
       "version": "0.52.6",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4197,7 +4296,7 @@
       "name": "windows_x86_64_gnullvm",
       "version": "0.52.6",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4206,7 +4305,7 @@
       "name": "windows_x86_64_msvc",
       "version": "0.52.6",
       "texts": [
-        133
+        134
       ],
       "source": "https://github.com/microsoft/windows-rs",
       "license": "MIT"
@@ -4224,7 +4323,7 @@
       "name": "winnow",
       "version": "0.7.15",
       "texts": [
-        145
+        146
       ],
       "source": "https://github.com/winnow-rs/winnow",
       "license": "MIT"
@@ -4233,7 +4332,7 @@
       "name": "winnow",
       "version": "1.0.4",
       "texts": [
-        145
+        146
       ],
       "source": "https://github.com/winnow-rs/winnow",
       "license": "MIT"
@@ -4242,7 +4341,7 @@
       "name": "wit-bindgen",
       "version": "0.57.1",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/bytecodealliance/wit-bindgen",
       "license": "MIT"
@@ -4251,7 +4350,7 @@
       "name": "wl-clipboard-rs",
       "version": "0.9.5",
       "texts": [
-        77
+        78
       ],
       "source": "https://github.com/YaLTeR/wl-clipboard-rs",
       "license": "MIT"
@@ -4260,7 +4359,7 @@
       "name": "x11-dl",
       "version": "2.21.0",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/AltF02/x11-rs.git",
       "license": "MIT"
@@ -4269,7 +4368,7 @@
       "name": "x11rb",
       "version": "0.13.2",
       "texts": [
-        102
+        103
       ],
       "source": "https://github.com/psychon/x11rb",
       "license": "MIT"
@@ -4278,7 +4377,7 @@
       "name": "x11rb-protocol",
       "version": "0.13.2",
       "texts": [
-        102
+        103
       ],
       "source": "https://github.com/psychon/x11rb",
       "license": "MIT"
@@ -4287,7 +4386,7 @@
       "name": "xcursor",
       "version": "0.3.11",
       "texts": [
-        121
+        122
       ],
       "source": "https://github.com/esposm03/xcursor-rs",
       "license": "MIT"
@@ -4296,7 +4395,7 @@
       "name": "xkbcommon-dl",
       "version": "0.4.2",
       "texts": [
-        167
+        168
       ],
       "source": "https://github.com/rust-windowing/xkbcommon-dl",
       "license": "MIT"
@@ -4305,7 +4404,7 @@
       "name": "xkeysym",
       "version": "0.2.1",
       "texts": [
-        89
+        90
       ],
       "source": "https://github.com/notgull/xkeysym",
       "license": "MIT"
@@ -4314,7 +4413,7 @@
       "name": "xml-rs",
       "version": "0.8.29",
       "texts": [
-        152
+        153
       ],
       "source": "https://github.com/kornelski/xml-rs",
       "license": "MIT"
@@ -4323,7 +4422,7 @@
       "name": "yaml-rust",
       "version": "0.4.5",
       "texts": [
-        154
+        155
       ],
       "source": "https://github.com/chyh1990/yaml-rust",
       "license": "MIT"
@@ -4332,7 +4431,7 @@
       "name": "yeslogic-fontconfig-sys",
       "version": "6.0.1",
       "texts": [
-        170
+        171
       ],
       "source": "https://github.com/yeslogic/fontconfig-rs",
       "license": "MIT"
@@ -4341,7 +4440,7 @@
       "name": "zerocopy",
       "version": "0.8.63",
       "texts": [
-        106
+        107
       ],
       "source": "https://github.com/google/zerocopy",
       "license": "MIT"
@@ -4350,7 +4449,7 @@
       "name": "zeroize",
       "version": "1.9.1",
       "texts": [
-        71
+        72
       ],
       "source": "https://github.com/RustCrypto/utils",
       "license": "MIT"
@@ -4359,7 +4458,7 @@
       "name": "zlib-rs",
       "version": "0.6.8",
       "texts": [
-        178
+        179
       ],
       "source": "https://github.com/trifectatechfoundation/zlib-rs",
       "license": "Zlib"
@@ -4368,7 +4467,7 @@
       "name": "zmij",
       "version": "1.0.23",
       "texts": [
-        143
+        144
       ],
       "source": "https://github.com/dtolnay/zmij",
       "license": "MIT"
@@ -4377,7 +4476,7 @@
       "name": "zune-core",
       "version": "0.5.3",
       "texts": [
-        137
+        138
       ],
       "source": "https://github.com/etemesi254/zune-image",
       "license": "MIT"
@@ -4386,7 +4485,7 @@
       "name": "zune-jpeg",
       "version": "0.5.15",
       "texts": [
-        137
+        138
       ],
       "source": "https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg",
       "license": "MIT"
@@ -4433,6 +4532,7 @@
     "Copyright (c) 2015 Victor Berger\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n",
     "Copyright (c) 2015 nwin\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",
     "Copyright (c) 2015-2017\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",
+    "Copyright (c) 2015-2018 The winapi-rs Developers\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
     "Copyright (c) 2015-2025 Sean McArthur\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n",
     "Copyright (c) 2016 ASH\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",
     "Copyright (c) 2016 Alex Crichton\nCopyright (c) 2017 The Tokio Authors\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n",

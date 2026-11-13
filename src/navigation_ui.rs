@@ -23,6 +23,7 @@ enum Mode {
     Themes {
         code_only: bool,
     },
+    Branches,
 }
 #[derive(Clone, Debug)]
 enum Action {
@@ -37,6 +38,10 @@ enum Action {
         bool,
     ),
     Theme(kureha_code::theme::Theme),
+    /// Switch to this local branch.
+    Branch(String),
+    /// Create this branch at HEAD and switch to it.
+    CreateBranch(String),
 }
 #[derive(Clone, Debug)]
 struct Row {
@@ -312,6 +317,12 @@ pub(super) const COMMANDS: &[CommandDescriptor] = &[
         "workspace project search",
         "Primary+Shift+F"
     ),
+    command!(
+        "git-switch-branch",
+        "Git: Switch Branch…",
+        "checkout create new branch",
+        ""
+    ),
     command!("undo", "Edit: Undo", "history", "Primary+Z"),
     command!("redo", "Edit: Redo", "history", "Primary+Shift+Z"),
     command!(
@@ -527,6 +538,47 @@ impl App {
     }
     pub(super) fn show_theme_picker(&self, code_only: bool) {
         self.show_navigation(Mode::Themes { code_only });
+    }
+    pub(super) fn show_branch_picker(&self) {
+        self.show_navigation(Mode::Branches);
+    }
+    /// Local branches matching `query`, and a row to create `query` when it
+    /// names no branch yet.
+    fn branch_rows(&self, query: &str) -> Vec<Row> {
+        let branches = self.git_branches();
+        let query = query.trim();
+        let needle = query.to_lowercase();
+        let mut rows: Vec<Row> = branches
+            .iter()
+            .filter(|branch| branch.name.to_lowercase().contains(&needle))
+            .map(|branch| Row {
+                label: branch.name.clone(),
+                detail: if branch.current {
+                    "Current".into()
+                } else if let Some(other) = &branch.elsewhere {
+                    format!("Checked out in {}", other.display())
+                } else {
+                    String::new()
+                },
+                key: format!("branch:{}", branch.name),
+                action: Action::Branch(branch.name.clone()),
+            })
+            .collect();
+        if !query.is_empty()
+            && !branches.iter().any(|branch| branch.name == query)
+            && kureha_code::git::branch::full_name(query).is_ok()
+        {
+            rows.insert(
+                0,
+                Row {
+                    label: format!("Create branch {query}"),
+                    detail: "From HEAD, then switch to it".into(),
+                    key: "branch-create".into(),
+                    action: Action::CreateBranch(query.into()),
+                },
+            );
+        }
+        rows
     }
     fn preview_selected_theme(&self) {
         if !matches!(self.nav.mode.get(), Mode::Themes { .. }) {
@@ -995,6 +1047,27 @@ impl App {
                 service.requested = false;
                 service.displayed_query = Some(request);
             }
+            Mode::Branches => {
+                let rows = self.branch_rows(&query);
+                // Start on the first branch that is not the current one.
+                let selected = rows
+                    .iter()
+                    .position(|row| row.detail != "Current")
+                    .or((!rows.is_empty()).then_some(0));
+                let empty = rows.is_empty();
+                self.nav.show_rows(rows);
+                self.nav.selected.set(selected);
+                self.nav.set_hint(
+                    if empty {
+                        "No matching branch; that name cannot be created"
+                    } else {
+                        "Enter to switch · type a new name to create it"
+                    }
+                    .into(),
+                );
+                service.requested = false;
+                service.displayed_query = Some(request);
+            }
             Mode::Line => {
                 self.nav.set_hint(if query.trim().is_empty() {
                     "Enter line:column · Enter to jump · Esc to close".into()
@@ -1162,6 +1235,8 @@ impl App {
                     });
                 }
             }
+            Action::Branch(name) => self.switch_branch(name),
+            Action::CreateBranch(name) => self.create_branch(name),
         }
     }
     fn execute_navigation_command(&self, id: &str) {
@@ -1179,6 +1254,7 @@ impl App {
             "close" => self.close_active(),
             "find" => self.show_find(),
             "project-search" => self.show_project_search(),
+            "git-switch-branch" => self.show_branch_picker(),
             "undo" => self.undo(false),
             "redo" => self.undo(true),
             "comment" => self.edit_command(super::editing_ui::Command::Comment),
@@ -1264,6 +1340,7 @@ impl App {
             Mode::Line => "Go to line:column",
             Mode::Themes { code_only: false } => "Select Color Theme",
             Mode::Themes { code_only: true } => "Select Code Color Theme",
+            Mode::Branches => "Switch to a branch, or name a new one",
             _ => "Search files by name · > commands · : line",
         };
         let height = if self.nav.effective_mode() == Mode::Line {
@@ -2445,6 +2522,62 @@ mod tests {
         assert!(labels.contains(&"Extensions: Allow test.tool to Run cat".to_string()));
         assert!(!labels.contains(&"Extensions: Allow test.tool to Run sh".to_string()));
         app.close_navigation();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_branch_picker_lists_branches_and_creates_a_new_one() {
+        use std::process::Command;
+        let dir = std::env::temp_dir().join(format!("kureha-branch-picker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(["-c", "user.name=Test", "-c", "user.email=test@example.invalid"])
+                .args(args)
+                .current_dir(&dir)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git {args:?}");
+            String::from_utf8(output.stdout).unwrap()
+        };
+        git(&["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "init"]);
+        git(&["branch", "side"]);
+        let app = App::with_document();
+        app.open_folder(dir.clone());
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let wait = |what: &str, done: &dyn Fn() -> bool| {
+            while !done() {
+                assert!(std::time::Instant::now() < until, "{what}");
+                app.poll();
+                app.poll_git();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        wait("the repository is read", &|| app.git_branches().len() == 2);
+
+        app.show_branch_picker();
+        app.poll_navigation();
+        let labels = || app.nav.rows.get().into_iter().map(|row| (row.label, row.detail)).collect::<Vec<_>>();
+        assert_eq!(labels(), [("main".into(), "Current".into()), ("side".into(), String::new())]);
+        assert_eq!(app.nav.selected.get(), Some(1), "starts on a branch to switch to");
+        app.nav.query.set("feature/new".into());
+        app.poll_navigation();
+        assert_eq!(labels()[0].0, "Create branch feature/new");
+        app.nav.query.set("bad name".into());
+        app.poll_navigation();
+        assert!(labels().is_empty(), "no row creates an invalid name");
+        app.nav.query.set("feature/new".into());
+        app.poll_navigation();
+        assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
+        wait("the branch is created", &|| app.git_status.get() == "feature/new");
+        assert_eq!(git(&["symbolic-ref", "HEAD"]), "refs/heads/feature/new\n");
+        assert_eq!(app.status.get(), "Created and switched to feature/new");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

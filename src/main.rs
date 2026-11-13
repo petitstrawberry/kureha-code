@@ -1514,6 +1514,8 @@ impl View for App {
             &self.panel_visible,
             &self.panel_fraction,
             &self.terminal.revision,
+            // The status bar's Git items are built from the latest read.
+            &self.git_status,
         ];
         listenables.extend(self.settings_ui.listenables());
         listenables.extend(self.nav.listenables());

@@ -328,7 +328,6 @@ impl App {
     pub(super) fn content(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let keys = self.clone();
-        let git = self.clone();
         let content = ZStack::new((vstack! {
             self.window_header(),
             SplitView::new(
@@ -348,14 +347,7 @@ impl App {
             hstack! {
                 Text::from_state(self.status.clone()).font_size(11.0).color(theme.colors().foreground),
                 Spacer::new(),
-                Text::from_state(self.git_status.clone()).font_size(11.0).color(theme.colors().muted)
-                    .on_event(move |event| {
-                        if matches!(event, Event::Mouse(MouseEvent::ButtonPressed { button: MouseButton::Left, .. })) {
-                            git.show_git();
-                            return true;
-                        }
-                        false
-                    }),
+                self.git_status_bar(),
                 if_view!(!self.terminal_focused(), Text::from_state(self.language_status.clone()).font_size(11.0).color(theme.colors().muted), VStack::new(())),
                 Text::from_state(self.position.clone()).font_size(11.0).color(theme.colors().muted),
             }.spacing(12.0).padding_insets(EdgeInsets::new(18.0, 8.0, 18.0, 8.0)),
