@@ -350,6 +350,8 @@ pub fn parse_theme(source: &str) -> Result<Theme, String> {
             });
         }
     }
+    super::ensure_visible_selection(&mut theme.colors);
+    super::ensure_visible_selection(&mut theme.editor_colors);
     Ok(Theme::Custom(Arc::new(theme)))
 }
 

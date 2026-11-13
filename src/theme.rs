@@ -318,9 +318,91 @@ fn syntax_color(c: Color) -> SyntaxColor {
     }
 }
 
+/// Whether `selection`, drawn over each of `under`, can be told apart from
+/// it: far enough in color and in lightness. A selection the same as the
+/// current line or a list's surface would vanish there.
+pub fn selection_visible(selection: Color, under: &[Color]) -> bool {
+    under.iter().all(|below| {
+        let over = |top: f32, below: f32| top * selection.a + below * (1.0 - selection.a);
+        let drawn = [
+            over(selection.r, below.r),
+            over(selection.g, below.g),
+            over(selection.b, below.b),
+        ];
+        let base = [below.r, below.g, below.b];
+        let distance = drawn
+            .iter()
+            .zip(base)
+            .map(|(a, b)| ((a - b) * 255.0).powi(2))
+            .sum::<f32>()
+            .sqrt();
+        let luminance = |c: [f32; 3]| {
+            let channel = |v: f32| {
+                if v <= 0.03928 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(c[0]) + 0.7152 * channel(c[1]) + 0.0722 * channel(c[2])
+        };
+        let (a, b) = (luminance(drawn), luminance(base));
+        let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+        distance >= 30.0 && ratio >= 1.25
+    })
+}
+
+/// Replaces a selection that would vanish over the background, the current
+/// line or a surface with the accent, translucent enough to read through.
+pub fn ensure_visible_selection(colors: &mut WorkbenchColors) {
+    let under = [colors.background, colors.surface, colors.current_line];
+    if selection_visible(colors.selection, &under) {
+        return;
+    }
+    if let Some(alpha) = [0.35, 0.5, 0.65]
+        .into_iter()
+        .find(|alpha| selection_visible(Color { a: *alpha, ..colors.accent }, &under))
+    {
+        colors.selection = Color { a: alpha, ..colors.accent };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_bundled_theme_has_a_selection_that_shows() {
+        let mut themes = vec![Theme::Light, Theme::Dark];
+        themes.extend(PRESETS.iter().filter_map(|(id, _)| preset(id)));
+        for theme in themes {
+            for colors in [theme.colors(), theme.editor_colors()] {
+                assert!(
+                    selection_visible(
+                        colors.selection,
+                        &[colors.background, colors.surface, colors.current_line]
+                    ),
+                    "{}: the selection blends in",
+                    theme.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_custom_selection_that_blends_in_falls_back_to_the_accent() {
+        let theme = parse_theme(
+            "base='dark'\nname='Flat'\n[colors]\nbackground='#282a36'\nsurface='#44475a'\n\
+             current_line='#44475a'\nselection='#44475a'\naccent='#bd93f9'\n",
+        )
+        .unwrap();
+        let colors = theme.colors();
+        assert_eq!((colors.selection.r, colors.selection.a < 1.0), (colors.accent.r, true));
+        assert!(selection_visible(
+            colors.selection,
+            &[colors.background, colors.surface, colors.current_line]
+        ));
+    }
 
     fn luminance(c: Color) -> f32 {
         fn linear(v: f32) -> f32 {
