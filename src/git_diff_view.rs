@@ -40,6 +40,8 @@ const PAD: f32 = 10.0;
 
 struct Renderer {
     view: DiffLines,
+    /// The size matches the current lines.
+    valid: bool,
     size: Size,
     viewport: Option<Rect>,
     line_height: f32,
@@ -50,6 +52,7 @@ impl Renderer {
     fn new(view: DiffLines) -> Self {
         let mut renderer = Self {
             view,
+            valid: false,
             size: Size::new(0.0, 0.0),
             viewport: None,
             line_height: 0.0,
@@ -86,6 +89,7 @@ impl Renderer {
             UpdateResult::NoChange
         } else {
             self.measure();
+            self.valid = false;
             UpdateResult::Updated
         }
     }
@@ -113,6 +117,7 @@ impl ElementRenderObject for Renderer {
         };
         let height = self.view.diff.lines.len() as f32 * self.line_height + PAD * 2.0;
         self.size = Size::new(width, height);
+        self.valid = true;
         self.size
     }
     fn depends_on_viewport(&self) -> bool {
@@ -126,7 +131,7 @@ impl ElementRenderObject for Renderer {
         true
     }
     fn update_needs_layout(&self) -> bool {
-        false
+        !self.valid
     }
     fn size(&self) -> Size {
         self.size

@@ -584,15 +584,18 @@ impl App {
             .map(|s| s.head.label())
             .unwrap_or_default();
         let notice = self.git_panel.notice.get();
-        let hint = if !notice.is_empty() {
-            notice
-        } else if let Some(state) = snapshot.as_ref().and_then(|s| s.in_progress.as_ref()) {
+        // Kept apart from the notice so a writer's answer never hides it.
+        let warning = if let Some(state) = snapshot.as_ref().and_then(|s| s.in_progress.as_ref()) {
             format!("Git is {state}; finish it with git")
         } else if snapshot.as_ref().is_some_and(|s| s.hooks) {
             "This repository has commit hooks; Kureha does not run them".into()
         } else {
             String::new()
         };
+        self.nav.row_inputs.retain(
+            "git:",
+            self.git_panel.rows.get().iter().map(GitRow::key),
+        );
         let empty = match self.git_status.get() {
             status if status.starts_with("Git: ") => status,
             _ if self.runtime.lock().unwrap().explorer.root.is_none() => "No folder open".into(),
@@ -632,7 +635,10 @@ impl App {
                     .enabled(staged > 0 && pending == 0)
                     .on_click(move || commit.git_commit())
                     .frame(f32::INFINITY, 28.0),
-                Text::new(hint).font_size(11.0).color(colors.muted),
+                if_view!(!warning.is_empty(),
+                    Text::new(warning.clone()).font_size(11.0).color(colors.warning),
+                    VStack::new(())),
+                Text::new(notice).font_size(11.0).color(colors.muted),
                 ListView::new(self.git_panel.rows.clone(), self.git_panel.selected.clone(), 27.0, move |index, row: GitRow, selected| {
                     rows.git_row(row, selected == Some(index), &row_theme)
                 }).item_key(|row| row.key().into())
