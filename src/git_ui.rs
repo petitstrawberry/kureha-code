@@ -61,7 +61,6 @@ type DiffAnswer = (TabId, u64, Result<FileDiff, String>);
 /// The Git sidebar's own state.
 #[derive(Clone)]
 pub(super) struct Panel {
-    pub(super) open: Ui<bool>,
     owns_focus: Ui<bool>,
     focus_message: Ui<bool>,
     rows: Ui<Vec<GitRow>>,
@@ -75,7 +74,6 @@ pub(super) struct Panel {
 impl Panel {
     pub(super) fn new() -> Self {
         Self {
-            open: Ui::new(generate_state_id(), false),
             owns_focus: Ui::new(generate_state_id(), false),
             focus_message: Ui::new(generate_state_id(), false),
             rows: Ui::new(generate_state_id(), Vec::new()),
@@ -88,7 +86,6 @@ impl Panel {
     }
     pub(super) fn listenables(&self) -> Vec<&dyn Listenable> {
         vec![
-            &self.open,
             &self.owns_focus,
             &self.focus_message,
             &self.rows,
@@ -96,9 +93,9 @@ impl Panel {
             &self.busy,
         ]
     }
-    /// The sidebar holds keyboard focus, so the editor must not take it.
-    pub(super) fn wants_focus(&self) -> bool {
-        self.open.get() && self.owns_focus.get()
+    /// The sidebar was clicked last, so the editor must not take focus.
+    pub(super) fn owns_focus(&self) -> bool {
+        self.owns_focus.get()
     }
     pub(super) fn blur(&self) {
         self.owns_focus.set(false);
@@ -286,15 +283,14 @@ impl App {
 
     /// Shows the Git sidebar.
     pub(super) fn show_git(&self) {
-        self.project.close();
-        self.git_panel.open.set(true);
+        self.show_sidebar(super::sidebar_ui::Sidebar::Git);
         self.refresh_git();
     }
-    /// Shows the explorer.
-    pub(super) fn show_explorer(&self) {
-        self.project.close();
-        self.git_panel.open.set(false);
-        self.git_panel.blur();
+    /// The Git sidebar is shown and holds keyboard focus.
+    pub(super) fn git_wants_focus(&self) -> bool {
+        self.sidebar.get() == super::sidebar_ui::Sidebar::Git
+            && !self.project.is_open()
+            && self.git_panel.owns_focus()
     }
 
     fn git_write(&self, operation: Operation) {
@@ -713,46 +709,6 @@ impl App {
         .spacing(10.0)
     }
 
-    /// The switcher above the sidebar: explorer, search, Git.
-    pub(super) fn sidebar_switcher(&self) -> impl View + Clone + use<> {
-        let colors = self.theme.get().colors();
-        let current = if self.project.is_open() {
-            1
-        } else if self.git_panel.open.get() {
-            2
-        } else {
-            0
-        };
-        let button = |icon: Icon, index: usize, action: Box<dyn Fn()>| {
-            Button::icon_only(icon)
-                .header_style()
-                .text_color(if index == current {
-                    colors.foreground
-                } else {
-                    colors.muted
-                })
-                .background_color(if index == current {
-                    colors.selection
-                } else {
-                    Color::TRANSPARENT
-                })
-                .padding(6.0)
-                .on_click(action)
-        };
-        let explorer = self.clone();
-        let search = self.clone();
-        let git = self.clone();
-        hstack! {
-            button(Icon::Folder, 0, Box::new(move || explorer.show_explorer())),
-            button(Icon::Search, 1, Box::new(move || search.show_project_search())),
-            // The pinned icon set has no branch symbol yet.
-            button(Icon::Share, 2, Box::new(move || git.show_git())),
-            Spacer::new(),
-        }
-        .spacing(4.0)
-        .padding_insets(EdgeInsets::new(12.0, 10.0, 8.0, 2.0))
-    }
-
     /// The Git sidebar.
     pub(super) fn git_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
@@ -820,7 +776,7 @@ impl App {
                     .focused_border_color(colors.accent)
                     .material(theme.input_material())
                     .wrap_mode(scarlet_ui::views::WrapMode::Soft)
-                    .autofocus(self.git_panel.wants_focus() && self.git_panel.focus_message.get())
+                    .autofocus(self.git_wants_focus() && self.git_panel.focus_message.get())
                     .frame(f32::INFINITY, 76.0)
                     .on_event_capture(move |event| {
                         if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) {

@@ -24,6 +24,7 @@ mod editing_ui;
 mod extension_ui;
 mod git_diff_view;
 mod git_ui;
+mod sidebar_ui;
 mod groups;
 mod hover;
 mod language;
@@ -138,6 +139,9 @@ struct App {
     nav: navigation_ui::Navigation,
     project: project_ui::ProjectSearch,
     git_panel: git_ui::Panel,
+    /// Which view the sidebar shows (search, when open, is shown over it).
+    sidebar: State<sidebar_ui::Sidebar>,
+    extensions_view: sidebar_ui::ExtensionsView,
     editor_font: Option<FontStack>,
     theme: State<kureha_code::theme::Theme>,
     theme_settings: Arc<Mutex<Option<theme_settings::Watcher>>>,
@@ -211,6 +215,8 @@ impl App {
             nav: navigation_ui::Navigation::new(),
             project: project_ui::ProjectSearch::new(),
             git_panel: git_ui::Panel::new(),
+            sidebar: State::new(generate_state_id(), Default::default()),
+            extensions_view: sidebar_ui::ExtensionsView::new(),
             editor_font: kureha_code::fonts::editor_stack(),
             theme: State::new(
                 generate_state_id(),
@@ -1521,6 +1527,8 @@ impl View for App {
         listenables.extend(self.nav.listenables());
         listenables.extend(self.project.listenables());
         listenables.extend(self.git_panel.listenables());
+        listenables.push(&self.sidebar);
+        listenables.extend(self.extensions_view.listenables());
         listenables
     }
     fn as_any(&self) -> &dyn std::any::Any {

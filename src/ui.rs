@@ -333,8 +333,7 @@ impl App {
             SplitView::new(
                 Surface::section(vstack! {
                     self.sidebar_switcher(),
-                    if_view!(self.project.is_open(), self.project_search_view(),
-                        if_view!(self.git_panel.open.get(), self.git_view(), self.explorer_view())),
+                    self.sidebar_view(),
                 }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY))
                     .surface_style(theme.chrome_style()).corner_radius(16.0).clip_content(true),
                 self.editor_area(),
@@ -628,7 +627,7 @@ impl App {
                     && !self.find_open.get()
                     && !self.nav.is_open()
                     && !self.project.wants_focus()
-                    && !self.git_panel.wants_focus()
+                    && !self.git_wants_focus()
                     && !self.language_rename_open(),
             )
             .scroll_state(bindings.scroll)
@@ -734,7 +733,7 @@ impl App {
         .fill(theme.editor_colors().background).corner_radius(12.0).clip_content(true)
         .padding_insets(EdgeInsets::new(4.0, 0.0, 4.0, 4.0))
     }
-    fn explorer_view(&self) -> impl View + Clone + use<> {
+    pub(super) fn explorer_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let open = self.clone();
         let refresh = self.clone();

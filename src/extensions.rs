@@ -745,9 +745,16 @@ impl Registry {
         registry
     }
 
+    /// Installed extensions the user has not disabled, in load order.
+    /// Every contribution below comes from these only.
+    pub fn enabled(&self) -> impl Iterator<Item = &Extension> {
+        self.extensions
+            .iter()
+            .filter(|extension| is_enabled(&extension.manifest.id))
+    }
     /// Contributed themes in load order, as (extension id, theme).
     pub fn themes(&self) -> impl Iterator<Item = (&str, &Theme)> {
-        self.extensions.iter().flat_map(|extension| {
+        self.enabled().flat_map(|extension| {
             extension
                 .themes
                 .iter()
@@ -762,15 +769,14 @@ impl Registry {
     }
     /// Language id for a lowercase file extension, first contribution wins.
     pub fn language_for_extension(&self, extension: &str) -> Option<&str> {
-        self.extensions
-            .iter()
+        self.enabled()
             .flat_map(|e| &e.manifest.contributes.languages)
             .find(|language| language.extensions.iter().any(|ext| ext == extension))
             .map(|language| language.id.as_str())
     }
     /// Extensions able to format `language`, in load order.
     pub fn formatters(&self, language: &str) -> impl Iterator<Item = &Extension> {
-        self.extensions.iter().filter(move |e| {
+        self.enabled().filter(move |e| {
             e.wasm.is_some()
                 && e.manifest
                     .contributes
@@ -781,7 +787,7 @@ impl Registry {
     }
     /// Contributed keybindings as (extension, binding), in load order.
     pub fn keybindings(&self) -> impl Iterator<Item = (&Extension, &KeybindingContribution)> {
-        self.extensions.iter().flat_map(|extension| {
+        self.enabled().flat_map(|extension| {
             extension
                 .manifest
                 .contributes
@@ -800,7 +806,7 @@ impl Registry {
         &self,
         language: &str,
     ) -> Option<(&Extension, &LanguageServerContribution)> {
-        self.extensions.iter().find_map(|e| {
+        self.enabled().find_map(|e| {
             e.manifest
                 .contributes
                 .language_servers
@@ -833,6 +839,31 @@ pub fn extensions_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".config")))?;
     Some(root.join("kureha-code/extensions"))
+}
+
+/// Extensions the user turned off (`[extensions] disabled` in the settings).
+static DISABLED: std::sync::RwLock<std::collections::BTreeSet<String>> =
+    std::sync::RwLock::new(std::collections::BTreeSet::new());
+/// Bumped whenever [`DISABLED`] changes, for caches built from contributions.
+static DISABLED_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether the extension `id` may contribute and run.
+pub fn is_enabled(id: &str) -> bool {
+    !DISABLED.read().unwrap().contains(id)
+}
+/// Replaces the disabled set; returns whether it changed.
+pub fn set_disabled(ids: &std::collections::BTreeSet<String>) -> bool {
+    let mut disabled = DISABLED.write().unwrap();
+    if *disabled == *ids {
+        return false;
+    }
+    *disabled = ids.clone();
+    DISABLED_REVISION.fetch_add(1, Ordering::Relaxed);
+    true
+}
+/// Changes whenever an extension is turned on or off.
+pub fn disabled_revision() -> u64 {
+    DISABLED_REVISION.load(Ordering::Relaxed)
 }
 
 static REGISTRY: OnceLock<Registry> = OnceLock::new();

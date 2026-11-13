@@ -929,8 +929,7 @@ impl App {
                 let contributed = super::extension_ui::registry()
                     .map(|registry| {
                         registry
-                            .extensions
-                            .iter()
+                            .enabled()
                             .filter(|e| e.wasm.is_some())
                             .flat_map(|e| {
                                 e.manifest.contributes.commands.iter().map(move |c| (e, c))
