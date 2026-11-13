@@ -1,6 +1,6 @@
 # Git 対応
 
-## 今できること(デスクトップ: macOS・Linux)
+## 今できること(macOS・Linux・Scarlet)
 
 - ステータスバーに、開いているフォルダのリポジトリのブランチ名と変更数(`main · 3 changes`)。
   HEAD を直接チェックアウトしているときは `detached at 1a2b3c4`、コミットのないブランチは `main (no commits)`。
@@ -47,42 +47,43 @@
 テスト: `.git/config` の clean フィルタが目印のファイルを作るリポジトリで、変更は正しく出るが目印は作られないこと。
 index のバイト列と更新時刻が変わらないこと、`index.lock` が残らないこと。
 
-## Scarlet(未対応)
+## Scarlet
 
-今の Scarlet 版は gix を含めず、フォルダが Git リポジトリ(上に `.git` がある)なら
-ステータスバーに「Git: not available on Scarlet yet」と出すだけ。
+gix の依存のうち4つが Scarlet を想定していないので、Scarlet 用の fork を `[patch.crates-io]` で差し替えている
+(コミットで固定)。どの fork も、Scarlet 以外では元の版と同じコードになる。gix の版は、fork を作って確かめた
+`=0.90.0` に固定している。差し替えは `Cargo.lock` で保たれるが、差し替えたクレートの新しい版が crates.io に出たあとで
+`cargo update` すると、その版が選ばれて差し替えが外れる(cargo が patch を使っていないと警告する)。そのときは
+fork をその版の上に作り直す。
 
-調べた結果(gix 0.90):
+| fork | ブランチ | 中身 |
+| --- | --- | --- |
+| [memmap2-rs](https://github.com/petitstrawberry/memmap2-rs) | `scarlet-0.9.12` | ネイティブの MemoryMap / MemoryUnmap / MemoryProtect(700〜702)。ハンドルは std の `std::os::fd::AsRawFd` で取る(std の変更は不要) |
+| [getrandom](https://github.com/petitstrawberry/getrandom) | `scarlet-0.4.3` | ネイティブの GetRandom(0.3.3 用の Scarlet ブランチの移植) |
+| [filetime](https://github.com/petitstrawberry/filetime) | `scarlet-0.2.29` | std の `Metadata` と `File::set_times` だけで書いた実装(Unix 用のものはビルドできず、wasm 用は読むと panic する) |
+| [gitoxide](https://github.com/petitstrawberry/gitoxide) | `scarlet-gix-0.90.0` | `gix-sec` は所有者の確認を WASI と同じく「常に本人」、`gix-config-value` はユーザー名からのホーム取得を Windows と同じく「なし」にする。ほかの gitoxide クレートは crates.io の版を使う(ワークスペースのパスのままだと `gix-error` などが2重になる) |
 
-- **ビルドは4か所の手当てで通る**(aarch64・riscv64 とも、小さなプログラムでリンクまで確認)。
-  1. `getrandom` 0.4: Scarlet に対応がない。gix-utils が使うのは一時ファイル名などの、暗号用でない乱数の種だけで、
-     失敗すればプロセス ID などから作り直す。Scarlet 向けだけ `--cfg getrandom_backend="unsupported"` にすればよい
-     (`.cargo/config.toml` の `[target.'cfg(target_os = "scarlet")'] rustflags`)。
-  2. `gix-sec`(所有者の確認): WASI と同じく「常に本人」にする。cfg に `target_os = "scarlet"` を足すだけ。
-  3. `gix-config-value`(ユーザー名からホームを引く): Windows と同じく「なし」にする。cfg の追加だけ。
-  4. `filetime`: Scarlet を Unix として扱って壊れる。wasm 向けの代替は `unimplemented!()` なので使えない。
-     std の `Metadata::modified()` などだけで書いた Scarlet 用の実装を足す(gix-index が更新時刻を読む)。
-- **実行時に動かない: `memmap2` に Scarlet 用の実装がない。** Unix でも Windows でもないので、常にエラーを返す
-  ダミーになる。gix は index、pack ファイル、packed-refs、commit-graph をこれで読み、代わりの読み方を持たない。
-  このままでは index すら読めない。
+Scarlet のファイルシステムとメモリマップ:
 
-`memmap2` の直し方は2つ。
+- tmpfs・ext2・fat32 の通常ファイルはマップできる。initramfs(cpiofs)はできないので、ディスクなしで起動したときの
+  ルート(initramfs の上に tmpfs を重ねた overlay)では、下の層のファイルがマップできない。
+- そこで memmap2 の fork は、private(読み取り専用・コピーオンライト)のマップに失敗したら、匿名メモリを確保して
+  ファイルの中身を読み込む。後からのファイルの変更が見えない以外は private のマップと同じで、ファイルのカーソルは
+  元に戻す。書き込みを反映する共有マップには代わりがないのでエラーのまま。
+- 読み取り専用のマップは private にする。ext2 の共有マップは、ファイル全体をカーネルのメモリに複製し、
+  解除すると書き込みがなくても丸ごと書き戻すため(大きな pack ファイルで重い)。
+- Scarlet のスレッドの既定のスタックは 64 KiB で gix には足りない。Git のワーカーは、ファイルの読み書きのワーカーと
+  同じく 2 MiB を指定する。
 
-- **本物のメモリマップ**(std の変更は不要): Scarlet の std の `File` はネイティブのハンドルを持ち、`std::os::fd`
-  (`AsRawFd`)も Scarlet で有効になっている。Kureha がすでに依存している `scarlet-os` には、raw ハンドルから
-  `Handle::from_raw` で包み、`as_memory_mapping().mmap(...)`(MemoryMap システムコール 700)で対応付ける API がある
-  (オーディオのリングバッファで使われている)。`memmap2` の Scarlet 用実装はこれで書ける。
-  未確認なのは、ネイティブの MemoryMap が通常のファイルの対応付けに対応しているか(Linux 互換層では対応済み)。
-- **読み込み**: Scarlet 用の実装で、マップの代わりにファイルの該当範囲を読んでメモリに置く。std は変えずに済むが、
-  大きなリポジトリでは pack ファイル分のメモリを使う。リポジトリを開いたままにして読み直しを避ければ、
-  毎回の読み込みは避けられる(今は読むたびに開き直している)。
-
-どちらでも、`memmap2`・`gix-sec`・`gix-config-value`・`filetime` を fork して `[patch.crates-io]` で差し替える。
-gix の版を `=0.90.0` に固定しているのは、更新で差し替えが外れたことに気づかないのを防ぐため。
+確認(AArch64、QEMU TCG): Scarlet の `tests/loader-smoke/build-kernel.sh` のカーネルとブートストラップ init
+(`tests/native-desktop-smoke/run.py --program ... --expect-marker ...`)で、Kureha の `git::read` を呼ぶ小さな
+プログラムを動かした。pack ファイルと packed-refs を持ち、変更・削除・ステージ済みの追加・未追跡のファイルと
+フォルダがあるリポジトリを、initramfs の層(読み込みでの代替)と tmpfs へのコピー(本物のマップ)の両方で読み、
+どちらも `git status` と同じ結果になった(約 100 ms)。ワーカースレッド経由でも同じ(2 MiB のスタックを指定する前は
+スタックが溢れて答えが返らなかった)。RISC-V64 は、ビルドは通るが実行はまだ確かめていない。
 
 ## 次にやること
 
 - エディタの行の左に変更のしるし(追加・変更・削除)。scarlet-ui の TextView に行ごとの印を描く API が要る
   (今は `diagnostic_spans` と行番号しかない)。
 - 変更の差分表示、ステージ・取り消し・コミット。
-- Scarlet 対応(上記)。
+- RISC-V64 の Scarlet での実行確認。
