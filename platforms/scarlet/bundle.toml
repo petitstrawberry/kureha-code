@@ -1,8 +1,8 @@
 # Generated from verified Scarlet release archives.
-# Source revision: 96a89f92e0cb9ffe07718f8afd6d9272006ef08e
+# Source revision: 439d38bf8187ce95b1178d8855b96964d8723b21
 [[layers]]
 kind = "archive"
-url = "https://github.com/petitstrawberry/kureha-code/releases/download/v0.1.0-16.1/kureha-code-scarlet-{arch}-v0.1.0-16.1.tar.gz"
-sha256 = { aarch64 = "sha256:854bf279b6fcc7c6292bfbe748120b13192f7f2495e0a7c7f1795a18534e1f5c", riscv64 = "sha256:6996715dab0f37d1b86547abff0f22257ad9ebef9abaf79272696e0234523c62" }
+url = "https://github.com/petitstrawberry/kureha-code/releases/download/v0.1.0-17.1/kureha-code-scarlet-{arch}-v0.1.0-17.1.tar.gz"
+sha256 = { aarch64 = "sha256:aae02c730d9b2f5392ebf8a5e9880ee20e92a285fe66464828e855550156e540", riscv64 = "sha256:326bdf7a280e2be46090dee2d580e1e6e38096d7ae27c7bb27db1ae62416cc9c" }
 format = "tar-gz"
 to = "/"
