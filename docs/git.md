@@ -92,7 +92,7 @@ Git と違う結果になるものは、黙って進めず断る。
 
 ## Scarlet
 
-gix の依存のうち4つが Scarlet を想定していないので、Scarlet 用の fork を `[patch.crates-io]` で差し替えている
+gix の依存のうち5つが Scarlet を想定していないので、Scarlet 用の fork を `[patch.crates-io]` で差し替えている
 (コミットで固定)。どの fork も、Scarlet 以外では元の版と同じコードになる。gix の版は、fork を作って確かめた
 `=0.90.0` に固定している。差し替えは `Cargo.lock` で保たれるが、差し替えたクレートの新しい版が crates.io に出たあとで
 `cargo update` すると、その版が選ばれて差し替えが外れる(cargo が patch を使っていないと警告する)。そのときは
@@ -103,6 +103,7 @@ fork をその版の上に作り直す。
 | [memmap2-rs](https://github.com/petitstrawberry/memmap2-rs) | `scarlet-0.9.12` | ネイティブの MemoryMap / MemoryUnmap / MemoryProtect(700〜702)。ハンドルは std の `std::os::fd::AsRawFd` で取る(std の変更は不要) |
 | [getrandom](https://github.com/petitstrawberry/getrandom) | `scarlet-0.4.3` | ネイティブの GetRandom(0.3.3 用の Scarlet ブランチの移植) |
 | [filetime](https://github.com/petitstrawberry/filetime) | `scarlet-0.2.29` | std の `Metadata` と `File::set_times` だけで書いた実装(Unix 用のものはビルドできず、wasm 用は読むと panic する) |
+| [tempfile](https://github.com/petitstrawberry/tempfile) | `scarlet-3.27.0` | 名前付きの一時ファイル(`create_new`)と上書きの persist(`rename`)。gix はロックとオブジェクトの書き込みにこれを使う。安全に作れないもの(名前なしの一時ファイル、reopen、上書きしない persist、独自のパーミッション)は「未対応」を返す(3.23.0 用の Scarlet ブランチの移植) |
 | [gitoxide](https://github.com/petitstrawberry/gitoxide) | `scarlet-gix-0.90.0` | `gix-sec` は所有者の確認を WASI と同じく「常に本人」、`gix-config-value` はユーザー名からのホーム取得を Windows と同じく「なし」にする。ほかの gitoxide クレートは crates.io の版を使う(ワークスペースのパスのままだと `gix-error` などが2重になる) |
 
 Scarlet のファイルシステムとメモリマップ:
@@ -125,9 +126,13 @@ Scarlet のファイルシステムとメモリマップ:
 スタックが溢れて答えが返らなかった)。RISC-V64 は、ビルドは通るが実行はまだ確かめていない。
 差分も、tmpfs と overlay の両方で読めた。
 
-Scarlet ではステージとコミットを止めている(Git のビューにもそう出し、ボタンを押せなくする)。gix は index の
-ロックもオブジェクトの書き込みも `tempfile` クレートで行うが、`tempfile` には Scarlet 用の実装がなく、ファイルの
-作成も rename もすべて「未対応」を返す(QEMU で確かめた)。動かすには、ほかの依存と同じく Scarlet 用の fork が要る。
+ステージとコミットも tmpfs で動いた。実行ファイルの編集を含むすべての変更をステージしてコミットし、できた tree が
+同じ操作をホストの `git add -A` と `git write-tree` で行ったものと一致し、`100755` もそのまま残り、コミット後に
+変更がなくなった。`tempfile` の fork がないと、`index.lock` を作るところで「未対応」で失敗する。
+
+ディスクなしで起動したときのルート(initramfs の上の overlay)では、ステージはできるが、コミットはオブジェクトを
+initramfs の層にもともとあるフォルダ(`.git/objects/f0/` など)へ rename できずに失敗する(Scarlet の overlay は
+同じフォルダの中の rename だけに対応している)。失敗しても `index.lock` は残らず、`HEAD` は変わらない。
 
 Scarlet には Unix のパーミッションがなく、gix はすべてのファイルを実行可能でないと読む。そのままでは、ホストの
 git が作ったリポジトリ(`core.fileMode=true`)で、実行可能なファイルがすべて「変更あり」になり、ステージすると
@@ -140,7 +145,8 @@ QEMU の確認用リポジトリには `100755` のファイルを入れてあ�
   (今は `diagnostic_spans` と行番号しかない)。
 - 複数行のコミットメッセージ。scarlet-ui の TextView がサイドバーの中で幅 400 px と測られて一覧を押し出すので、
   今は1行の TextField。
-- Scarlet でのステージとコミット(`tempfile` の Scarlet 用 fork)。RISC-V64 の Scarlet での実行確認。
+- Scarlet の overlay のルートでのコミット(overlay 側で、下の層のフォルダへの rename に対応する)。
+  ext2・fat32 でのステージとコミットの確認。RISC-V64 の Scarlet での実行確認。
 - 変更の取り消し(作業ツリーを戻す)、行単位・hunk 単位のステージ、全変更を1つのタブで見る差分。
 - サイドバーの切り替えを、拡張がビューを足せる形にする。Git のアイコンは、今の scarlet-ui のアイコンに
   ブランチがないので代わりのもの。

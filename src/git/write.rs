@@ -32,17 +32,9 @@ pub enum Operation {
     Commit(String),
 }
 
-/// Whether this platform can stage and commit. On Scarlet, gix takes locks
-/// and writes objects through the `tempfile` crate, which has no Scarlet
-/// backend yet: every call there fails as unsupported.
-pub const AVAILABLE: bool = !cfg!(target_os = "scarlet");
-
 /// Applies `operation` to the repository containing `folder`; the answer
 /// says what was done.
 pub fn apply(folder: &Path, operation: &Operation) -> Result<String, String> {
-    if !AVAILABLE {
-        return Err("Staging and committing are not available on Scarlet yet".into());
-    }
     let repo = imp::open(folder)?.ok_or("Not a Git repository")?;
     match operation {
         Operation::Stage(paths) => stage(&repo, paths),
