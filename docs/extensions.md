@@ -488,15 +488,18 @@ Format Document、保存時の整形、Alt+Shift+S、パレットのショート
 
 **権限は2段階。** マニフェストの `[capabilities] process` は作者の要求で、それだけでは何も動かない。
 
-- ユーザーがコマンドパレットの **Extensions: Allow <拡張id> to Run <プログラム>** で許可したものだけ動く。
-  許可済みなら **Extensions: Stop <拡張id> Running <プログラム>** が代わりに出る。ラベルには拡張の表示名ではなく
-  idとプログラム名をそのまま出す(表示名は検索語にだけ使う)。
+- ユーザーが許可したものだけ動く。許可がなくて断られると、確認(プロンプト、下の「確認の出し方」)が
+  出る:「Format Tools (example.format-tools) wants to run ruff」[Allow] [Not now]。
+  コマンドパレットの **Extensions: Allow <拡張id> to Run <プログラム>** でも許可でき、許可済みなら
+  **Extensions: Stop <拡張id> Running <プログラム>** が代わりに出る(取り消しはこちら)。確認でもラベルでも、
+  拡張の表示名だけでなくidとプログラム名をそのまま出す(表示名で中身をごまかせないように)。
 - 許可した直後のステータスで「そのプログラムを任意の引数で、あなたの権限で実行できる」と伝える。
   `sh`・`node`・`git` のようなプログラムを許可するのは、任意のコードの実行を許すのと同じ。
 - 許可は設定ファイルの `[extensions.allow_process]` に保存する(`"拡張id" = ["ruff"]`)。設定を読み込んだとき・
   変えたときにワーカーへ反映するので、再起動は要らない。取り消しも次の呼び出しから効く。
 - 許可がないと拡張には「needs your permission to run `ruff`; run "Extensions: Allow … to Run ruff" from the
-  command palette」というエラーが返り、拡張はそれをそのまま表示できる。
+  command palette」というエラーが返り、拡張はそれをそのまま表示できる。ワーカーは断ったプログラムを記録し
+  (`Host::take_refusals`)、アプリはそれを見て上の確認を出す。拡張の返事の文面には頼らない。
 - **拡張が提供する言語サーバーも同じ許可が要る。** 以前はマニフェストの `language_servers` と
   `process` に書くだけで、開いたファイルに合わせて自動で起動していた(実質的に権限の抜け道だった)。
 
@@ -573,11 +576,16 @@ Nixの開発シェル(`nix develop`、direnvの `use flake`)では、言語サ�
 **権限**。`PATH` や `DYLD_INSERT_LIBRARIES` を変えられるのは、すべての起動にプログラムを差し込めるのと同じ。
 
 - マニフェストに `[capabilities] environment = true` と `[contributes.environment]` が要り、WASMも要る。
-- 問い合わせるのは、ユーザーが **Extensions: Allow <拡張id> to Set the Environment** で許可した拡張だけ。
-  設定の `[extensions] allow_environment = ["id"]` に保存する。**Extensions: Stop <拡張id> Setting the
-  Environment** で取り消すか、拡張を無効にすると、上書きはすぐ消える。
-- 許可していなければ、フォルダごとに1度だけ許可のしかたを知らせる。
-- 環境を作るプログラム(direnv)の起動には、別に `process` の許可が要る。
+- 問い合わせるのは、環境を設定する許可と、宣言したプログラム(direnv)すべての許可がそろった拡張だけ。
+  途中で断られることがないように、問い合わせの条件と確認の条件は同じ1つの判定(`Consent`)を使う。
+- 足りなければ確認を出す:「direnv (kureha.direnv) can load this folder's environment」と、「Allowing it runs
+  direnv with your permissions and sets PATH and other variables for …」[Allow] [Not now]。Allowは
+  書いてあるものを全部まとめて許可する。保存先は今までと同じ(`[extensions] allow_environment = ["id"]` と
+  `allow_process`)。
+- 確認は状態から決まる。許可がそろう(どの経路でも)、拡張を無効にする、フォルダが変わると消える。
+  「Not now」はそのフォルダについてセッション中は覚え、**Environment: Reload** などで明示的に頼むとまた出す。
+- パレットの **Extensions: Allow/Stop <拡張id> … the Environment** も残す。取り消すか拡張を無効にすると、
+  上書きはすぐ消え、そのフォルダには確認をすぐには出さない。
 
 **問い合わせ**
 
@@ -593,11 +601,29 @@ Nixの開発シェル(`nix develop`、direnvの `use flake`)では、言語サ�
   上書きを含まないKureha自身の環境で動き、Kureha自身の `PATH` で探す(direnvは今の環境との差分を返すので、
   上書きの上で動かすと差分がずれる)。コマンドと整形が起動するプログラムは上書きを受け取る。
 - 読み込み中はステータスバーに進捗を出し、終わったら変数の数か失敗を知らせる。失敗したら上書きを消す。
+- 失敗の返事は、その拡張自身のコマンドを次の一手として `"actions"` に2つまで挙げられる
+  (`{"error": "...", "actions": ["direnv.allow"]}`)。ワーカーはその拡張が `contributes.commands` に
+  持つものだけを残し、アプリはエラーを確認として出して、ボタンにはマニフェストのタイトルを使う
+  (返事の文面ではなく)。押すとそのコマンドを実行し、成功したら環境を読み直す。今は `environment` の
+  呼び出しだけ。
 
 **SDK**: `Request::Environment { folder }` と `Reply::environment([("PATH", Some(...)), ("OLD", None)])`。
+失敗に次の一手を付けるには `Reply::error("...").offer("direnv.allow")`。
 
 **direnv**(`extensions/direnv`、id `kureha.direnv`)。`direnv export json` の結果をそのまま返す。未承認の
-`.envrc` には「direnv: Allow .envrc」(`direnv allow` を実行する)を案内する。
+`.envrc` には `direnv.allow`(`direnv allow` を実行する)を挙げるので、「Allow .envrc」ボタンの確認になる。
+
+**確認の出し方**(`messages.rs` の `Prompt`、`App::ask`)。許可のように有効にするものや、ユーザーに選択を
+迫るものは、ステータスバーのメッセージではなく、確認のカードとして出す。
+
+- エディタの右下(ステータスバーの上)に浮かせる。レイアウトは変えず、カードの外のクリックは下に届く
+  (`popup::Anchored::bottom_right`)。
+- タイトル、説明(3行まで)、ボタン(最初が主な選択で、アクセント色)。同時に3つまで、古い順。
+- キーごとに1つ。同じものを聞き直しても何も変わらず(再描画もしない)、同じキーなら置き換える。
+- 答えると消える。理由がなくなったら呼んだ側が `withdraw` で消す。メッセージの履歴には入れない。
+- コマンドは、エディタを開いていなくてもフォルダがあれば実行できる(空の文書と、そのフォルダを
+  ワークスペースとして渡す)。返された編集は適用せず「needs an open editor to change text」と出す。
+  フォルダを開いた直後の「Allow .envrc」が動くように。
 
 確認: `environment.rs` のテストで、起動するプログラムへの設定と削除、`PATH` の解決、待たせるフォルダの範囲。
 `runtime` のテストで、環境の呼び出しのプログラムがフォルダで上書きなしに動き15分まで待てること、

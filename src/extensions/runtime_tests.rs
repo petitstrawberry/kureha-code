@@ -494,6 +494,8 @@ fn host_state(programs: &[&str], granted: &[&str], call: Call) -> HostState {
         call,
         runs: 0,
         folder: None,
+        refused: Default::default(),
+        offered: Vec::new(),
     }
 }
 fn host_request(state: &mut HostState, request: Value) -> Value {
@@ -709,6 +711,37 @@ fn real_direnv_guest_exports_the_folder_environment() {
         }
         (_, other) => panic!("expected {expect}, got {other:?}"),
     }
+}
+
+#[test]
+fn error_replies_offer_at_most_two_commands() {
+    let wasm = Guest::new()
+        .replying(r#"{"error":"blocked","actions":["a.allow",3,"b.allow","c.allow"]}"#)
+        .wasm();
+    let mut runtime = Runtime::new(&wasm, Budgets::default()).unwrap();
+    assert!(runtime.environment(Path::new("/project")).is_err());
+    assert_eq!(runtime.take_offered(), ["a.allow", "b.allow"]);
+    assert!(runtime.take_offered().is_empty());
+    let wasm = Guest::new().replying(r#"{"environment":{}}"#).wasm();
+    let mut runtime = Runtime::new(&wasm, Budgets::default()).unwrap();
+    assert!(runtime.environment(Path::new("/project")).is_ok());
+    assert!(runtime.take_offered().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn programs_refused_for_want_of_a_grant_are_reported() {
+    let mut state = host_state(&["cat"], &[], Call::Task);
+    let _ = host_error(&mut state, json!({"op": "process", "program": "cat"}));
+    let _ = host_error(
+        &mut state,
+        json!({"op": "process", "program": "undeclared"}),
+    );
+    assert_eq!(
+        std::mem::take(&mut state.refused),
+        ["cat".to_string()].into(),
+        "only declared programs the user has not allowed"
+    );
 }
 
 #[test]

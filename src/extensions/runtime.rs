@@ -184,7 +184,15 @@ struct HostState {
     runs: u32,
     /// The folder of an environment call.
     folder: Option<PathBuf>,
+    /// Declared programs refused in this call because the user has not
+    /// allowed them; the app offers to.
+    refused: std::collections::BTreeSet<String>,
+    /// The extension's own commands its error reply offers as next steps
+    /// (`"actions"`), at most [`MAX_ACTIONS`].
+    offered: Vec<String>,
 }
+/// Commands an error reply may offer.
+pub const MAX_ACTIONS: usize = 2;
 
 /// Takes `units` from the caller's fuel, failing like an instruction would.
 fn charge(caller: &mut Caller<'_, HostState>, units: u64) -> Result<(), wasmi::Error> {
@@ -270,6 +278,7 @@ fn run_process(state: &mut HostState, request: &Value) -> (Value, usize) {
         ));
     }
     if !state.access.grants.allows(&state.access.extension, program) {
+        state.refused.insert(program.to_owned());
         return error(process::permission_hint(&state.access.extension, program));
     }
     if state.runs >= process::MAX_RUNS_PER_CALL {
@@ -525,6 +534,8 @@ impl Runtime {
                 call: Call::Activate,
                 runs: 0,
                 folder: None,
+                refused: Default::default(),
+                offered: Vec::new(),
             },
         );
         store.limiter(|state| &mut state.limits);
@@ -575,6 +586,14 @@ impl Runtime {
     pub fn take_log(&mut self) -> Vec<String> {
         std::mem::take(&mut self.store.data_mut().log)
     }
+    /// Programs refused since the last call for want of the user's grant.
+    pub fn take_refused(&mut self) -> std::collections::BTreeSet<String> {
+        std::mem::take(&mut self.store.data_mut().refused)
+    }
+    /// The command ids the last error reply offered (`"actions"`).
+    pub fn take_offered(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.store.data_mut().offered)
+    }
 
     fn invoke(
         &mut self,
@@ -612,6 +631,16 @@ impl Runtime {
         state.document = None;
         state.pending = None;
         let reply = result?;
+        state.offered = reply
+            .get("actions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|id| id.len() <= 128)
+            .take(MAX_ACTIONS)
+            .map(String::from)
+            .collect();
         if let Some(error) = reply.get("error") {
             return Err(CallError::Extension(
                 error

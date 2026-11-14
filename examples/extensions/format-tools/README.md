@@ -15,10 +15,12 @@ A failing tool (a syntax error, say) leaves the document as it was and shows
 the tool's first error line.
 
 The extension declares these programs in `[capabilities] process`, but nothing
-runs until you allow it: run "Extensions: Allow example.format-tools to Run
-ruff" (and so on) from the command palette. A program you allow can run with any
-arguments and with your permissions, so allow only tools you trust. "Extensions:
-Stop example.format-tools Running ruff" withdraws it.
+runs until you allow it. The first time a tool is needed, Kureha asks in the
+editor's corner ("Format Tools (example.format-tools) wants to run ruff", **Allow** or
+**Not now**); "Extensions: Allow example.format-tools to Run ruff" in the
+command palette does the same. A program you allow can run with any arguments
+and with your permissions, so allow only tools you trust. "Extensions: Stop
+example.format-tools Running ruff" withdraws it.
 
 The tools also read the project's configuration. Prettier in particular loads
 JavaScript configuration files and plugins (`prettier.config.js`, say), so

@@ -82,6 +82,9 @@ const MENU: &[&str] = &[
 enum Purpose {
     /// A command of the extension with this id.
     Command(String),
+    /// A command run with no editor open, on the open folder alone (allowing
+    /// `.envrc`, say); edits it returns are refused.
+    FolderCommand(String),
     /// `save` holds the path and deadline when formatting precedes a save.
     Format {
         save: Option<(PathBuf, Instant)>,
@@ -192,6 +195,81 @@ pub(super) fn formatter_for(language: &str, choice: Option<&str>) -> Formatter {
         None => extensions
             .and_then(|mut e| e.next())
             .map_or(Formatter::LanguageServer, Formatter::Extension),
+    }
+}
+
+/// What an extension asks for that the user has not given yet.
+#[derive(Clone)]
+pub(super) struct Consent {
+    pub extension: &'static Extension,
+    /// The right to set the environment of the programs Kureha starts.
+    pub environment: bool,
+    /// Programs to run, by the names it declares.
+    pub programs: Vec<String>,
+}
+impl Consent {
+    /// Everything `extension` declares that is not granted yet.
+    pub fn missing(extension: &'static Extension) -> Self {
+        let id = &extension.manifest.id;
+        Self {
+            extension,
+            environment: extension.manifest.capabilities.environment
+                && !kureha_code::environment::allows(id),
+            programs: extension
+                .manifest
+                .capabilities
+                .process
+                .iter()
+                .filter(|program| !process_grants().allows(id, program))
+                .cloned()
+                .collect(),
+        }
+    }
+    pub fn granted(&self) -> bool {
+        !self.environment
+            && self
+                .programs
+                .iter()
+                .all(|program| process_grants().allows(&self.extension.manifest.id, program))
+    }
+    /// "run direnv and set the environment", naming programs verbatim.
+    pub fn what(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.programs.is_empty() {
+            parts.push(format!("run {}", self.programs.join(", ")));
+        }
+        if self.environment {
+            parts.push("set the environment".into());
+        }
+        parts.join(" and ")
+    }
+    /// The question, titled with the extension's id as well as its name so
+    /// the name cannot disguise whose grant it is.
+    pub fn prompt(&self, key: String, asks: &str, after: &str) -> super::messages::Prompt {
+        let manifest = &self.extension.manifest;
+        let mut does = Vec::new();
+        if !self.programs.is_empty() {
+            does.push(format!(
+                "runs {} with your permissions",
+                self.programs.join(", ")
+            ));
+        }
+        if self.environment {
+            does.push(
+                "sets PATH and other variables for the language servers, terminals and tools Kureha starts"
+                    .to_string(),
+            );
+        }
+        let mut detail = format!("Allowing it {}.", does.join(" and "));
+        if !after.is_empty() {
+            detail = format!("{detail} {after}");
+        }
+        super::messages::Prompt {
+            key,
+            title: format!("{} ({}) {asks}", manifest.name, manifest.id),
+            detail,
+            choices: vec!["Allow".into(), "Not now".into()],
+        }
     }
 }
 
@@ -436,6 +514,9 @@ impl App {
         );
         if allowed {
             self.request_environment();
+        } else {
+            // Withdrawn on purpose: do not ask again for this folder at once.
+            self.decline_environment_prompt();
         }
     }
     /// Turns `extension` on or off and saves the choice. Its contributions
@@ -467,6 +548,9 @@ impl App {
             program: program.to_owned(),
             allowed: allow,
         });
+        if allow {
+            self.withdraw(&format!("run:{id}:{program}"));
+        }
         let serves = extension
             .manifest
             .contributes
@@ -563,6 +647,38 @@ impl App {
         });
     }
 
+    /// Runs a command with no editor open: on an empty document, with the
+    /// open folder as its workspace.
+    fn run_folder_command(&self, host: &Host, extension: &str, command: &str, label: String) {
+        let Some(root) = self.runtime.lock().unwrap().explorer.root.clone() else {
+            self.status
+                .set(format!("{label} needs an open editor or folder"));
+            return;
+        };
+        let text = Arc::new(String::new());
+        let snapshot = DocumentSnapshot {
+            path: PathBuf::new(),
+            version: 0,
+            selection: 0..0,
+            text: text.clone(),
+            workspace: Some(root),
+        };
+        match host.command(extension, command, snapshot) {
+            Some(request) => {
+                self.remember(
+                    request,
+                    text,
+                    0,
+                    0,
+                    label.clone(),
+                    Purpose::FolderCommand(extension.to_string()),
+                );
+                self.status.set(format!("{label}…"));
+            }
+            None => self.status.set("The extension worker has stopped".into()),
+        }
+    }
+
     pub(super) fn run_extension_command(&self, extension: &str, command: &str) {
         if self.blocked() {
             return;
@@ -588,7 +704,7 @@ impl App {
             })
             .unwrap_or_else(|| command.to_owned());
         let Some(id) = self.active_id() else {
-            self.status.set(format!("{label} needs an open editor"));
+            self.run_folder_command(host, extension, command, label);
             return;
         };
         let Some((snapshot, text)) = self.extension_snapshot(id) else {
@@ -896,25 +1012,49 @@ impl App {
             let (id, result) = match reply {
                 Reply::Command { id, result } | Reply::Format { id, result } => (id, result),
                 Reply::Decorations { .. } => continue,
-                Reply::Environment { id, result } => {
-                    self.environment_answered(id, result);
+                Reply::Environment {
+                    id,
+                    result,
+                    actions,
+                } => {
+                    self.environment_answered(id, result, actions);
                     continue;
                 }
             };
             let Some(pending) = self.pending(|map| map.remove(&id)) else {
                 continue;
             };
+            // A command of the folder's environment provider (allowing
+            // `.envrc`, say) may change the environment: read it again.
+            let provides = |extension: &str| {
+                registry().is_some_and(|registry| {
+                    registry
+                        .environment_providers()
+                        .any(|(e, _)| e.manifest.id == extension)
+                })
+            };
             match pending.purpose {
                 Purpose::Command(ref extension) => {
-                    // A command of the folder's environment provider (allowing
-                    // `.envrc`, say) may change the environment: read it again.
-                    let reload = result.is_ok()
-                        && registry().is_some_and(|registry| {
-                            registry
-                                .environment_providers()
-                                .any(|(e, _)| e.manifest.id == *extension)
-                        });
+                    let reload = result.is_ok() && provides(extension);
                     self.apply_command(&pending, result);
+                    if reload {
+                        self.request_environment();
+                    }
+                }
+                Purpose::FolderCommand(ref extension) => {
+                    let reload = result.is_ok() && provides(extension);
+                    match result {
+                        Err(error) => self.status.set(error),
+                        Ok(outcome) if !outcome.edits.is_empty() => self.status.set(format!(
+                            "{} needs an open editor to change text",
+                            pending.label
+                        )),
+                        Ok(outcome) => self.status.set(
+                            outcome
+                                .status
+                                .unwrap_or_else(|| format!("{} finished", pending.label)),
+                        ),
+                    }
                     if reload {
                         self.request_environment();
                     }
@@ -922,6 +1062,71 @@ impl App {
                 Purpose::Format { .. } => self.apply_format(pending, result),
             }
         }
+        for (extension, program) in host.take_refusals() {
+            self.ask_to_run(&extension, &program);
+        }
+    }
+
+    /// Offers to let `extension` run `program`, which it was just refused.
+    fn ask_to_run(&self, extension: &str, program: &str) {
+        let Some(extension) = registry().and_then(|registry| {
+            registry
+                .extensions
+                .iter()
+                .find(|e| e.manifest.id == extension)
+        }) else {
+            return;
+        };
+        let consent = Consent {
+            extension,
+            environment: false,
+            programs: vec![program.to_owned()],
+        };
+        if consent.granted() {
+            return;
+        }
+        let key = format!("run:{}:{program}", extension.manifest.id);
+        self.ask(
+            consent.prompt(
+                key,
+                &format!("wants to run {program}"),
+                &format!("{program} may load code from the project it runs in. Run the command again once allowed."),
+            ),
+            move |app, choice| {
+                if choice == 0 {
+                    app.grant(&consent);
+                }
+            },
+        );
+    }
+
+    /// Gives everything `consent` lists and saves it.
+    pub(super) fn grant(&self, consent: &Consent) {
+        let (id, name) = (
+            consent.extension.manifest.id.as_str(),
+            consent.extension.manifest.name.as_str(),
+        );
+        for program in &consent.programs {
+            self.change_preferences(super::preferences::Change::AllowProcess {
+                extension: id.to_owned(),
+                program: program.clone(),
+                allowed: true,
+            });
+            self.withdraw(&format!("run:{id}:{program}"));
+        }
+        if consent.environment {
+            self.change_preferences(super::preferences::Change::AllowEnvironment {
+                extension: id.to_owned(),
+                allowed: true,
+            });
+        }
+        self.notify(
+            super::messages::Level::Info,
+            format!(
+                "Allowed {name} ({id}) to {}; the command palette's \"Extensions: Stop {id} …\" entries withdraw it",
+                consent.what()
+            ),
+        );
     }
 }
 
@@ -1127,13 +1332,31 @@ pub(super) mod tests {
         assert!(listed[0].allow);
         assert_eq!(listed[0].label, "Extensions: Allow test.tool to Run cat");
         run("Extensions: Allow test.tool to Run cat");
+        // The refusal also asks, naming the id and the program as they are.
+        let asked = |app: &App| {
+            app.messages
+                .prompts
+                .get()
+                .into_iter()
+                .find(|p| p.key == "run:test.tool:cat")
+        };
+        let prompt = asked(&app).expect("a prompt for the refused program");
+        assert_eq!(prompt.title, "Tool (test.tool) wants to run cat");
+        assert_eq!(
+            prompt.detail,
+            "Allowing it runs cat with your permissions. cat may load code from the project \
+             it runs in. Run the command again once allowed."
+        );
+        assert_eq!(prompt.choices, ["Allow", "Not now"]);
 
+        // Allowing it from the palette instead takes the prompt away.
         app.set_process_permission(listed[0].extension, "cat", true);
         assert!(
             app.status
                 .get()
                 .contains("Allowed Tool (test.tool) to run cat")
         );
+        assert!(asked(&app).is_none());
         assert!(app.preferences.get().allow_process["test.tool"].contains("cat"));
         let listed = permission_commands();
         assert!(!listed[0].allow);
@@ -1143,6 +1366,10 @@ pub(super) mod tests {
         app.set_process_permission(listed[0].extension, "cat", false);
         assert!(app.preferences.get().allow_process.is_empty());
         run("needs your permission");
+        // Allowed from the prompt: the command runs when run again.
+        app.answer("run:test.tool:cat", 0);
+        assert!(app.preferences.get().allow_process["test.tool"].contains("cat"));
+        run("ran");
         TEST.set(None);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1236,6 +1463,59 @@ pub(super) mod tests {
             .get()
             .as_str()
             .to_string()
+    }
+
+    /// With only a folder open, a command runs on it alone (allowing an
+    /// `.envrc` right after opening the folder, say); it cannot edit.
+    #[test]
+    fn commands_run_with_only_a_folder_open_but_cannot_edit() {
+        let dir =
+            std::env::temp_dir().join(format!("kureha-folder-command-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (id, reply) in [
+            ("test.folder", r#"{"status":"Allowed it"}"#),
+            (
+                "test.editing",
+                r#"{"edits":[{"start":0,"end":0,"text":"x"}]}"#,
+            ),
+        ] {
+            let folder = dir.join("extensions").join(id);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("ext.wasm"), guest(reply, 0)).unwrap();
+            std::fs::write(
+                folder.join("extension.toml"),
+                format!(
+                    "[extension]\nid='{id}'\nname='Folder'\nversion='1'\napi=1\nwasm='ext.wasm'\n\
+                     [[contributes.commands]]\nid='{id}.run'\ntitle='Run'\n"
+                ),
+            )
+            .unwrap();
+        }
+        let registry: &'static Registry =
+            Box::leak(Box::new(Registry::load(&dir.join("extensions"))));
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let host: &'static Host = Box::leak(Box::new(Host::start(
+            registry,
+            Budgets::default(),
+            Default::default(),
+        )));
+        use_test_extensions(registry, host);
+        let app = App::new();
+        assert_eq!(app.active_id(), None);
+        app.run_extension_command("test.folder", "test.folder.run");
+        assert!(app.status.get().contains("needs an open editor or folder"));
+        app.runtime.lock().unwrap().explorer.root = Some(dir.clone());
+        app.run_extension_command("test.folder", "test.folder.run");
+        wait(&app, "the folder command", |app| {
+            app.status.get() == "Allowed it"
+        });
+        app.run_extension_command("test.editing", "test.editing.run");
+        wait(&app, "the refused edits", |app| {
+            app.status
+                .get()
+                .contains("needs an open editor to change text")
+        });
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

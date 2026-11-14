@@ -14,15 +14,17 @@ restart with the new environment and wait while it loads (the first `use
 flake` can build for minutes). Terminals that are already open keep their
 environment; new ones get it.
 
-Nothing happens until you allow two things from the command palette:
-
-- "Extensions: Allow kureha.direnv to Run direnv", to run `direnv`;
-- "Extensions: Allow kureha.direnv to Set the Environment", to give its
-  variables to every program Kureha starts. Changing `PATH` decides which
-  program runs for every name, so this is as strong as running code.
+Nothing happens until you allow it. The first time you open a folder with an
+`.envrc`, Kureha asks in the editor's bottom-right corner: "direnv (kureha.direnv) can load
+this folder's environment", with **Allow** and **Not now**. Allow lets it run
+`direnv` and give its variables to every program Kureha starts; changing
+`PATH` decides which program runs for every name, so this is as strong as
+running code. The command palette's "Extensions: Stop kureha.direnv …" entries
+withdraw it.
 
 direnv's own approval still applies. A new or changed `.envrc` loads nothing
-until you run "direnv: Allow .envrc" (the same as `direnv allow` in the folder).
+until it is approved: Kureha says so with an **Allow .envrc** button (the same
+as `direnv allow` in the folder, also in the palette as "direnv: Allow .envrc").
 
 `direnv` itself is found on the editor's `PATH`. Started from Finder or the
 Dock, Kureha Code reads your login shell's environment first (as a terminal

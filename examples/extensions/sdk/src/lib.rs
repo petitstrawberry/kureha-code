@@ -291,6 +291,16 @@ impl Reply {
     pub fn error(message: impl Into<String>) -> Self {
         Self(json!({"error": message.into()}))
     }
+    /// Offers one of this extension's own commands as a way out of an error
+    /// (an `environment` call's, for now): Kureha shows it as a button
+    /// titled as in the manifest. At most two; others are ignored.
+    pub fn offer(mut self, command: &str) -> Self {
+        match self.0.get_mut("actions").and_then(Value::as_array_mut) {
+            Some(actions) => actions.push(json!(command)),
+            None => self.0["actions"] = json!([command]),
+        }
+        self
+    }
     /// A status bar message without edits.
     pub fn status(message: impl Into<String>) -> Self {
         Self(json!({"status": message.into()}))

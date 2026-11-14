@@ -9,9 +9,9 @@ use kureha_extension::{Cwd, Process, Reply, Request, Value};
 /// A Nix dev shell can build for minutes the first time it is entered.
 const LOAD_TIMEOUT_MS: u64 = 15 * 60 * 1000;
 const ALLOW_TIMEOUT_MS: u64 = 10_000;
-/// What to do about an `.envrc` direnv has not approved (or that changed
-/// since): the palette lists this extension's command as "direnv: Allow .envrc".
-pub const BLOCKED: &str = "this folder's .envrc is not allowed yet: run \"direnv: Allow .envrc\" from the command palette";
+/// An `.envrc` direnv has not approved (or that changed since); the error
+/// offers `direnv.allow`, which Kureha shows as an "Allow .envrc" button.
+pub const BLOCKED: &str = "this folder's .envrc is not allowed yet";
 
 /// Variables from `direnv export json`: a string sets one, `null` removes it.
 /// Empty output means nothing changes.
@@ -80,7 +80,7 @@ fn environment() -> Reply {
     };
     // A blocked `.envrc` prints its error and nothing on standard output.
     if output.stderr.contains("is blocked") {
-        return Reply::error(BLOCKED);
+        return Reply::error(BLOCKED).offer("direnv.allow");
     }
     if !output.success() {
         return Reply::error(reason(&output.stderr));
