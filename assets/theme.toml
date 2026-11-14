@@ -10,7 +10,7 @@ elevated = "#fff7fb"
 accent = "#c84c79"
 selection = "#e8aec7b0"
 # Also: surface, muted, border, current_line, error, warning,
-# minimap_viewport, minimap_border. Colors accept #RRGGBB or #RRGGBBAA.
+# selected_background, selected_foreground (rows/tabs), minimap_viewport, minimap_border. Colors accept #RRGGBB or #RRGGBBAA.
 
 [glass]
 pane_opacity = 0.58

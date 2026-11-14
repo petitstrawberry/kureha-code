@@ -162,6 +162,17 @@ pub fn parse_theme(source: &str) -> Result<Theme, String> {
     theme.name = name.into();
     if let Some(value) = root.get("colors") {
         for (key, value) in table(value, "colors")? {
+            match key.as_str() {
+                "selected_background" => {
+                    theme.colors.selected_background = Some(color(value, key)?);
+                    continue;
+                }
+                "selected_foreground" => {
+                    theme.colors.selected_foreground = Some(color(value, key)?);
+                    continue;
+                }
+                _ => {}
+            }
             let target = match key.as_str() {
                 "background" => &mut theme.colors.background,
                 "surface" => &mut theme.colors.surface,

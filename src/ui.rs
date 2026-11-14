@@ -88,8 +88,7 @@ impl<V: View + Clone> View for ListRow<V> {
 }
 
 fn build_list_row<V: View + Clone>(row: &ListRow<V>) -> Box<dyn View> {
-    // Selected rows are marked by the accent, faintly, and their label in
-    // the accent (see `WorkbenchColors::emphasis`), not by a bright fill.
+    // Use the theme's UI selection colors independently of syntax accents.
     let background = if row.selected {
         row.colors.highlight()
     } else if row.enabled && row.input.focused.get() {
@@ -523,7 +522,7 @@ impl App {
             let select = self.clone();
             let close = self.clone();
             let icon = if self.is_settings_tab(id) { file_icons::FileIcon { icon: Icon::Settings, color: theme.colors().foreground } } else if terminal { file_icons::FileIcon { icon: Icon::Terminal, color: theme.colors().foreground } } else { file_icons::for_path(path.as_deref()) };
-            // The active tab: a faint accent fill and its label in the accent.
+            // The active tab follows the theme's selection colors.
             // Its icon keeps its own colour.
             let chosen = Some(id) == active;
             let colors = theme.colors();

@@ -25,6 +25,8 @@ pub struct WorkbenchColors {
     pub border: Color,
     pub accent: Color,
     pub selection: Color,
+    pub selected_background: Option<Color>,
+    pub selected_foreground: Option<Color>,
     pub current_line: Color,
     pub minimap_viewport: Color,
     pub minimap_border: Color,
@@ -109,6 +111,8 @@ impl Theme {
             border: p.divider(),
             accent,
             selection: Color { a: 0.25, ..accent },
+            selected_background: None,
+            selected_foreground: None,
             current_line: p.background_secondary(),
             minimap_viewport: Color { a: 0.15, ..accent },
             minimap_border: Color { a: 0.70, ..accent },
@@ -349,15 +353,14 @@ pub fn contrast(a: Color, b: Color) -> f32 {
 }
 
 impl WorkbenchColors {
-    /// Behind a selected row or the active tab: the accent, faintly, so it
-    /// marks the row without washing out what is on it.
+    /// A preset's UI selection color, or a faint accent for custom themes.
     pub fn highlight(&self) -> Color {
-        self.accent.with_opacity(0.16)
+        self.selected_background.unwrap_or_else(|| self.accent.with_opacity(0.16))
     }
-    /// Text of a selected row or the active tab, over the highlight on
-    /// `under`: the accent, moved toward the foreground only as far as it
-    /// takes to read as well as plain text does there (4.5:1 at most).
+    /// Selected UI text, adjusted toward the foreground when needed to keep
+    /// the theme's normal text contrast (4.5:1 at most).
     pub fn emphasis(&self, under: Color) -> Color {
+        let selected = self.selected_foreground.unwrap_or(self.accent);
         let behind = over(self.highlight(), Color { a: 1.0, ..under });
         let target = contrast(Color { a: 1.0, ..self.foreground }, behind).min(4.5);
         (0..=20)
@@ -365,9 +368,9 @@ impl WorkbenchColors {
                 let t = step as f32 / 20.0;
                 let mix = |a: f32, b: f32| a + (b - a) * t;
                 Color {
-                    r: mix(self.accent.r, self.foreground.r),
-                    g: mix(self.accent.g, self.foreground.g),
-                    b: mix(self.accent.b, self.foreground.b),
+                    r: mix(selected.r, self.foreground.r),
+                    g: mix(selected.g, self.foreground.g),
+                    b: mix(selected.b, self.foreground.b),
                     a: 1.0,
                 }
             })
@@ -430,7 +433,7 @@ mod tests {
     use super::*;
 
     /// Selected rows and the active tab read in every bundled theme, and
-    /// keep the accent's hue where the theme's accent already reads.
+    /// preserve the preset's selected text color when it already reads.
     #[test]
     fn emphasis_reads_on_the_highlight_in_every_theme() {
         let themes = Theme::ALL.into_iter().chain(
@@ -448,8 +451,9 @@ mod tests {
                 "{}: as readable as plain text",
                 theme.name()
             );
-            if contrast(Color { a: 1.0, ..colors.accent }, behind) >= plain.min(4.5) {
-                assert_eq!(text, Color { a: 1.0, ..colors.accent }, "{}", theme.name());
+            let selected = colors.selected_foreground.unwrap_or(colors.accent);
+            if contrast(Color { a: 1.0, ..selected }, behind) >= plain.min(4.5) {
+                assert_eq!(text, Color { a: 1.0, ..selected }, "{}", theme.name());
             }
         }
     }

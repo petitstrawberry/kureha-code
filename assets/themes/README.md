@@ -19,3 +19,8 @@ Workbench diagnostics use each palette's own red and yellow. Secondary UI
 text follows the [Nord UI mapping](https://github.com/nordtheme/visual-studio-code/blob/develop/themes/nord-color-theme.json)
 and [Tokyo Night foreground palette](https://github.com/folke/tokyonight.nvim/blob/main/lua/tokyonight/colors/storm.lua),
 rather than their dim gutter or syntax-comment colors (checked 2026-11-14).
+
+Named presets define UI selection backgrounds and text separately from syntax
+accents. Monokai's neutral selection, focus ring and cursor follow the
+[VS Code Monokai mapping](https://github.com/microsoft/vscode/blob/main/extensions/theme-monokai/themes/monokai-color-theme.json);
+its green remains a syntax/terminal color.
