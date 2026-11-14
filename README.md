@@ -2,7 +2,9 @@
 
 A native, cross-platform code editor written in pure Rust with ScarletUI.
 
-![Markdown source and preview](docs/screenshots/markdown-preview.png)
+![Kureha Light and Kureha Dark with split editors and Markdown preview](docs/screenshots/kureha-light-dark.png)
+
+*Kureha Light (left) and Kureha Dark (right).*
 
 ## Install
 
