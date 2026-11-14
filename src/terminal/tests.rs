@@ -18,6 +18,7 @@ fn wait_until(terminal: &Terminal, mut predicate: impl FnMut(&Terminal) -> bool)
         thread::sleep(Duration::from_millis(10));
     }
 }
+
 fn text(terminal: &Terminal) -> String {
     let grid = terminal.grid();
     (0..grid.rows())
@@ -29,6 +30,27 @@ fn text(terminal: &Terminal) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[test]
+fn shrinking_terminal_across_a_wide_character_survives_shell_redraw() {
+    for alternate in [false, true] {
+        let mut parser = vt100::Parser::new(3, 12, 8);
+        if alternate {
+            parser.process(b"\x1b[?1049h");
+        }
+        parser.process("ab界prompt".as_bytes());
+        // The right edge now cuts the two-cell character in half.
+        parser.screen_mut().set_size(2, 3);
+        parser.process(b"\r\x1b[J");
+        parser.process(b"ok");
+        assert_eq!(parser.screen().contents(), "ok");
+        for cols in [12, 2, 8, 3, 12] {
+            parser.screen_mut().set_size(1, cols);
+            parser.process("\r\x1b[2K界>".as_bytes());
+            parser.process(b"\r\x1b[J");
+        }
+    }
 }
 
 #[test]

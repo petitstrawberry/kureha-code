@@ -28,6 +28,7 @@ pub struct Source {
     pub disk_text: Option<Arc<str>>,
     pub document: Option<(u64, u64)>,
 }
+
 #[derive(Clone, Debug)]
 pub struct Hit {
     pub source: usize,
@@ -36,6 +37,7 @@ pub struct Hit {
     pub column: usize,
     pub preview: String,
 }
+
 pub struct Results {
     pub sources: Vec<Source>,
     pub hits: Vec<Hit>,
@@ -45,6 +47,7 @@ pub struct Results {
     pub query: String,
     pub options: Options,
 }
+
 impl Results {
     pub fn summary(&self) -> String {
         format!(
@@ -69,6 +72,7 @@ impl Results {
         )
     }
 }
+
 pub fn scan(
     paths: &[PathBuf],
     open: BTreeMap<PathBuf, Source>,
@@ -180,6 +184,7 @@ pub struct Replacement {
     pub text: String,
     pub matches: usize,
 }
+
 pub fn prepare_replace(
     results: &Results,
     replacement: &str,
@@ -225,6 +230,7 @@ pub fn prepare_replace(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn unicode_and_multiline_matches_use_open_unsaved_content() {
         let path = PathBuf::from("/project/source.rs");

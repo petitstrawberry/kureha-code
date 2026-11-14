@@ -19,11 +19,13 @@ pub struct Style {
     pub image_id: usize,
     pub color: Option<Color>,
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Span {
     pub text: String,
     pub style: Style,
 }
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Kind {
     #[default]
@@ -33,6 +35,7 @@ pub enum Kind {
     Rule,
     TableRow(bool),
 }
+
 #[derive(Clone, Debug, Default)]
 pub struct Block {
     pub kind: Kind,
@@ -42,6 +45,7 @@ pub struct Block {
     pub marker: String,
     pub source_line: usize,
 }
+
 impl Block {
     fn push(&mut self, text: &str, style: &Style) {
         if self.cells.is_empty() {
@@ -57,6 +61,7 @@ impl Block {
             });
         }
     }
+
     pub fn text(&self) -> String {
         self.cells
             .iter()
@@ -65,6 +70,7 @@ impl Block {
             .collect()
     }
 }
+
 #[derive(Clone, Default)]
 pub struct Document {
     pub blocks: std::sync::Arc<Vec<Block>>,
@@ -103,6 +109,7 @@ pub fn parse(source: &str, theme: &Theme) -> Document {
     let mut image_id = 0;
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+
     fn flush(block: &mut Block, blocks: &mut Vec<Block>) {
         if !block.cells.is_empty() || block.kind == Kind::Rule {
             blocks.push(block.clone());
@@ -111,6 +118,7 @@ pub fn parse(source: &str, theme: &Theme) -> Document {
         block.cells.clear();
         block.kind = Kind::Paragraph;
     }
+
     let newlines: Vec<_> = source.match_indices('\n').map(|(i, _)| i).collect();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
         if block.cells.is_empty() {
@@ -336,6 +344,7 @@ pub fn parse(source: &str, theme: &Theme) -> Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn commonmark_structure_preserves_nested_lists_and_inline_styles() {
         let doc = parse(
@@ -359,6 +368,7 @@ mod tests {
                 .any(|s| s.style.color.is_some())
         );
     }
+
     #[test]
     fn formatted_alt_text_and_repeated_images_keep_distinct_occurrences() {
         let doc = parse("![**one** image](same.png) ![](same.png)", &Theme::Light);
@@ -370,6 +380,7 @@ mod tests {
         assert_eq!(images[0].text, "one image");
         assert_ne!(images[0].style.image_id, images[1].style.image_id);
     }
+
     #[test]
     fn html_is_literal_images_are_links_and_large_input_is_bounded() {
         let doc = parse(

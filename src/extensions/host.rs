@@ -83,6 +83,7 @@ impl Request {
             | Self::Environment { extension, .. } => extension,
         }
     }
+
     /// The reply for a request that never reached a lane.
     fn refuse(self, reason: String) -> Reply {
         match self {
@@ -139,6 +140,7 @@ struct Lane {
     overruns: u32,
     refusals: Refusals,
 }
+
 /// (extension id, program) pairs refused for want of the user's grant.
 type Refusals = std::sync::Arc<Mutex<Vec<(String, String)>>>;
 
@@ -198,6 +200,7 @@ impl Lane {
             Err(CallError::Extension(e)) => Err(format!("{name}: {e}")),
         }
     }
+
     fn handle(&mut self, request: Request) -> Reply {
         match request {
             Request::Command {
@@ -327,11 +330,13 @@ impl Host {
             refusals: Default::default(),
         }
     }
+
     /// Programs the worker refused since the last call, for want of the
     /// user's grant: (extension id, program).
     pub fn take_refusals(&self) -> Vec<(String, String)> {
         std::mem::take(&mut *self.refusals.lock().unwrap())
     }
+
     /// The queue for `extension`, starting its thread on first use.
     fn lane(&self, extension: &str) -> Result<Sender<Request>, String> {
         // Checked on every request, so turning an extension off stops it from
@@ -373,6 +378,7 @@ impl Host {
         lanes.insert(extension.to_owned(), requests.clone());
         Ok(requests)
     }
+
     fn send(&self, request: impl FnOnce(u64) -> Request) -> Option<u64> {
         let id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
         let request = request(id);
@@ -389,6 +395,7 @@ impl Host {
             }
         }
     }
+
     /// Queues a command. `None` if the worker is gone.
     pub fn command(
         &self,
@@ -403,6 +410,7 @@ impl Host {
             document,
         })
     }
+
     /// Queues a decorations query. `None` if the worker is gone.
     pub fn decorations(
         &self,
@@ -417,6 +425,7 @@ impl Host {
             range,
         })
     }
+
     /// Queues a whole-document format. `None` if the worker is gone.
     pub fn format(
         &self,
@@ -433,6 +442,7 @@ impl Host {
             options,
         })
     }
+
     /// Asks `extension` for `folder`'s environment. `None` if the worker is gone.
     pub fn environment(&self, extension: &str, folder: std::path::PathBuf) -> Option<u64> {
         self.send(|id| Request::Environment {
@@ -441,10 +451,12 @@ impl Host {
             folder,
         })
     }
+
     /// The grants this worker checks, to update when the settings change.
     pub fn grants(&self) -> &Grants {
         &self.grants
     }
+
     /// Replies that arrived since the last poll. Never blocks.
     pub fn poll(&self) -> Vec<Reply> {
         self.replies.lock().unwrap().try_iter().collect()
@@ -464,6 +476,7 @@ pub fn host() -> Option<&'static Host> {
         )
     }))
 }
+
 /// The worker if something already started it.
 pub fn running() -> Option<&'static Host> {
     HOST.get()
@@ -503,6 +516,7 @@ mod tests {
         assert!(registry.errors.is_empty(), "{:?}", registry.errors);
         Box::leak(Box::new(registry))
     }
+
     fn start(registry: &'static Registry) -> Host {
         // Small budgets keep overrun tests fast in unoptimised builds.
         Host::start(
@@ -515,6 +529,7 @@ mod tests {
             Grants::default(),
         )
     }
+
     fn wait(host: &Host, id: u64) -> Reply {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
@@ -530,6 +545,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+
     /// A failed environment offers only commands its extension contributes.
     #[test]
     fn environment_failures_offer_only_the_extensions_own_commands() {

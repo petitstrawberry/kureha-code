@@ -53,6 +53,7 @@ pub struct ScanOptions {
     /// The same exclusion-only subset as root ignore files. No shell expansion.
     pub ignore_patterns: Vec<String>,
 }
+
 impl Default for ScanOptions {
     fn default() -> Self {
         Self {
@@ -69,6 +70,7 @@ impl Default for ScanOptions {
         }
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanLimit {
     Files,
@@ -81,11 +83,13 @@ pub enum ScanLimit {
     IgnoreRules,
     IgnoreFileBytes,
 }
+
 #[derive(Clone, Debug)]
 pub struct ScanIssue {
     pub path: PathBuf,
     pub message: String,
 }
+
 #[derive(Clone, Debug, Default)]
 pub struct ScanReport {
     pub cancelled: bool,
@@ -98,12 +102,14 @@ pub struct ScanReport {
     pub non_utf8_skipped: usize,
     pub unsupported_ignore_patterns: usize,
 }
+
 impl ScanReport {
     fn limit(&mut self, limit: ScanLimit) {
         if !self.limits.contains(&limit) {
             self.limits.push(limit);
         }
     }
+
     fn error(&mut self, path: &Path, message: impl Into<String>) {
         if self.errors.len() < MAX_ISSUES {
             self.errors.push(ScanIssue {
@@ -115,6 +121,7 @@ impl ScanReport {
         }
     }
 }
+
 #[derive(Clone, Debug, Default)]
 pub struct Index {
     /// Absolute root. Paths in `files` can be passed directly to Open File.
@@ -311,6 +318,7 @@ struct IgnoreRule {
     anchored: bool,
     directory: bool,
 }
+
 impl IgnoreRule {
     fn parse(line: &str) -> Result<Option<Self>, ()> {
         let line = line.trim();
@@ -336,6 +344,7 @@ impl IgnoreRule {
             directory,
         }))
     }
+
     fn matches(&self, path: &str, directory: bool) -> bool {
         if self.directory && !directory {
             return false;
@@ -348,6 +357,7 @@ impl IgnoreRule {
         glob_matches(&self.pattern, candidate)
     }
 }
+
 fn ignore_rules(root: &Path, options: &ScanOptions, report: &mut ScanReport) -> Vec<IgnoreRule> {
     let mut rules = Vec::new();
     let mut count = 0;
@@ -418,6 +428,7 @@ fn ignore_rules(root: &Path, options: &ScanOptions, report: &mut ScanReport) -> 
     }
     rules
 }
+
 fn glob_matches(pattern: &[char], text: &str) -> bool {
     let text: Vec<_> = text.chars().collect();
     let (mut p, mut t, mut star) = (0, 0, None);
@@ -454,18 +465,23 @@ pub struct FileMatch {
     /// UTF-8 byte ranges in `relative_path`, merged and sorted.
     pub matched_ranges: Vec<Range<usize>>,
 }
+
 struct Ranked(FileMatch);
+
 impl PartialEq for Ranked {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == CmpOrdering::Equal
     }
 }
+
 impl Eq for Ranked {}
+
 impl PartialOrd for Ranked {
     fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
         Some(self.cmp(other))
     }
 }
+
 impl Ord for Ranked {
     fn cmp(&self, other: &Self) -> CmpOrdering {
         // Worst retained result on top; results remain stable for tied scores.
@@ -483,6 +499,7 @@ impl Ord for Ranked {
 pub fn quick_open(index: &Index, query: &str, limit: usize) -> Vec<FileMatch> {
     quick_open_cancellable(index, query, limit, &AtomicBool::new(false))
 }
+
 /// Cancellation returns an empty list, never stale partial search results.
 pub fn quick_open_cancellable(
     index: &Index,
@@ -524,6 +541,7 @@ pub fn quick_open_cancellable(
     // into_sorted_vec is best-to-worst because Ranked reverses numeric scores.
     results.drain(..).map(|r| r.0).collect()
 }
+
 pub fn validate_query(query: &str) -> Result<(), NavigationError> {
     if query.chars().take(MAX_QUERY_CHARS + 1).count() > MAX_QUERY_CHARS {
         Err(NavigationError::QueryTooLong)
@@ -531,6 +549,7 @@ pub fn validate_query(query: &str) -> Result<(), NavigationError> {
         Ok(())
     }
 }
+
 fn folded_query(query: &str) -> Vec<char> {
     query
         .trim()
@@ -539,11 +558,13 @@ fn folded_query(query: &str) -> Vec<char> {
         .flat_map(char::to_lowercase)
         .collect()
 }
+
 struct SearchChar {
     value: char,
     range: Range<usize>,
     boundary: bool,
 }
+
 fn search_chars(text: &str) -> Vec<SearchChar> {
     let mut chars = Vec::with_capacity(text.len());
     let mut previous = None;
@@ -562,6 +583,7 @@ fn search_chars(text: &str) -> Vec<SearchChar> {
     }
     chars
 }
+
 fn score_path(path: &str, query: &[char]) -> Option<(i64, Vec<Range<usize>>)> {
     let depth = path.chars().filter(|c| *c == '/').count() as i64;
     if query.is_empty() {
@@ -592,6 +614,7 @@ fn score_path(path: &str, query: &[char]) -> Option<(i64, Vec<Range<usize>>)> {
     }
     best.map(|(score, ranges)| (score - depth * 40 - chars.len() as i64, ranges))
 }
+
 /// Forward subsequence matching plus reverse tightening. Inspect at most eight
 /// windows: linear bounded work per candidate, no backtracking recursion or DP
 /// allocation proportional to query length times path length.
@@ -653,11 +676,13 @@ pub struct CommandDescriptor<'a> {
     pub keywords: &'a str,
     pub shortcut: &'a str,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandMatch {
     pub command_index: usize,
     pub score: i64,
 }
+
 /// Pure command filtering; callbacks and enabled state belong to the app.
 pub fn filter_commands(
     commands: &[CommandDescriptor<'_>],
@@ -698,11 +723,13 @@ pub struct LineColumn {
     pub line: usize,
     pub column: usize,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavigationError {
     InvalidLineColumn,
     QueryTooLong,
 }
+
 impl std::fmt::Display for NavigationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -713,7 +740,9 @@ impl std::fmt::Display for NavigationError {
         })
     }
 }
+
 impl std::error::Error for NavigationError {}
+
 /// `42`, `42:7`, `:42:7`; ASCII decimal, one-based. No signs or zeroes.
 pub fn parse_line_column(input: &str) -> Result<LineColumn, NavigationError> {
     let input = input.trim().strip_prefix(':').unwrap_or(input.trim());
@@ -735,6 +764,7 @@ pub fn parse_line_column(input: &str) -> Result<LineColumn, NavigationError> {
     }
     Ok(LineColumn { line, column })
 }
+
 /// Columns count Unicode scalar values, not bytes/UTF-16 units or visual tab
 /// cells. Lines are LF/CRLF; columns clamp before CR/LF, lines past EOF to EOF.
 pub fn line_column_to_offset(text: &str, position: LineColumn) -> usize {
@@ -762,7 +792,9 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
     struct Project(PathBuf);
+
     impl Project {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
@@ -773,17 +805,20 @@ mod tests {
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }
+
         fn file(&self, name: &str, text: &str) {
             let path = self.0.join(name);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
         }
     }
+
     impl Drop for Project {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+
     fn names(index: &Index) -> Vec<String> {
         index
             .files
@@ -796,6 +831,7 @@ mod tests {
             })
             .collect()
     }
+
     #[test]
     fn scan_includes_hidden_files_but_prunes_build_vcs_and_hidden_directories() {
         let p = Project::new();
@@ -816,6 +852,7 @@ mod tests {
         assert!(!index.truncated);
         assert_eq!(index.skipped, 5);
     }
+
     #[test]
     fn thousands_of_project_files_are_indexed_and_hidden_directories_are_opt_in() {
         let p = Project::new();
@@ -845,6 +882,7 @@ mod tests {
         );
         assert!(!index.files.iter().any(|path| path.ends_with(".git/config")));
     }
+
     #[test]
     fn root_ignore_subset_is_scoped_and_unsupported_syntax_is_visible() {
         let p = Project::new();
@@ -871,6 +909,7 @@ mod tests {
         assert_eq!(index.report.errors.len(), 2);
         assert!(index.truncated);
     }
+
     #[test]
     fn scan_limits_and_cancellation_are_explicit() {
         let p = Project::new();
@@ -894,6 +933,7 @@ mod tests {
         let index = scan_with_options(&p.0, &options, &AtomicBool::new(false)).unwrap();
         assert_eq!(index.report.limits, [ScanLimit::Time]);
     }
+
     #[test]
     fn depth_entries_and_storage_limits_preserve_readable_partial_results() {
         let p = Project::new();
@@ -940,6 +980,7 @@ mod tests {
             assert!(index.truncated && index.report.limits.contains(&expected));
         }
     }
+
     #[cfg(unix)]
     #[test]
     fn scan_never_follows_file_directory_broken_or_root_symlinks() {
@@ -954,6 +995,7 @@ mod tests {
         assert_eq!(index.report.symlinks_skipped, 3);
         assert!(scan(&p.0.join("loop"), &AtomicBool::new(false)).is_err());
     }
+
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn non_utf8_paths_are_reported_without_lossy_collisions() {
@@ -964,6 +1006,7 @@ mod tests {
         assert!(index.truncated && index.files.is_empty());
         assert_eq!(index.report.non_utf8_skipped, 1);
     }
+
     fn fixture(paths: &[&str]) -> Index {
         Index {
             root: "/project".into(),
@@ -974,6 +1017,7 @@ mod tests {
             ..Index::default()
         }
     }
+
     #[test]
     fn fuzzy_ranks_basename_prefix_above_directory_hits_and_keeps_stable_ties() {
         let index = fixture(&[
@@ -992,6 +1036,7 @@ mod tests {
         );
         assert!(quick_open(&index, "zzz", 20).is_empty());
     }
+
     #[test]
     fn unicode_case_folding_ranges_always_slice_the_original_display_path() {
         let index = fixture(&["資料/İ猫🍁.rs", "資料/猫町.rs", "unicode/École.rs"]);
@@ -1009,6 +1054,7 @@ mod tests {
             "資料/İ猫🍁.rs"
         );
     }
+
     #[test]
     fn large_indexes_are_bounded_and_cancellable_without_filesystem_reads() {
         let index = Index {
@@ -1027,6 +1073,7 @@ mod tests {
         assert!(validate_query(&"猫".repeat(MAX_QUERY_CHARS + 1)).is_err());
         assert!(quick_open(&index, "file", 0).is_empty());
     }
+
     #[test]
     fn command_filter_is_pure_and_supports_keywords_and_palette_prefix() {
         let commands = [
@@ -1050,6 +1097,7 @@ mod tests {
         assert_eq!(filter_commands(&commands, "row", 10)[0].command_index, 1);
         assert_eq!(filter_commands(&commands, "", 1).len(), 1);
     }
+
     #[test]
     fn line_column_parser_rejects_ambiguous_input_and_overflow() {
         assert_eq!(
@@ -1078,6 +1126,7 @@ mod tests {
             assert!(parse_line_column(bad).is_err(), "{bad}");
         }
     }
+
     #[test]
     fn goto_clamps_columns_and_lines_with_unicode_crlf_empty_and_trailing_lines() {
         let text = "猫🍁x\r\nsecond\n";

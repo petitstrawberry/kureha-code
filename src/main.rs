@@ -4,28 +4,30 @@ use kureha_code::{
     workspace::{Bindings, DocumentId, TabId, Workspace},
 };
 use scarlet_ui::{
+    Event, KeyCode, MenuBarModel, MenuEntry, MenuItemModel, PlatformWindow, WindowContext,
+    WindowId,
     clipboard::{ClipboardHandle, TextClipboard},
     file_dialog::{FileDialog, FileDialogHandle, FileDialogMode, FileDialogOutcome},
     generate_state_id, hstack, if_view,
     prelude::*,
-    scenes, vstack, Event, KeyCode, MenuBarModel, MenuEntry, MenuItemModel, PlatformWindow,
-    WindowContext, WindowId,
+    scenes, vstack,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::{
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc,
     },
     thread,
 };
 mod editing_ui;
 mod environment_ui;
 mod extension_ui;
+mod external_files;
 mod git_diff_view;
 mod git_ui;
-mod sidebar_ui;
 mod groups;
 mod hover;
 mod language;
@@ -39,6 +41,7 @@ mod preferences;
 mod preview;
 mod project_ui;
 mod settings_ui;
+mod sidebar_ui;
 mod tab_drag;
 mod terminal_ui;
 mod theme_settings;
@@ -51,33 +54,40 @@ enum DialogPurpose {
     OpenFolder,
     Save(DocumentId),
 }
+
 #[derive(Clone)]
 enum FileOperation {
     Open { group: usize },
     Save { id: DocumentId, revision: u64 },
 }
+
 enum Completion {
     Open(PathBuf, String),
     Image(PathBuf, kureha_code::media::ImageAsset),
     Save(PathBuf, Arc<str>),
 }
+
 type JobResult = std::result::Result<Completion, String>;
+
 struct FileJob {
     operation: FileOperation,
     receiver: mpsc::Receiver<JobResult>,
 }
+
 struct TreeJob {
     generation: u64,
     root: bool,
     path: PathBuf,
     receiver: mpsc::Receiver<std::result::Result<(PathBuf, Listing), String>>,
 }
+
 #[derive(Default)]
 struct CloseRequest {
     tab: Option<TabId>,
     target: Option<DocumentId>,
     discarded: BTreeSet<DocumentId>,
 }
+
 #[derive(Clone, Copy)]
 struct ClipboardTarget {
     id: DocumentId,
@@ -85,6 +95,7 @@ struct ClipboardTarget {
     navigation: u64,
     selection: TextSelection,
 }
+
 enum ClipboardJob {
     TextCopy {
         handle: ClipboardHandle<()>,
@@ -106,9 +117,11 @@ enum ClipboardJob {
         target: ClipboardTarget,
     },
 }
+
 #[derive(Default)]
 struct Runtime {
     extensions: extension_ui::State,
+    external_files: external_files::Watcher,
     environment: environment_ui::State,
     git: git_ui::State,
     window_drag_requested: bool,
@@ -136,6 +149,7 @@ struct Runtime {
     deferred_preferences: Option<(kureha_code::theme::Theme, preferences::Preferences)>,
     save_all: Vec<DocumentId>,
 }
+
 #[derive(Clone)]
 struct App {
     tab_drag: tab_drag::DragState,
@@ -181,6 +195,7 @@ struct App {
     runtime: Arc<Mutex<Runtime>>,
     navigation: Arc<AtomicU64>,
 }
+
 impl App {
     #[cfg(test)]
     fn with_document() -> Self {
@@ -188,20 +203,24 @@ impl App {
         app.new_document();
         app
     }
+
     #[cfg(test)]
     fn document_id(&self) -> DocumentId {
         self.active_id().expect("test requires an open document")
     }
+
     fn close_active(&self) {
         if let Some(tab) = self.group_id(self.focused_group.get()) {
             self.request_close(Some(tab));
         }
     }
+
     fn save_as(&self) {
         if let Some(id) = self.active_id() {
             self.picker(DialogPurpose::Save(id));
         }
     }
+
     fn new() -> Self {
         let mut runtime = Runtime::default();
         runtime.group_tabs = vec![Vec::new()];
@@ -214,6 +233,7 @@ impl App {
                 changed.fetch_add(1, Ordering::Relaxed);
             }));
         }
+
         let app = Self {
             tab_drag: Default::default(),
             nav: navigation_ui::Navigation::new(),
@@ -223,10 +243,7 @@ impl App {
             sidebar: State::new(generate_state_id(), Default::default()),
             extensions_view: sidebar_ui::ExtensionsView::new(),
             editor_font: kureha_code::fonts::editor_stack(),
-            theme: State::new(
-                generate_state_id(),
-                kureha_code::theme::preset("kureha").unwrap(),
-            ),
+            theme: State::new(generate_state_id(), kureha_code::theme::Theme::default()),
             theme_settings: Arc::new(Mutex::new(None)),
             preferences: State::new(generate_state_id(), Default::default()),
             settings_ui: settings_ui::Settings::new(),
@@ -262,12 +279,14 @@ impl App {
         app.messages.follow(&app.status);
         app
     }
+
     fn set_theme(&self, theme: kureha_code::theme::Theme) {
         if self.nav.is_open() {
             self.close_navigation();
         }
         self.apply_theme(theme);
     }
+
     fn apply_theme(&self, theme: kureha_code::theme::Theme) {
         for session in self.terminal.sessions() {
             session.terminal.set_palette(theme.terminal_palette());
@@ -277,28 +296,37 @@ impl App {
         self.runtime.lock().unwrap().minimap.clear();
         self.changed();
     }
+
     fn document_font(&self) -> Option<FontStack> {
         self.theme
             .get()
             .editor_font()
             .or_else(|| self.editor_font.clone())
     }
+
     fn toggle_word_wrap(&self) {
-        self.change_preferences(preferences::Change::WordWrap(!self.preferences.get().word_wrap));
+        self.change_preferences(preferences::Change::WordWrap(
+            !self.preferences.get().word_wrap,
+        ));
     }
+
     fn toggle_minimap(&self) {
         self.minimap_visible.update(|shown| *shown = !*shown);
         self.change_preferences(preferences::Change::Minimap(self.minimap_visible.get()));
     }
+
     fn changed(&self) {
         self.chrome.update(|value| *value = value.wrapping_add(1));
     }
+
     fn invalidate_clipboard(&self) {
         self.navigation.fetch_add(1, Ordering::Relaxed);
     }
+
     fn active_id(&self) -> Option<DocumentId> {
         self.group_document(self.focused_group.get())
     }
+
     fn window_title(&self) -> String {
         let Some(id) = self.active_id() else {
             return env!("APP_NAME").into();
@@ -312,13 +340,16 @@ impl App {
             env!("APP_NAME")
         )
     }
+
     fn bindings(&self, id: DocumentId) -> Option<Bindings> {
         self.bindings_for(id, self.focused_group.get())
     }
+
     fn blocked(&self) -> bool {
         let rt = self.runtime.lock().unwrap();
         rt.dialog.is_some() || rt.close.is_some()
     }
+
     fn editable(&self, id: DocumentId) -> bool {
         let rt = self.runtime.lock().unwrap();
         rt.dialog.is_none()
@@ -329,6 +360,7 @@ impl App {
                 .is_some_and(|tab| rt.markdown.tabs.contains_key(&tab))
             && !matches!(rt.job.as_ref().map(|job| &job.operation), Some(FileOperation::Save { id: saving, .. }) if *saving == id)
     }
+
     fn sync_editor(&self, id: DocumentId) {
         let snapshot = {
             let mut rt = self.runtime.lock().unwrap();
@@ -364,6 +396,7 @@ impl App {
             bindings.selection.set(selection);
         }
     }
+
     fn edit(&self, id: DocumentId, delta: &EditDelta) {
         if !self.editable(id) {
             self.sync_editor(id);
@@ -383,6 +416,7 @@ impl App {
             self.changed();
         }
     }
+
     fn undo(&self, redo: bool) {
         let Some(id) = self.active_id() else {
             return;
@@ -400,6 +434,7 @@ impl App {
         self.sync_editor(id);
         self.changed();
     }
+
     fn select_all(&self) {
         if self.terminal_focused() {
             return;
@@ -423,6 +458,7 @@ impl App {
         };
         bindings.selection.set(selection);
     }
+
     fn activate(&self, id: TabId) {
         if self.blocked() {
             return;
@@ -434,6 +470,7 @@ impl App {
         }
         self.activate_unchecked(id);
     }
+
     fn activate_unchecked(&self, id: TabId) {
         let group = self.focused_group.get();
         let exists = {
@@ -452,6 +489,7 @@ impl App {
             self.focus_group_terminal(group);
         }
     }
+
     fn next_tab(&self, backwards: bool) {
         if self.blocked() {
             return;
@@ -472,6 +510,7 @@ impl App {
         };
         self.activate(next);
     }
+
     fn new_document(&self) {
         if self.blocked() {
             return;
@@ -481,6 +520,7 @@ impl App {
         self.activate_unchecked(id);
         self.changed();
     }
+
     fn remove_document(&self, id: DocumentId) {
         let mut panes = self.panes.get();
         {
@@ -530,6 +570,7 @@ impl App {
         self.update_position();
         self.changed();
     }
+
     fn request_close(&self, tab: Option<TabId>) {
         if let Some(id) = tab {
             if self.close_settings_tab(id) {
@@ -564,6 +605,7 @@ impl App {
         self.invalidate_clipboard();
         self.advance_close();
     }
+
     fn advance_close(&self) {
         let decision = {
             let mut rt = self.runtime.lock().unwrap();
@@ -606,6 +648,7 @@ impl App {
             }
         }
     }
+
     fn cancel_close(&self) {
         {
             let mut rt = self.runtime.lock().unwrap();
@@ -614,6 +657,7 @@ impl App {
         }
         dismiss_window("confirm");
     }
+
     fn discard_close(&self) {
         let mut rt = self.runtime.lock().unwrap();
         if rt.job.is_some() || rt.dialog.is_some() {
@@ -627,6 +671,7 @@ impl App {
         drop(rt);
         self.advance_close();
     }
+
     fn picker(&self, purpose: DialogPurpose) {
         if let DialogPurpose::Save(id) = purpose {
             if self.is_image(id) {
@@ -684,6 +729,7 @@ impl App {
         let handle = dialog.show(owner);
         self.runtime.lock().unwrap().dialog = Some((purpose, handle));
     }
+
     fn worker(&self, operation: FileOperation, job: impl FnOnce() -> JobResult + Send + 'static) {
         self.invalidate_clipboard();
         let (sender, receiver) = mpsc::channel();
@@ -707,6 +753,7 @@ impl App {
         }
         self.changed();
     }
+
     fn open(&self, path: PathBuf) {
         if self.blocked() || self.runtime.lock().unwrap().job.is_some() {
             return;
@@ -724,6 +771,7 @@ impl App {
                 .map_err(|e| e.to_string())
         });
     }
+
     fn save(&self) {
         let id = {
             let rt = self.runtime.lock().unwrap();
@@ -751,6 +799,7 @@ impl App {
             self.picker(DialogPurpose::Save(id));
         }
     }
+
     fn save_all(&self) {
         if self.blocked() || self.runtime.lock().unwrap().job.is_some() {
             return;
@@ -769,6 +818,7 @@ impl App {
         self.runtime.lock().unwrap().save_all = ids;
         self.save_next();
     }
+
     fn save_next(&self) {
         loop {
             let next = {
@@ -791,6 +841,7 @@ impl App {
             }
         }
     }
+
     fn save_to(&self, id: DocumentId, path: PathBuf) {
         if self.is_image(id) {
             self.status
@@ -851,9 +902,11 @@ impl App {
                 .map_err(|e| e.to_string())
         });
     }
+
     fn show_folder(&self) {
         self.picker(DialogPurpose::OpenFolder);
     }
+
     fn open_folder(&self, path: PathBuf) {
         if self.blocked() {
             return;
@@ -908,6 +961,7 @@ impl App {
         }
         self.refresh_tree();
     }
+
     fn open_tree_row(&self, row: Row, index: usize) {
         if self.blocked() {
             return;
@@ -938,12 +992,14 @@ impl App {
         }
         self.refresh_tree();
     }
+
     fn refresh_tree(&self) {
         let mut rows = self.runtime.lock().unwrap().explorer.rows();
         self.apply_git_marks(&mut rows);
         self.tree_rows.set(rows);
         self.changed();
     }
+
     fn show_find(&self) {
         if self.blocked() {
             return;
@@ -960,6 +1016,7 @@ impl App {
         }
         self.find_open.set(true);
     }
+
     fn find(&self, backwards: bool) {
         if self.blocked() {
             return;
@@ -1004,6 +1061,7 @@ impl App {
             ),
         }
     }
+
     fn replace_match(&self) {
         let Some(target) = self.clipboard_target() else {
             return;
@@ -1028,6 +1086,7 @@ impl App {
         }
         self.find(false);
     }
+
     fn replace_all(&self) {
         let Some(id) = self.active_id() else {
             return;
@@ -1078,6 +1137,7 @@ impl App {
             Err(error) => self.search_status.set(error),
         }
     }
+
     fn clipboard_service(&self) -> Option<TextClipboard> {
         if !self.terminal_focused() {
             let id = self.active_id()?;
@@ -1105,6 +1165,7 @@ impl App {
             }
         }
     }
+
     fn clipboard_target(&self) -> Option<ClipboardTarget> {
         let id = self.active_id()?;
         let bindings = self.bindings(id).unwrap();
@@ -1115,6 +1176,7 @@ impl App {
             selection: bindings.selection.get(),
         })
     }
+
     fn copy(&self, cut: bool) {
         if self.terminal_focused() {
             return;
@@ -1142,6 +1204,7 @@ impl App {
         });
         self.status.set("Copying to desktop clipboard…".into());
     }
+
     fn paste(&self) {
         if self.terminal_focused() {
             self.paste_terminal();
@@ -1157,6 +1220,7 @@ impl App {
         self.runtime.lock().unwrap().clipboard_job = Some(ClipboardJob::Paste { handle, target });
         self.status.set("Reading desktop clipboard…".into());
     }
+
     fn paste_terminal(&self) {
         let Some(target) = self.terminal_paste_target() else {
             return;
@@ -1168,6 +1232,7 @@ impl App {
         self.runtime.lock().unwrap().clipboard_job =
             Some(ClipboardJob::TerminalPaste { handle, target });
     }
+
     fn apply_clipboard(&self, target: ClipboardTarget, text: &str) -> bool {
         if self.active_id() != Some(target.id)
             || !self.editable(target.id)
@@ -1202,6 +1267,7 @@ impl App {
         self.changed();
         true
     }
+
     fn poll_clipboard(&self) {
         let completion = {
             let mut rt = self.runtime.lock().unwrap();
@@ -1254,12 +1320,14 @@ impl App {
         };
         self.status.set(message.into());
     }
+
     fn poll_menu(&self) {
         let actions = std::mem::take(&mut self.runtime.lock().unwrap().menu_actions);
         for action in actions {
             action(self);
         }
     }
+
     fn poll(&self) {
         self.poll_markdown();
         let dialog = {
@@ -1356,6 +1424,7 @@ impl App {
         }
         self.update_position();
     }
+
     fn complete_file(&self, operation: FileOperation, result: JobResult) {
         match (operation, result) {
             (FileOperation::Open { group }, Ok(Completion::Open(path, text))) => {
@@ -1409,6 +1478,7 @@ impl App {
         }
         self.changed();
     }
+
     fn complete_open(
         &self,
         group: usize,
@@ -1450,6 +1520,7 @@ impl App {
         // Opening clears an earlier message.
         self.status.set(String::new());
     }
+
     fn update_position(&self) {
         let Some(id) = self.active_id() else {
             if !self.position.get().is_empty() {
@@ -1496,6 +1567,7 @@ impl App {
         }
     }
 }
+
 fn resolve_save_path(path: &Path) -> std::io::Result<PathBuf> {
     match std::fs::canonicalize(path) {
         Ok(path) => Ok(path),
@@ -1512,10 +1584,12 @@ fn resolve_save_path(path: &Path) -> std::io::Result<PathBuf> {
         Err(error) => Err(error),
     }
 }
+
 impl View for App {
     fn create_element(&self) -> Box<dyn Element> {
         self.content().create_element()
     }
+
     fn listenables(&self) -> Vec<&dyn Listenable> {
         let mut listenables: Vec<&dyn Listenable> = vec![
             &self.chrome,
@@ -1542,10 +1616,12 @@ impl View for App {
         listenables.extend(self.extensions_view.listenables());
         listenables
     }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
 }
+
 impl Application for App {
     fn scenes(&self) -> impl Scene {
         scenes! {
@@ -1556,6 +1632,7 @@ impl Application for App {
                 .app_id(env!("APP_ID")).open_at_launch(false).size(Size::new(560.0, 240.0)),
         }
     }
+
     fn on_window_created(&mut self, ctx: &WindowContext, window: &mut dyn PlatformWindow) {
         if ctx.scene_key.as_str() == "main" {
             let clipboard = window.text_clipboard();
@@ -1570,6 +1647,7 @@ impl Application for App {
             let _ = window.focus();
         }
     }
+
     fn on_window_sync(&mut self, ctx: &WindowContext, window: &mut dyn PlatformWindow) {
         if ctx.scene_key.as_str() != "main" {
             return;
@@ -1586,6 +1664,7 @@ impl Application for App {
             let _ = window.request_move();
         }
     }
+
     fn on_window_close_requested(&mut self, ctx: &WindowContext) -> bool {
         match ctx.scene_key.as_str() {
             "main" => {
@@ -1599,6 +1678,7 @@ impl Application for App {
             _ => true,
         }
     }
+
     fn on_clipboard_error(
         &mut self,
         _ctx: &WindowContext,
@@ -1606,6 +1686,7 @@ impl Application for App {
     ) {
         self.status.set(error.to_string());
     }
+
     fn on_idle(&mut self) {
         self.poll_terminals();
         self.poll_theme_settings();
@@ -1617,6 +1698,7 @@ impl Application for App {
         self.poll_navigation();
         self.poll_project_search();
         self.poll_clipboard();
+        self.poll_external_files();
         self.poll_language();
         self.poll_language_interactions();
         if let Some(report) = kureha_code::extensions::take_load_report() {
@@ -1632,6 +1714,7 @@ impl Application for App {
         }
     }
 }
+
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // From Finder or the Dock, PATH lacks Nix and Homebrew: read the login
     // shell's environment while the window opens.
@@ -1654,6 +1737,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
     Ok(())
 }
+
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;

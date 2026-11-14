@@ -9,6 +9,7 @@ use std::{
 
 const MAX_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_DOCUMENT_PIXELS: usize = 16 * 1024 * 1024;
+
 #[derive(Clone)]
 pub struct Resource {
     pub result: Result<Arc<Buffer>, String>,
@@ -46,6 +47,7 @@ pub fn decode_path(value: &str) -> Result<String, String> {
     }
     String::from_utf8(bytes).map_err(|_| "Invalid UTF-8 path".into())
 }
+
 pub fn local_path(destination: &str, base: Option<&Path>) -> Result<PathBuf, String> {
     if destination.contains(':') || destination.starts_with("//") {
         return Err("Unsupported image URL".into());
@@ -124,6 +126,7 @@ pub fn load(destination: &str, base: Option<&Path>, previous: Option<&Resource>)
         loaded: Instant::now(),
     }
 }
+
 #[cfg(not(target_os = "scarlet"))]
 fn download(url: &str) -> Result<Vec<u8>, String> {
     let agent = ureq::Agent::config_builder()
@@ -141,6 +144,7 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())?;
     Ok(bytes)
 }
+
 #[cfg(target_os = "scarlet")]
 fn download(_: &str) -> Result<Vec<u8>, String> {
     Err("Remote images are not supported on this host yet".into())
@@ -150,6 +154,7 @@ fn download(_: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use image::ImageEncoder;
+
     fn png() -> Vec<u8> {
         let mut bytes = Vec::new();
         image::codecs::png::PngEncoder::new(&mut bytes)
@@ -162,6 +167,7 @@ mod tests {
             .unwrap();
         bytes
     }
+
     #[test]
     fn relative_unicode_images_share_pixels_and_reload_after_replacement() {
         let directory =
@@ -189,6 +195,7 @@ mod tests {
         assert!(load("missing.png", Some(&base), None).result.is_err());
         std::fs::remove_dir_all(directory).unwrap();
     }
+
     #[test]
     #[cfg(not(target_os = "scarlet"))]
     fn http_images_decode_once_and_reuse_the_resource() {

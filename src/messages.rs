@@ -39,8 +39,10 @@ pub(super) struct Prompt {
     /// Button labels, the main one first.
     pub choices: Vec<String>,
 }
+
 /// What a prompt does with the chosen button's index.
 type Answer = Arc<dyn Fn(&App, usize) + Send + Sync>;
+
 /// Prompts shown at once; the rest wait for those to go.
 const PROMPTS_SHOWN: usize = 3;
 /// How far above the window's bottom edge prompts sit: inside the editor's
@@ -61,6 +63,7 @@ pub(super) struct Messages {
     /// Set while `notify` writes `App::status`, so it is recorded once.
     writing: Arc<std::sync::atomic::AtomicBool>,
 }
+
 impl Messages {
     pub(super) fn new() -> Self {
         Self {
@@ -73,9 +76,11 @@ impl Messages {
             writing: Default::default(),
         }
     }
+
     pub(super) fn listenables(&self) -> Vec<&dyn Listenable> {
         vec![&self.shown, &self.progress, &self.prompts]
     }
+
     fn record(&self, text: String, level: Level) {
         if text.is_empty() {
             if self.shown.get().is_some() {
@@ -96,10 +101,12 @@ impl Messages {
         drop(history);
         self.shown.set(Some(message));
     }
+
     /// Newest first.
     pub(super) fn history(&self) -> Vec<Message> {
         self.history.lock().unwrap().iter().rev().cloned().collect()
     }
+
     /// Mirrors writes to `status` (the older way to report) as messages.
     pub(super) fn follow(&self, status: &State<String>) {
         let messages = self.clone();
@@ -131,6 +138,7 @@ impl App {
         self.messages.writing.store(false, Ordering::Relaxed);
         self.messages.record(text, level);
     }
+
     /// Shows `prompt` until a button is clicked, which calls `answer` with its
     /// index, or until [`Self::withdraw`]. Asking the same again changes
     /// nothing; asking with the same key replaces the earlier one.
@@ -149,6 +157,7 @@ impl App {
             prompts.push(prompt);
         });
     }
+
     /// Removes the prompt with `key`, if it is shown.
     pub(super) fn withdraw(&self, key: &str) {
         self.messages.answers.lock().unwrap().remove(key);
@@ -158,6 +167,7 @@ impl App {
                 .update(|prompts| prompts.retain(|p| p.key != key));
         }
     }
+
     /// Clicks button `choice` of the prompt with `key`.
     pub(super) fn answer(&self, key: &str, choice: usize) {
         let answer = self.messages.answers.lock().unwrap().remove(key);
@@ -166,6 +176,7 @@ impl App {
             answer(self, choice);
         }
     }
+
     /// Shows `text` in the status bar until [`Self::progress_done`].
     pub(super) fn progress(&self, text: impl Into<String>) -> u64 {
         let id = self.messages.next.fetch_add(1, Ordering::Relaxed);
@@ -175,6 +186,7 @@ impl App {
             .update(|items| items.push((id, text)));
         id
     }
+
     pub(super) fn progress_done(&self, id: u64) {
         if self
             .messages
@@ -188,6 +200,7 @@ impl App {
                 .update(|items| items.retain(|(item, _)| *item != id));
         }
     }
+
     /// Hides an information message once it has been shown long enough.
     pub(super) fn expire_messages(&self) {
         if let Some(message) = self.messages.shown.get()

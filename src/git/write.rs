@@ -39,6 +39,7 @@ pub struct Done {
     /// including edits made by its hooks.
     pub changed: Vec<PathBuf>,
 }
+
 impl From<super::branch::Switched> for Done {
     fn from(switched: super::branch::Switched) -> Self {
         Self {
@@ -47,6 +48,7 @@ impl From<super::branch::Switched> for Done {
         }
     }
 }
+
 impl From<String> for Done {
     fn from(message: String) -> Self {
         Self {
@@ -95,22 +97,49 @@ fn discard(workdir: &Path, paths: &[PathBuf]) -> Result<Done, String> {
     // Only exact tracked files: never recurse into folders, discard conflicts,
     // or turn an empty path list into a repository-wide restore.
     for path in paths {
-        if path.components().any(|c| !matches!(c, std::path::Component::Normal(_)))
-            || path.as_os_str().is_empty() {
+        if path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+            || path.as_os_str().is_empty()
+        {
             return Err("Discard requires a relative file path".into());
         }
-        let entries = command::run(workdir, [OsStr::new("ls-files"), OsStr::new("--stage"), OsStr::new("-z"), OsStr::new("--"), path.as_os_str()])?;
-        let records: Vec<_> = entries.split(|b| *b == 0).filter(|r| !r.is_empty()).collect();
-        if records.len() != 1 || !records[0].starts_with(b"100") && !records[0].starts_with(b"120000 ") {
+        let entries = command::run(
+            workdir,
+            [
+                OsStr::new("ls-files"),
+                OsStr::new("--stage"),
+                OsStr::new("-z"),
+                OsStr::new("--"),
+                path.as_os_str(),
+            ],
+        )?;
+        let records: Vec<_> = entries
+            .split(|b| *b == 0)
+            .filter(|r| !r.is_empty())
+            .collect();
+        if records.len() != 1
+            || !records[0].starts_with(b"100") && !records[0].starts_with(b"120000 ")
+        {
             return Err("Only tracked files can be discarded".into());
         }
-        let (metadata, name) = records[0].split_at(records[0].iter().position(|b| *b == b'\t').ok_or("Invalid Git index entry")?);
+        let (metadata, name) = records[0].split_at(
+            records[0]
+                .iter()
+                .position(|b| *b == b'\t')
+                .ok_or("Invalid Git index entry")?,
+        );
         if !metadata.ends_with(b" 0") || &name[1..] != path.as_os_str().as_encoded_bytes() {
             return Err("Resolve conflicts before discarding this file".into());
         }
     }
-    if !paths.is_empty() { with_paths(workdir, &["restore", "--worktree"], paths)?; }
-    Ok(Done { message: "Discarded working-tree changes".into(), changed: paths.to_vec() })
+    if !paths.is_empty() {
+        with_paths(workdir, &["restore", "--worktree"], paths)?;
+    }
+    Ok(Done {
+        message: "Discarded working-tree changes".into(),
+        changed: paths.to_vec(),
+    })
 }
 
 /// Keep large selections below the OS argument limit, with literal path
@@ -118,11 +147,13 @@ fn discard(workdir: &Path, paths: &[PathBuf]) -> Result<Done, String> {
 /// file. The file is private and removed on success and failure alike.
 fn with_paths(workdir: &Path, args: &[&str], paths: &[PathBuf]) -> Result<(), String> {
     struct PathspecFile(PathBuf);
+
     impl Drop for PathspecFile {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
     }
+
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let (pathspec, mut file) = loop {
         let path = std::env::temp_dir().join(format!(
@@ -176,6 +207,7 @@ fn commit(workdir: &Path, message: &str) -> Result<String, String> {
 }
 
 type Request = (u64, PathBuf, Operation);
+
 type Answer = (u64, Operation, Result<Done, String>);
 
 /// Applies operations on a worker thread, one at a time and in order; none
@@ -184,6 +216,7 @@ pub struct Writer {
     requests: mpsc::Sender<Request>,
     answers: Mutex<mpsc::Receiver<Answer>>,
 }
+
 impl Writer {
     pub fn start() -> Result<Self, String> {
         let (requests, inbox) = mpsc::channel::<Request>();
@@ -205,9 +238,11 @@ impl Writer {
             answers: Mutex::new(answers),
         })
     }
+
     pub fn submit(&self, id: u64, folder: PathBuf, operation: Operation) {
         let _ = self.requests.send((id, folder, operation));
     }
+
     /// Answers since the last poll, in order. Never blocks.
     pub fn poll(&self) -> Vec<Answer> {
         self.answers.lock().unwrap().try_iter().collect()
@@ -233,19 +268,34 @@ mod tests {
         let index = repo.git(&["write-tree"]);
         let done = apply(&repo.0, &Operation::Discard(vec!["[literal].txt".into()])).unwrap();
         assert_eq!(done.changed, vec![PathBuf::from("[literal].txt")]);
-        assert_eq!(std::fs::read_to_string(repo.0.join("[literal].txt")).unwrap(), "staged\n");
-        assert_eq!(std::fs::read_to_string(repo.0.join("other.txt")).unwrap(), "keep\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("[literal].txt")).unwrap(),
+            "staged\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("other.txt")).unwrap(),
+            "keep\n"
+        );
         assert_eq!(repo.git(&["write-tree"]), index);
         std::fs::remove_file(repo.0.join("[literal].txt")).unwrap();
         apply(&repo.0, &Operation::Discard(vec!["[literal].txt".into()])).unwrap();
-        assert_eq!(std::fs::read_to_string(repo.0.join("[literal].txt")).unwrap(), "staged\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("[literal].txt")).unwrap(),
+            "staged\n"
+        );
         repo.write("new.txt", "untracked\n");
         for invalid in ["new.txt", "..", "", "."] {
             assert!(apply(&repo.0, &Operation::Discard(vec![invalid.into()])).is_err());
         }
         apply(&repo.0, &Operation::Discard(vec![])).unwrap();
-        assert_eq!(std::fs::read_to_string(repo.0.join("new.txt")).unwrap(), "untracked\n");
-        assert_eq!(std::fs::read_to_string(repo.0.join("other.txt")).unwrap(), "keep\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("new.txt")).unwrap(),
+            "untracked\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("other.txt")).unwrap(),
+            "keep\n"
+        );
     }
 
     fn stage_all(repo: &Repo) -> String {

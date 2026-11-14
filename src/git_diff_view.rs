@@ -30,6 +30,7 @@ impl View for DiffLines {
             |_| Vec::new(),
         ))
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -61,9 +62,11 @@ impl Renderer {
         renderer.measure();
         renderer
     }
+
     fn font_size(&self) -> f32 {
         self.view.theme.editor_font_size() - 1.0
     }
+
     fn measure(&mut self) {
         let size = self.font_size();
         let (height, width) = match &self.view.font {
@@ -79,6 +82,7 @@ impl Renderer {
         self.line_height = height.max(size) + 2.0;
         self.digit_width = width / 10.0;
     }
+
     fn update(&mut self, view: &DiffLines) -> UpdateResult {
         let same = Arc::ptr_eq(&self.view.diff, &view.diff)
             && self.view.theme == view.theme
@@ -93,6 +97,7 @@ impl Renderer {
             UpdateResult::Updated
         }
     }
+
     /// Width of one line-number column.
     fn number_width(&self) -> f32 {
         let widest = self
@@ -120,9 +125,11 @@ impl ElementRenderObject for Renderer {
         self.valid = true;
         self.size
     }
+
     fn depends_on_viewport(&self) -> bool {
         true
     }
+
     fn set_viewport_hint(&mut self, viewport: Rect) -> bool {
         if self.viewport == Some(viewport) {
             return false;
@@ -130,25 +137,33 @@ impl ElementRenderObject for Renderer {
         self.viewport = Some(viewport);
         true
     }
+
     fn update_needs_layout(&self) -> bool {
         !self.valid
     }
+
     fn size(&self) -> Size {
         self.size
     }
+
     fn render(&mut self) {}
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
     fn hit_test(&self, p: Point) -> bool {
         Rect::new(Point::ZERO, self.size).contains(p)
     }
+
     fn handle_event(&mut self, _event: &Event, _phase: Phase) -> bool {
         false
     }
+
     fn paint<'a>(&'a self, ctx: &mut PaintContext<'a>, origin: Point) -> bool {
         let theme = &self.view.theme;
         let editor = theme.editor_colors();

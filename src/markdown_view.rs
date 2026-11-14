@@ -19,7 +19,9 @@ pub(super) mod metrics {
         pub paints: usize,
         pub wraps: usize,
     }
+
     thread_local! { pub static COUNTS: std::cell::RefCell<Counts> = Default::default(); }
+
     pub fn take() -> Counts {
         COUNTS.with(|c| std::mem::take(&mut *c.borrow_mut()))
     }
@@ -34,6 +36,7 @@ pub(super) struct MarkdownView {
     pub on_scroll: Arc<dyn Fn(f32) + Send + Sync>,
     pub position: Arc<Mutex<PreviewPosition>>,
 }
+
 #[derive(Clone, Default)]
 pub(super) struct PreviewPosition {
     pub viewport: Rect,
@@ -41,14 +44,17 @@ pub(super) struct PreviewPosition {
     pub geometry: u64,
     pub model: usize,
 }
+
 impl PreviewPosition {
     pub fn preview_y(&self, source_line: f32) -> f32 {
         interpolate(&self.mapping, source_line, false)
     }
+
     pub fn source_line(&self, preview_y: f32) -> f32 {
         interpolate(&self.mapping, preview_y, true)
     }
 }
+
 fn interpolate(points: &[(f32, f32)], value: f32, reverse: bool) -> f32 {
     let pair = |(a, b): (f32, f32)| if reverse { (b, a) } else { (a, b) };
     let Some(first) = points.first().copied().map(pair) else {
@@ -66,7 +72,9 @@ fn interpolate(points: &[(f32, f32)], value: f32, reverse: bool) -> f32 {
     }
     points.last().copied().map(pair).unwrap().1
 }
+
 type CellCache = BTreeMap<(usize, usize), (Vec<Run>, f32)>;
+
 #[derive(Clone)]
 struct Run {
     text: String,
@@ -76,6 +84,7 @@ struct Run {
     bold: bool,
     style: Style,
 }
+
 #[derive(Default)]
 struct Layout {
     size: Size,
@@ -86,17 +95,20 @@ struct Layout {
     mapping: Vec<(f32, f32)>,
     images: Vec<(Rect, Arc<scarlet_ui::buffer::Buffer>, String)>,
 }
+
 fn measure(text: &str, size: f32, font: Option<&FontStack>) -> f32 {
     font.map_or_else(
         || graphics::measure_text_sized(text, size).0,
         |font| graphics::measure_text_sized_with_font_stack(text, size, font).0,
     ) as f32
 }
+
 impl MarkdownView {
     #[cfg(test)]
     fn layout(&self, width: f32) -> Layout {
         self.layout_cached(width, &mut CellCache::new())
     }
+
     fn layout_cached(&self, width: f32, cache: &mut CellCache) -> Layout {
         #[cfg(test)]
         metrics::COUNTS.with(|c| c.borrow_mut().layouts.push(width));
@@ -234,6 +246,7 @@ impl MarkdownView {
             .push((self.document.source_lines as f32, result.size.height));
         result
     }
+
     fn wrap(
         &self,
         spans: &[Span],
@@ -363,6 +376,7 @@ impl MarkdownView {
         y + line_height
     }
 }
+
 impl View for MarkdownView {
     fn create_element(&self) -> Box<dyn Element> {
         Box::new(RenderElement::with_view_children_and_updater(
@@ -380,10 +394,12 @@ impl View for MarkdownView {
             |_| Vec::new(),
         ))
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
+
 struct Renderer {
     view: MarkdownView,
     layout: Layout,
@@ -393,6 +409,7 @@ struct Renderer {
     cells: CellCache,
     previous: Option<(Layout, CellCache, bool)>,
 }
+
 impl Renderer {
     fn update(&mut self, view: &MarkdownView) -> UpdateResult {
         let same_style = self.view.theme == view.theme
@@ -435,6 +452,7 @@ impl Renderer {
             UpdateResult::NoChange
         }
     }
+
     fn link(&self, x: i32, y: i32) -> Option<String> {
         if let Some((_, _, link)) = self
             .layout
@@ -453,6 +471,7 @@ impl Renderer {
             .and_then(|r| r.style.link.clone())
     }
 }
+
 impl ElementRenderObject for Renderer {
     fn layout(&mut self, c: LayoutConstraints) -> Size {
         let width = if c.max_width.is_finite() {
@@ -487,9 +506,11 @@ impl ElementRenderObject for Renderer {
         }
         self.layout.size
     }
+
     fn depends_on_viewport(&self) -> bool {
         true
     }
+
     fn set_viewport_hint(&mut self, viewport: Rect) -> bool {
         if self.viewport == Some(viewport) {
             return false;
@@ -498,22 +519,29 @@ impl ElementRenderObject for Renderer {
         self.view.position.lock().unwrap().viewport = viewport;
         true
     }
+
     fn update_needs_layout(&self) -> bool {
         !self.valid
     }
+
     fn size(&self) -> Size {
         self.layout.size
     }
+
     fn render(&mut self) {}
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
     fn hit_test(&self, p: Point) -> bool {
         Rect::new(Point::ZERO, self.size()).contains(p)
     }
+
     fn handle_event(&mut self, event: &Event, phase: Phase) -> bool {
         if phase != Phase::Target {
             return false;
@@ -559,6 +587,7 @@ impl ElementRenderObject for Renderer {
             _ => false,
         }
     }
+
     fn paint<'a>(&'a self, ctx: &mut PaintContext<'a>, origin: Point) -> bool {
         #[cfg(test)]
         metrics::COUNTS.with(|c| c.borrow_mut().paints += 1);
@@ -652,6 +681,7 @@ mod tests {
         event::{ScrollSource, WheelPhase},
         pipeline::RenderingPipeline,
     };
+
     fn view(source: &str) -> MarkdownView {
         MarkdownView {
             document: Arc::new(kureha_code::markdown::parse(source, &Theme::Light)),
@@ -662,6 +692,7 @@ mod tests {
             position: Default::default(),
         }
     }
+
     #[test]
     fn native_layout_wraps_unicode_tables_and_images_at_narrow_widths() {
         let mut view = view(
@@ -690,6 +721,7 @@ mod tests {
             assert!(layout.size.height.is_finite());
         }
     }
+
     #[test]
     fn retained_layout_reuses_geometry_and_long_unicode_words_make_progress() {
         let source = "あ".repeat(20000);
@@ -714,6 +746,7 @@ mod tests {
         renderer.layout(LayoutConstraints::new(0.0, 320.0, 0.0, f32::INFINITY));
         assert_eq!(renderer.layout.runs.as_ptr(), pointer);
     }
+
     #[test]
     fn heading_links_resolve_unicode_and_duplicate_headings() {
         let mut view = view("[Go](#日本語-1)\n\n# 日本語\n\nFirst\n\n# 日本語\n");
@@ -750,6 +783,7 @@ mod tests {
         assert!(renderer.handle_event(&release, Phase::Target));
         assert_eq!(*request.lock().unwrap(), Some(target as f32));
     }
+
     #[test]
     fn preview_scrolls_without_changing_document_or_rebuilding_content() {
         let view = view(&"# Title\n\nParagraph with **emphasis**.\n\n".repeat(50));
@@ -773,6 +807,7 @@ mod tests {
         assert!(pipeline.render().is_some());
         pipeline.teardown();
     }
+
     #[test]
     fn viewport_bounds_paint_commands_and_updates_reuse_unchanged_cells() {
         let source = "Paragraph with **bold** and ordinary text.\n\n".repeat(1000);

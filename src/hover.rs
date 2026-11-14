@@ -39,16 +39,27 @@ fn blocks(text: &str) -> Vec<Block> {
     for line in text.lines().chain(std::iter::once("")) {
         if line.trim_start().starts_with("```") {
             if fenced {
-                result.push(Block { text: code_lines.join("\n"), kind: Kind::Code, spans: Vec::new() });
+                result.push(Block {
+                    text: code_lines.join("\n"),
+                    kind: Kind::Code,
+                    spans: Vec::new(),
+                });
                 code_lines.clear();
             } else if !paragraph.is_empty() {
-                result.push(Block { text: paragraph.join("\n"), kind: Kind::Prose, spans: Vec::new() });
+                result.push(Block {
+                    text: paragraph.join("\n"),
+                    kind: Kind::Prose,
+                    spans: Vec::new(),
+                });
                 paragraph.clear();
             }
             fenced = !fenced;
             continue;
         }
-        if fenced { code_lines.push(line); continue; }
+        if fenced {
+            code_lines.push(line);
+            continue;
+        }
         if line.trim().is_empty() {
             if paragraph.is_empty() {
                 continue;
@@ -86,7 +97,11 @@ fn blocks(text: &str) -> Vec<Block> {
         }
     }
     if !code_lines.is_empty() {
-        result.push(Block { text: code_lines.join("\n"), kind: Kind::Code, spans: Vec::new() });
+        result.push(Block {
+            text: code_lines.join("\n"),
+            kind: Kind::Code,
+            spans: Vec::new(),
+        });
     }
     // Plaintext rust-analyzer hovers put the qualified module above the signature.
     if result.len() > 1
@@ -386,6 +401,7 @@ impl View for HoverCard {
             },
         ))
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -395,6 +411,7 @@ struct Viewport {
     card: HoverCard,
     size: Size,
 }
+
 impl ElementRenderObject for Viewport {
     fn layout(&mut self, c: LayoutConstraints) -> Size {
         let width = self.card.preferred_width().min(c.max_width);
@@ -402,6 +419,7 @@ impl ElementRenderObject for Viewport {
         self.size = Size::new(width, content.height.min(c.max_height));
         self.size
     }
+
     fn layout_with_children(
         &mut self,
         c: LayoutConstraints,
@@ -414,19 +432,25 @@ impl ElementRenderObject for Viewport {
         }
         self.size
     }
+
     fn update_needs_layout(&self) -> bool {
         true
     }
+
     fn size(&self) -> Size {
         self.size
     }
+
     fn hit_test(&self, p: Point) -> bool {
         Rect::new(Point::ZERO, self.size).contains(p)
     }
+
     fn render(&mut self) {}
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -434,6 +458,7 @@ impl ElementRenderObject for Viewport {
 
 #[derive(Clone)]
 struct Body(HoverCard);
+
 impl View for Body {
     fn create_element(&self) -> Box<dyn Element> {
         Box::new(RenderElement::with_view_children_and_updater(
@@ -450,6 +475,7 @@ impl View for Body {
             |_| Vec::new(),
         ))
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -460,28 +486,36 @@ struct BodyRenderer {
     layout: Arc<(Vec<Section>, Size)>,
     size: Size,
 }
+
 impl ElementRenderObject for BodyRenderer {
     fn layout(&mut self, c: LayoutConstraints) -> Size {
         self.layout = self.card.layout(c.max_width);
         self.size = self.layout.1;
         self.size
     }
+
     fn update_needs_layout(&self) -> bool {
         true
     }
+
     fn size(&self) -> Size {
         self.size
     }
+
     fn hit_test(&self, p: Point) -> bool {
         Rect::new(Point::ZERO, self.size).contains(p)
     }
+
     fn render(&mut self) {}
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
     fn paint<'a>(&'a self, ctx: &mut PaintContext<'a>, origin: Point) -> bool {
         ctx.push_clip(Rect::new(origin, self.size));
         for section in &self.layout.0 {
@@ -542,7 +576,11 @@ mod tests {
 
     #[test]
     fn restricted_visibility_and_inferred_types_are_highlighted_as_code() {
-        for text in ["pub(crate) fn start(&self)", "pub(super) struct State", "let value: Option<String>"] {
+        for text in [
+            "pub(crate) fn start(&self)",
+            "pub(super) struct State",
+            "let value: Option<String>",
+        ] {
             let card = highlighted(text, Theme::Dark);
             assert_eq!(card.blocks[0].kind, Kind::Code);
             assert!(!card.blocks[0].spans.is_empty());
@@ -761,6 +799,7 @@ mod tests {
                 .iter()
                 .find_map(|child| find(child.as_ref()))
         }
+
         find(element).expect("hover body is mounted")
     }
 

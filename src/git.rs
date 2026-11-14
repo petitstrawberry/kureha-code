@@ -34,6 +34,7 @@ pub enum Change {
     Modified,
     Conflicted,
 }
+
 impl Change {
     /// The letter shown next to a file.
     pub fn letter(self) -> &'static str {
@@ -56,6 +57,7 @@ pub enum Head {
     /// A branch without commits yet.
     Unborn(String),
 }
+
 impl Head {
     pub fn label(&self) -> String {
         match self {
@@ -100,6 +102,7 @@ pub struct Snapshot {
     /// Local branches.
     pub branches: Vec<branch::Branch>,
 }
+
 impl Snapshot {
     /// The change of a file, including files inside untracked folders.
     pub fn change(&self, path: &Path) -> Option<Change> {
@@ -110,6 +113,7 @@ impl Snapshot {
                 .then_some(Change::Untracked)
         })
     }
+
     /// The most significant change at or below `folder`.
     pub fn folder_change(&self, folder: &Path) -> Option<Change> {
         // Paths order by component, so everything below `folder` follows it.
@@ -126,6 +130,7 @@ impl Snapshot {
             .then_some(Change::Untracked);
         below.max(untracked)
     }
+
     /// For the status bar: `main · 3 changes`.
     pub fn summary(&self) -> String {
         match self.total {
@@ -360,6 +365,7 @@ fn status_change(code: u8) -> Option<Change> {
 }
 
 type Request = (u64, PathBuf);
+
 type Answer = (u64, PathBuf, Outcome);
 
 /// Reads repositories on a worker thread. Requests made while one runs
@@ -369,6 +375,7 @@ pub struct Watcher {
     answers: Mutex<mpsc::Receiver<Answer>>,
     interrupt: Arc<AtomicBool>,
 }
+
 impl Watcher {
     pub fn start() -> Result<Self, String> {
         let (requests, inbox) = mpsc::channel::<Request>();
@@ -401,6 +408,7 @@ impl Watcher {
             interrupt,
         })
     }
+
     /// Asks for `folder`'s state, interrupting a read in progress.
     pub fn request(&self, generation: u64, folder: PathBuf) {
         // Raise the flag before sending: the worker clears it when it starts
@@ -408,6 +416,7 @@ impl Watcher {
         self.interrupt.store(true, Ordering::Relaxed);
         let _ = self.requests.send((generation, folder));
     }
+
     /// The newest answer since the last poll. Never blocks.
     pub fn poll(&self) -> Option<Answer> {
         self.answers.lock().unwrap().try_iter().last()
@@ -427,11 +436,13 @@ pub(crate) mod testing {
 
     /// A scratch repository, removed on drop.
     pub struct Repo(pub PathBuf);
+
     impl Drop for Repo {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
+
     impl Repo {
         pub fn new(name: &str) -> Self {
             let dir =
@@ -447,10 +458,12 @@ pub(crate) mod testing {
             repo.git(&["config", "commit.gpgsign", "false"]);
             repo
         }
+
         /// Runs the `git` command line, isolated from the developer's settings.
         pub fn git(&self, args: &[&str]) -> String {
             self.git_in(&self.0, args)
         }
+
         pub fn git_in(&self, dir: &Path, args: &[&str]) -> String {
             let output = Command::new("git")
                 .args([
@@ -474,11 +487,13 @@ pub(crate) mod testing {
             );
             String::from_utf8(output.stdout).unwrap()
         }
+
         pub fn write(&self, path: &str, text: &str) {
             let path = self.0.join(path);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
+
         pub fn read(&self, folder: &str) -> Snapshot {
             match read(&self.0.join(folder), Arc::new(AtomicBool::new(false))) {
                 Outcome::Ready(snapshot) => snapshot,

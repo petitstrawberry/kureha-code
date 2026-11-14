@@ -9,9 +9,11 @@ use std::any::Any;
 pub(super) fn background() -> Color {
     Color::rgb(12, 14, 18)
 }
+
 fn foreground() -> Color {
     Color::rgb(230, 232, 235)
 }
+
 pub(super) fn blank((cols, rows): (u16, u16)) -> TextGridBuffer {
     TextGridBuffer::new(
         cols as usize,
@@ -19,6 +21,7 @@ pub(super) fn blank((cols, rows): (u16, u16)) -> TextGridBuffer {
         TextGridCell::blank(foreground(), background()),
     )
 }
+
 pub(super) fn snapshot(screen: &vt100::Screen, status: TerminalStatus) -> Snapshot {
     let (rows, cols) = screen.size();
     let mut grid = blank((cols, rows));
@@ -74,6 +77,7 @@ pub(super) fn snapshot(screen: &vt100::Screen, status: TerminalStatus) -> Snapsh
         status,
     }
 }
+
 fn color(value: vt100::Color, fallback: Color) -> Color {
     super::TerminalPalette::default().resolve(value, fallback)
 }
@@ -85,6 +89,7 @@ pub(super) struct Queries {
     state: u8,
     sequence: Vec<u8>,
 }
+
 impl Queries {
     pub fn feed(&mut self, byte: u8, screen: &vt100::Screen) -> Option<Vec<u8>> {
         match self.state {
@@ -136,6 +141,7 @@ pub(super) struct MeasuredView<V: View + Clone> {
     pub font: Option<scarlet_ui::FontStack>,
     pub content: V,
 }
+
 impl<V: View + Clone> View for MeasuredView<V> {
     fn create_element(&self) -> Box<dyn Element> {
         Box::new(RenderElement::with_view_children_and_updater(
@@ -158,19 +164,23 @@ impl<V: View + Clone> View for MeasuredView<V> {
             |view| vec![view.content.clone_view()],
         ))
     }
+
     fn listenables(&self) -> Vec<&dyn Listenable> {
         self.content.listenables()
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
+
 struct Measure {
     terminal: Terminal,
     cell_size: Size,
     font: Option<scarlet_ui::FontStack>,
     size: Size,
 }
+
 impl ElementRenderObject for Measure {
     fn layout(&mut self, constraints: LayoutConstraints) -> Size {
         let grid = self.terminal.shared.grid.get();
@@ -199,6 +209,7 @@ impl ElementRenderObject for Measure {
             .sync_ime(self.size, self.cell_size, self.font.as_ref());
         self.size
     }
+
     fn paint_overlay(
         &self,
         ctx: &mut scarlet_ui::renderer::PaintContext<'_>,
@@ -207,13 +218,17 @@ impl ElementRenderObject for Measure {
         self.terminal
             .paint_preedit(ctx, origin, self.size, self.cell_size, self.font.as_ref())
     }
+
     fn size(&self) -> Size {
         self.size
     }
+
     fn render(&mut self) {}
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }

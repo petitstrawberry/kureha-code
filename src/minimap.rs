@@ -82,6 +82,7 @@ struct Key {
 pub struct MinimapCache {
     entries: VecDeque<(Key, Arc<Snapshot>)>,
 }
+
 impl MinimapCache {
     pub fn new() -> Self {
         Self::default()
@@ -137,6 +138,19 @@ impl MinimapCache {
 }
 
 impl Snapshot {
+    /// Hidden minimaps do not need to inspect source or clone syntax spans.
+    pub fn empty(theme: Theme) -> Self {
+        Self {
+            rows: Vec::new(),
+            line_count: 1,
+            source_len: 0,
+            theme,
+            sampled: false,
+            source_bytes_read: 0,
+            styles: Arc::from([]),
+        }
+    }
+
     fn build(document: &TextDocument, spans: &[TextStyleSpan], theme: Theme) -> Self {
         let line_count = document.line_count().max(1);
         let count = line_count.min(MAX_ROWS);
@@ -274,6 +288,7 @@ impl Minimap {
             .as_ref()
             .map_or(self.snapshot.rows.len(), |layout| layout.rows.len())
     }
+
     fn navigation_row(&self, index: usize) -> (usize, usize) {
         let measured = self.measured.borrow();
         let rows = measured
@@ -282,6 +297,7 @@ impl Minimap {
         rows.get(index.min(rows.len().saturating_sub(1)))
             .map_or((0, 0), |row| (row.line, row.byte))
     }
+
     pub fn new(snapshot: Arc<Snapshot>, scroll: State<TextViewScroll>, theme: Theme) -> Self {
         Self {
             snapshot,
@@ -302,25 +318,30 @@ impl Minimap {
         self.enabled = enabled;
         self
     }
+
     pub fn width(mut self, width: f32) -> Self {
         self.width = finite_nonnegative(width).clamp(32.0, 240.0);
         self
     }
+
     /// For exact alignment use `graphics::line_height_sized_with_font_stack`
     /// (or `line_height_sized`) with the TextView's font size and stack.
     pub fn line_height(mut self, pixels: f32) -> Self {
         self.line_height = finite_nonnegative(pixels).max(1.0);
         self
     }
+
     pub fn editor_padding(mut self, pixels: f32) -> Self {
         self.editor_padding = finite_nonnegative(pixels);
         self
     }
+
     /// Optional editor outer height; otherwise the minimap's height is used.
     pub fn viewport_height(mut self, pixels: f32) -> Self {
         self.viewport_height = Some(finite_nonnegative(pixels));
         self
     }
+
     pub fn on_navigate(mut self, callback: impl Fn(Navigation) + 'static) -> Self {
         self.on_navigate = Some(Rc::new(callback));
         self
@@ -332,6 +353,7 @@ impl Minimap {
             |layout| layout.content_height,
         )
     }
+
     fn row_top(&self, index: usize) -> f32 {
         self.measured
             .borrow()
@@ -346,6 +368,7 @@ impl Minimap {
                     })
             })
     }
+
     fn map_position(&self, y: f32) -> f32 {
         let Some(ref layout) = *self.measured.borrow() else {
             return y / self.content_height().max(1.0) * self.map_height();
@@ -363,6 +386,7 @@ impl Minimap {
             .unwrap_or(layout.content_height);
         (index as f32 + ((y - start) / (end - start).max(1.0)).clamp(0.0, 1.0)) * ROW_PITCH
     }
+
     fn editor_position(&self, map_y: f32) -> f32 {
         let row = (map_y / ROW_PITCH).max(0.0);
         let index = (row.floor() as usize).min(self.row_count());
@@ -370,12 +394,15 @@ impl Minimap {
         let end = self.row_top(index + 1);
         top + (end - top) * row.fract()
     }
+
     fn viewport(&self, height: f32) -> f32 {
         (self.viewport_height.unwrap_or(height) - self.editor_padding * 2.0).max(1.0)
     }
+
     fn map_height(&self) -> f32 {
         self.row_count() as f32 * ROW_PITCH
     }
+
     fn scroll_progress(&self, height: f32) -> f32 {
         let max_scroll = (self.content_height() - self.viewport(height)).max(0.0);
         if max_scroll > 0.0 {
@@ -384,9 +411,11 @@ impl Minimap {
             0.0
         }
     }
+
     fn map_offset(&self, height: f32) -> f32 {
         (self.map_height() - finite_nonnegative(height)).max(0.0) * self.scroll_progress(height)
     }
+
     fn overlay(&self, height: f32) -> (f32, f32) {
         let map_height = self.map_height();
         let visible_height = map_height.min(finite_nonnegative(height));
@@ -410,9 +439,11 @@ impl Minimap {
             extent,
         )
     }
+
     fn navigate(&self, y: f32, height: f32) {
         self.navigate_at(y, height, self.map_offset(height));
     }
+
     fn navigate_at(&self, y: f32, height: f32, map_offset: f32) {
         if !self.enabled || height <= 0.0 {
             return;
@@ -459,6 +490,7 @@ struct EditorOverview<E: View + Clone> {
     minimap: Minimap,
     wrapped: bool,
 }
+
 impl<E: View + Clone> View for EditorOverview<E> {
     fn create_element(&self) -> Box<dyn Element> {
         Box::new(RenderElement::with_view_children_and_updater(
@@ -481,20 +513,24 @@ impl<E: View + Clone> View for EditorOverview<E> {
             },
         ))
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
+
 struct OverviewLayout {
     minimap: Minimap,
     wrapped: bool,
     size: Size,
 }
+
 impl ElementRenderObject for OverviewLayout {
     fn layout(&mut self, constraints: LayoutConstraints) -> Size {
         self.size = Size::new(constraints.max_width, constraints.max_height);
         self.size
     }
+
     fn layout_with_children(
         &mut self,
         constraints: LayoutConstraints,
@@ -512,6 +548,7 @@ impl ElementRenderObject for OverviewLayout {
                 self.size.height,
             ));
             editor.set_position(Point::ZERO);
+
             fn text_layout(
                 element: &dyn Element,
             ) -> Option<&scarlet_ui::views::text_view::TextViewLayout> {
@@ -526,6 +563,7 @@ impl ElementRenderObject for OverviewLayout {
                     .iter()
                     .find_map(|child| text_layout(child.as_ref()))
             }
+
             if let Some(layout) = text_layout(editor.as_ref()).filter(|_| self.minimap.enabled) {
                 self.minimap.line_height = layout.line_height;
                 let count = layout.visual_lines.len().min(MAX_ROWS);
@@ -609,16 +647,21 @@ impl ElementRenderObject for OverviewLayout {
         }
         self.size
     }
+
     fn size(&self) -> Size {
         self.size
     }
+
     fn update_needs_layout(&self) -> bool {
         true
     }
+
     fn render(&mut self) {}
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -637,6 +680,7 @@ struct Surface {
     minimap: Minimap,
     size: Rc<Cell<Size>>,
 }
+
 impl View for Surface {
     fn create_element(&self) -> Box<dyn Element> {
         Box::new(RenderElement::new(
@@ -647,13 +691,16 @@ impl View for Surface {
             },
         ))
     }
+
     fn listenables(&self) -> Vec<&dyn Listenable> {
         vec![&self.minimap.scroll]
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
+
 #[derive(Clone, Copy)]
 struct Drag {
     pointer_y: f32,
@@ -667,6 +714,7 @@ struct SurfaceRenderer {
     surface: Surface,
     drag: Option<Drag>,
 }
+
 impl ElementRenderObject for SurfaceRenderer {
     fn layout(&mut self, constraints: LayoutConstraints) -> Size {
         let m = &self.surface.minimap;
@@ -685,16 +733,21 @@ impl ElementRenderObject for SurfaceRenderer {
         self.surface.size.set(size);
         size
     }
+
     fn size(&self) -> Size {
         self.surface.size.get()
     }
+
     fn render(&mut self) {}
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
     fn handle_event(&mut self, event: &Event, phase: Phase) -> bool {
         if phase != Phase::Target || !self.surface.minimap.enabled {
             return false;
@@ -772,6 +825,7 @@ impl ElementRenderObject for SurfaceRenderer {
             _ => false,
         }
     }
+
     fn update(&mut self, view: &dyn View) -> UpdateResult {
         let Some(surface) = view.as_any().downcast_ref::<Surface>() else {
             return UpdateResult::Replaced;
@@ -787,6 +841,7 @@ impl ElementRenderObject for SurfaceRenderer {
         self.surface = surface.clone();
         UpdateResult::Updated
     }
+
     fn paint<'a>(&'a self, ctx: &mut PaintContext<'a>, origin: Point) -> bool {
         let m = &self.surface.minimap;
         let size = self.size();
@@ -1024,6 +1079,7 @@ mod tests {
     fn snapshot(text: &str, spans: &[TextStyleSpan]) -> Snapshot {
         Snapshot::build(&TextDocument::from_str(text), spans, Theme::Light)
     }
+
     fn scroll(y: f32) -> State<TextViewScroll> {
         State::new(StateId::new(0xf000_1000), TextViewScroll { x: 17.0, y })
     }

@@ -13,6 +13,7 @@ pub(super) fn session_label(id: u64) -> String {
         .unwrap_or_else(|| "sh".into());
     format!("{shell} {id}")
 }
+
 #[derive(Clone)]
 pub(super) struct Session {
     pub id: u64,
@@ -20,6 +21,7 @@ pub(super) struct Session {
     directory: PathBuf,
     pub tab: Option<TabId>,
 }
+
 #[derive(Default)]
 struct Model {
     sessions: Vec<Session>,
@@ -27,17 +29,20 @@ struct Model {
     next_id: u64,
     epoch: u64,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PasteTarget {
     id: u64,
     generation: u64,
     epoch: u64,
 }
+
 #[derive(Clone)]
 pub(super) struct Panel {
     model: Arc<Mutex<Model>>,
     pub revision: State<u64>,
 }
+
 impl Panel {
     pub fn new() -> Self {
         Self {
@@ -45,31 +50,38 @@ impl Panel {
             revision: State::new(generate_state_id(), 0),
         }
     }
+
     fn changed(&self) {
         self.revision.update(|r| *r = r.wrapping_add(1));
     }
+
     pub fn sessions(&self) -> Vec<Session> {
         self.model.lock().unwrap().sessions.clone()
     }
+
     pub fn panel_sessions(&self) -> Vec<Session> {
         self.sessions()
             .into_iter()
             .filter(|session| session.tab.is_none())
             .collect()
     }
+
     pub fn for_tab(&self, tab: TabId) -> Option<Session> {
         self.sessions()
             .into_iter()
             .find(|session| session.tab == Some(tab))
     }
+
     pub fn session(&self, id: u64) -> Option<Session> {
         self.sessions().into_iter().find(|session| session.id == id)
     }
+
     pub fn focused_session(&self) -> Option<Session> {
         self.sessions()
             .into_iter()
             .find(|session| session.terminal.focused())
     }
+
     pub fn set_tab(&self, id: u64, tab: Option<TabId>) {
         let mut model = self.model.lock().unwrap();
         let Some(session) = model.sessions.iter_mut().find(|s| s.id == id) else {
@@ -87,6 +99,7 @@ impl Panel {
         drop(model);
         self.changed();
     }
+
     pub fn active(&self) -> Option<Session> {
         let model = self.model.lock().unwrap();
         model
@@ -95,9 +108,11 @@ impl Panel {
             .find(|s| Some(s.id) == model.active && s.tab.is_none())
             .cloned()
     }
+
     pub fn add(&self, directory: PathBuf) -> u64 {
         self.start(directory, None)
     }
+
     fn start(&self, directory: PathBuf, tab: Option<TabId>) -> u64 {
         self.blur();
         let terminal = Terminal::new();
@@ -119,6 +134,7 @@ impl Panel {
         self.changed();
         id
     }
+
     pub fn select(&self, id: u64) {
         self.blur();
         let mut model = self.model.lock().unwrap();
@@ -132,6 +148,7 @@ impl Panel {
         session.terminal.focus();
         self.changed();
     }
+
     pub fn next(&self, backwards: bool) {
         let sessions = self.panel_sessions();
         if sessions.is_empty() {
@@ -146,6 +163,7 @@ impl Panel {
             sessions[(index + if backwards { sessions.len() - 1 } else { 1 }) % sessions.len()].id,
         );
     }
+
     pub fn close(&self, id: u64) -> bool {
         let mut model = self.model.lock().unwrap();
         let Some(index) = model.sessions.iter().position(|s| s.id == id) else {
@@ -167,12 +185,14 @@ impl Panel {
         self.changed();
         remaining
     }
+
     pub fn focus(&self) {
         if let Some(session) = self.active() {
             self.blur();
             session.terminal.focus();
         }
     }
+
     pub fn blur(&self) {
         let mut model = self.model.lock().unwrap();
         model.epoch += 1;
@@ -180,11 +200,13 @@ impl Panel {
             session.terminal.blur();
         }
     }
+
     pub fn poll(&self) {
         for session in self.sessions() {
             session.terminal.poll();
         }
     }
+
     pub fn restart(&self, id: u64) {
         if let Some(session) = self.session(id) {
             session.terminal.open(session.directory);
@@ -192,6 +214,7 @@ impl Panel {
             self.changed();
         }
     }
+
     pub fn paste_target(&self) -> Option<PasteTarget> {
         let model = self.model.lock().unwrap();
         let session = model.sessions.iter().find(|s| s.terminal.focused())?;
@@ -201,6 +224,7 @@ impl Panel {
             epoch: model.epoch,
         })
     }
+
     pub fn paste(&self, target: PasteTarget, text: &str) -> bool {
         self.paste_target() == Some(target)
             && self
@@ -208,10 +232,12 @@ impl Panel {
                 .is_some_and(|s| s.terminal.paste(text))
     }
 }
+
 impl App {
     pub(super) fn blur_terminals(&self) {
         self.terminal.blur();
     }
+
     pub(super) fn terminal_focused(&self) -> bool {
         self.terminal
             .focused_session()
@@ -223,17 +249,21 @@ impl App {
                 None => self.panel_visible.get(),
             })
     }
+
     pub(super) fn poll_terminals(&self) {
         self.terminal.poll();
     }
+
     pub(super) fn terminal_paste_target(&self) -> Option<PasteTarget> {
         self.terminal_focused()
             .then(|| self.terminal.paste_target())
             .flatten()
     }
+
     pub(super) fn apply_terminal_paste(&self, target: PasteTarget, text: &str) -> bool {
         self.terminal_focused() && self.terminal.paste(target, text)
     }
+
     pub(super) fn restart_terminal(&self) {
         let session = self
             .terminal
@@ -247,6 +277,7 @@ impl App {
             self.terminal.restart(session.id);
         }
     }
+
     pub(super) fn focus_group_terminal(&self, group: usize) {
         self.terminal.blur();
         if let Some(session) = self
@@ -256,6 +287,7 @@ impl App {
             self.terminal.select(session.id);
         }
     }
+
     pub(super) fn attach_terminal(&self, session: u64, group: usize, index: usize) {
         if self.blocked() || !self.group_exists(group) {
             return;
@@ -275,6 +307,7 @@ impl App {
         self.activate_unchecked(tab);
         self.changed();
     }
+
     pub(super) fn split_terminal_from_panel(
         &self,
         session: u64,
@@ -293,6 +326,7 @@ impl App {
         self.focus_group(group);
         self.changed();
     }
+
     fn terminal_group(&self, tab: TabId, beside: Option<usize>, edge: tab_drag::Edge) -> usize {
         if let Some(group) = beside {
             self.add_group(tab, group, edge)
@@ -303,6 +337,7 @@ impl App {
             group
         }
     }
+
     pub(super) fn split_terminal(&self, tab: TabId, down: bool) {
         let Some(session) = self.terminal.for_tab(tab) else {
             return;
@@ -321,6 +356,7 @@ impl App {
         self.focus_group(group);
         self.changed();
     }
+
     fn remove_terminal_tab_views(&self, tab: TabId) {
         let mut panes = self.panes.get();
         {
@@ -339,6 +375,7 @@ impl App {
         }
         self.invalidate_clipboard();
     }
+
     pub(super) fn return_terminal_to_panel(&self, tab: TabId) {
         if self.blocked() {
             return;
@@ -352,6 +389,7 @@ impl App {
         self.terminal.select(session.id);
         self.changed();
     }
+
     pub(super) fn close_terminal_tab(&self, tab: TabId) -> bool {
         let Some(session) = self.terminal.for_tab(tab) else {
             return false;
@@ -365,6 +403,7 @@ impl App {
         self.changed();
         true
     }
+
     fn focus_terminal_session(&self, id: u64) -> bool {
         if self.blocked() {
             return false;
@@ -389,6 +428,7 @@ impl App {
         self.terminal.select(id);
         true
     }
+
     fn terminal_context_menu(&self, id: u64) -> scarlet_ui::views::Menu {
         use scarlet_ui::views::{Menu, MenuItemContent};
         let copy = self.clone();
@@ -425,6 +465,7 @@ impl App {
                 }),
         ])
     }
+
     pub(super) fn terminal_tab_view(&self, tab: TabId, group: usize) -> impl View + Clone + use<> {
         let session = self.terminal.for_tab(tab).unwrap();
         let palette = self.theme.get().terminal_palette();
@@ -456,6 +497,7 @@ impl App {
             false
         })
     }
+
     fn terminal_directory(&self) -> PathBuf {
         let id = self.active_id();
         let rt = self.runtime.lock().unwrap();
@@ -469,6 +511,7 @@ impl App {
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("/"))
     }
+
     pub(super) fn toggle_panel(&self) {
         if self.blocked() {
             return;
@@ -487,6 +530,7 @@ impl App {
             self.terminal.focus();
         }
     }
+
     pub(super) fn hide_panel(&self) {
         self.remember_panel_size();
         self.panel_visible.set(false);
@@ -498,6 +542,7 @@ impl App {
             self.focus_group_terminal(self.focused_group.get());
         }
     }
+
     pub(super) fn new_terminal(&self) {
         if self.blocked() {
             return;
@@ -509,6 +554,7 @@ impl App {
         self.terminal.add(self.terminal_directory());
         self.panel_visible.set(true);
     }
+
     pub(super) fn terminal_panel(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let colors = theme.colors();
@@ -574,6 +620,7 @@ mod tests {
     use super::*;
     use kureha_code::terminal::TerminalStatus;
     use std::time::{Duration, Instant};
+
     fn output(terminal: &Terminal) -> String {
         let grid = terminal.grid();
         (0..grid.rows())
@@ -586,6 +633,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
     fn wait(panel: &Panel, terminal: &Terminal, predicate: impl Fn(&Terminal) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
@@ -602,6 +650,7 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
     }
+
     #[test]
     #[cfg(all(unix, not(target_os = "scarlet")))]
     fn independent_sessions_keep_shell_state_when_hidden_and_close_only_the_selected_pty() {
@@ -671,6 +720,7 @@ mod tests {
         assert!(!app.terminal.close(second.id));
         assert_eq!(second.terminal.status(), TerminalStatus::Closed);
     }
+
     #[test]
     #[cfg(all(unix, not(target_os = "scarlet")))]
     fn editor_terminal_moves_preserve_shell_state_and_panel_focus_is_independent() {

@@ -16,6 +16,7 @@ impl App {
             .get(id)
             .is_some_and(|doc| doc.image.is_some())
     }
+
     pub(super) fn document_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         let image = self
             .runtime
@@ -32,6 +33,7 @@ impl App {
             Either::B(Either::B(self.editor_view(id, group)))
         }
     }
+
     fn set_image_zoom(&self, id: DocumentId, group: usize, zoom: f32) {
         self.runtime
             .lock()
@@ -40,6 +42,7 @@ impl App {
             .insert((id, group), zoom);
         self.changed();
     }
+
     fn image_view(
         &self,
         id: DocumentId,
@@ -113,6 +116,7 @@ struct Mat<V> {
     background: Color,
     tile: Color,
 }
+
 impl<V: View + Clone> View for Mat<V> {
     fn create_element(&self) -> Box<dyn Element> {
         Box::new(RenderElement::with_view_children_and_updater(
@@ -130,19 +134,23 @@ impl<V: View + Clone> View for Mat<V> {
             |v| vec![v.child.clone_view()],
         ))
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
+
 struct MatRenderer {
     size: Size,
     background: Color,
     tile: Color,
 }
+
 impl ElementRenderObject for MatRenderer {
     fn layout(&mut self, _: LayoutConstraints) -> Size {
         self.size
     }
+
     fn layout_with_children(
         &mut self,
         c: LayoutConstraints,
@@ -151,16 +159,21 @@ impl ElementRenderObject for MatRenderer {
         self.size = children[0].layout(c);
         self.size
     }
+
     fn size(&self) -> Size {
         self.size
     }
+
     fn render(&mut self) {}
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
     fn paint<'a>(&'a self, ctx: &mut PaintContext<'a>, origin: Point) -> bool {
         ctx.fill_rect(Rect::new(origin, self.size), self.background);
         let pitch = 16.0;
@@ -302,6 +315,7 @@ mod tests {
                 controls(child.as_ref(), origin, output);
             }
         }
+
         let app = App::with_document();
         let id = app.document_id();
         let image = Arc::new(kureha_code::media::decode(&png()).unwrap());

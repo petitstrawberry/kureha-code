@@ -48,6 +48,7 @@ pub struct Budgets {
     /// Commands and other tasks.
     pub task: u64,
 }
+
 impl Default for Budgets {
     fn default() -> Self {
         Self {
@@ -57,6 +58,7 @@ impl Default for Budgets {
         }
     }
 }
+
 pub const MAX_EDITS: usize = 4096;
 pub const MAX_DECORATIONS: usize = 10_000;
 /// Fixed fuel charged for each host function call.
@@ -78,6 +80,7 @@ pub struct DocumentSnapshot {
     /// The open folder, if any; a process may run there.
     pub workspace: Option<PathBuf>,
 }
+
 impl DocumentSnapshot {
     fn describe(&self) -> Value {
         json!({
@@ -103,6 +106,7 @@ pub enum DecorationStyle {
     Warning,
     Error,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decoration {
     pub range: Range<usize>,
@@ -134,6 +138,7 @@ pub enum CallError {
     /// The extension reported an error itself.
     Extension(String),
 }
+
 impl std::fmt::Display for CallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -144,6 +149,7 @@ impl std::fmt::Display for CallError {
         }
     }
 }
+
 fn trap(error: wasmi::Error) -> CallError {
     if error.as_trap_code() == Some(TrapCode::OutOfFuel) {
         CallError::Fuel
@@ -191,6 +197,7 @@ struct HostState {
     /// (`"actions"`), at most [`MAX_ACTIONS`].
     offered: Vec<String>,
 }
+
 /// Commands an error reply may offer.
 pub const MAX_ACTIONS: usize = 2;
 
@@ -203,6 +210,7 @@ fn charge(caller: &mut Caller<'_, HostState>, units: u64) -> Result<(), wasmi::E
     }
     caller.set_fuel(fuel - units)
 }
+
 fn byte_fuel(bytes: usize) -> u64 {
     (bytes as u64).saturating_mul(HOST_BYTE_FUEL)
 }
@@ -213,6 +221,7 @@ fn guest_range(memory_len: usize, ptr: i32, len: i32) -> Option<Range<usize>> {
     let end = start.checked_add(len)?;
     (end <= memory_len).then_some(start..end)
 }
+
 fn caller_memory(caller: &Caller<'_, HostState>) -> Result<Memory, wasmi::Error> {
     caller
         .get_export("memory")
@@ -499,6 +508,7 @@ impl Runtime {
     pub fn new(wasm: &[u8], budgets: Budgets) -> Result<Self, String> {
         Self::with_access(wasm, budgets, Access::default())
     }
+
     /// Like `new`, for the extension `access` describes.
     pub fn with_access(wasm: &[u8], budgets: Budgets, access: Access) -> Result<Self, String> {
         let mut config = Config::default();
@@ -586,10 +596,12 @@ impl Runtime {
     pub fn take_log(&mut self) -> Vec<String> {
         std::mem::take(&mut self.store.data_mut().log)
     }
+
     /// Programs refused since the last call for want of the user's grant.
     pub fn take_refused(&mut self) -> std::collections::BTreeSet<String> {
         std::mem::take(&mut self.store.data_mut().refused)
     }
+
     /// The command ids the last error reply offered (`"actions"`).
     pub fn take_offered(&mut self) -> Vec<String> {
         std::mem::take(&mut self.store.data_mut().offered)

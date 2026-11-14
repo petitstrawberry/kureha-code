@@ -11,6 +11,7 @@ use std::{
 };
 
 pub type DocumentId = u64;
+
 /// Tab identities share the document ID allocator but need not own a document.
 pub type TabId = u64;
 
@@ -42,9 +43,11 @@ impl Bindings {
             generation,
         }
     }
+
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
     }
+
     /// A second editor shares text, but owns its caret, selection and viewport.
     pub fn another_view(&self) -> Self {
         let document = self.document.clone();
@@ -89,6 +92,7 @@ impl Document {
             image: None,
         }
     }
+
     pub fn name(&self) -> String {
         self.path
             .as_ref()
@@ -116,27 +120,33 @@ impl Workspace {
     pub fn get(&self, id: DocumentId) -> Option<&Document> {
         self.documents.iter().find(|doc| doc.id == id)
     }
+
     pub fn get_mut(&mut self, id: DocumentId) -> Option<&mut Document> {
         self.documents.iter_mut().find(|doc| doc.id == id)
     }
+
     pub fn index(&self, id: DocumentId) -> Option<usize> {
         self.documents.iter().position(|doc| doc.id == id)
     }
+
     pub fn find_path(&self, path: &Path) -> Option<DocumentId> {
         self.documents
             .iter()
             .find(|doc| doc.path.as_deref() == Some(path))
             .map(|doc| doc.id)
     }
+
     pub fn new_document(&mut self) -> DocumentId {
         self.add(None, "")
     }
+
     pub fn open(&mut self, path: PathBuf, text: &str) -> DocumentId {
         if let Some(id) = self.find_path(&path) {
             return id;
         }
         self.add(Some(path), text)
     }
+
     pub fn open_image(&mut self, path: PathBuf, image: crate::media::ImageAsset) -> DocumentId {
         if let Some(id) = self.find_path(&path) {
             return id;
@@ -147,19 +157,23 @@ impl Workspace {
         doc.disk_text = None;
         id
     }
+
     pub fn new_tab_id(&mut self) -> TabId {
         let id = self.next_id;
         self.next_id += 1;
         id
     }
+
     fn add(&mut self, path: Option<PathBuf>, text: &str) -> DocumentId {
         let id = self.new_tab_id();
         self.documents.push(Document::new(id, path, text));
         id
     }
+
     pub fn remove(&mut self, id: DocumentId) {
         self.documents.retain(|doc| doc.id != id);
     }
+
     /// A save completion belongs to its original tab, never whichever tab is
     /// active now. Edits made after the snapshot stay dirty.
     pub fn saved(&mut self, id: DocumentId, revision: u64, path: PathBuf) -> bool {
@@ -177,6 +191,7 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn documents_keep_independent_history_caret_scroll_and_dirty_state() {
         let mut workspace = Workspace::default();
@@ -211,6 +226,7 @@ mod tests {
             "other"
         );
     }
+
     #[test]
     fn save_completion_cannot_clean_newer_edits_or_a_reused_tab_position() {
         let mut workspace = Workspace::default();
@@ -234,6 +250,7 @@ mod tests {
         assert!(!workspace.saved(first, revision, "wrong.rs".into()));
         assert!(workspace.get(replacement).unwrap().path.is_none());
     }
+
     #[test]
     fn reopening_an_open_path_preserves_unsaved_edits() {
         let mut workspace = Workspace::default();

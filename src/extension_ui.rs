@@ -86,9 +86,7 @@ enum Purpose {
     /// `.envrc`, say); edits it returns are refused.
     FolderCommand(String),
     /// `save` holds the path and deadline when formatting precedes a save.
-    Format {
-        save: Option<(PathBuf, Instant)>,
-    },
+    Format { save: Option<(PathBuf, Instant)> },
 }
 
 /// What a queued request needs to apply its reply safely later.
@@ -127,11 +125,13 @@ thread_local! {
     static TEST: std::cell::Cell<Option<(&'static Registry, &'static Host, Duration)>> =
         const { std::cell::Cell::new(None) };
 }
+
 /// Points this thread's extension UI at a test registry and worker.
 #[cfg(test)]
 pub(super) fn use_test_extensions(registry: &'static Registry, host: &'static Host) {
     TEST.set(Some((registry, host, FORMAT_ON_SAVE_TIMEOUT)));
 }
+
 /// Installed extensions once loaded. Never blocks.
 pub(super) fn registry() -> Option<&'static Registry> {
     #[cfg(test)]
@@ -140,6 +140,7 @@ pub(super) fn registry() -> Option<&'static Registry> {
     }
     kureha_code::extensions::loaded()
 }
+
 pub(super) fn start_host() -> Option<&'static Host> {
     #[cfg(test)]
     if let Some((_, host, _)) = TEST.get() {
@@ -147,6 +148,7 @@ pub(super) fn start_host() -> Option<&'static Host> {
     }
     host::host()
 }
+
 fn running_host() -> Option<&'static Host> {
     #[cfg(test)]
     if let Some((_, host, _)) = TEST.get() {
@@ -154,6 +156,7 @@ fn running_host() -> Option<&'static Host> {
     }
     host::running()
 }
+
 /// The grants the extension workers check. Tests use their worker's own.
 pub(super) fn process_grants() -> &'static Grants {
     #[cfg(test)]
@@ -162,6 +165,7 @@ pub(super) fn process_grants() -> &'static Grants {
     }
     process::grants()
 }
+
 fn save_timeout() -> Duration {
     #[cfg(test)]
     if let Some((.., timeout)) = TEST.get() {
@@ -176,6 +180,7 @@ pub(super) enum Formatter {
     LanguageServer,
     Unavailable(String),
 }
+
 /// The formatter for `language`: the user's choice from `[formatter]`, else
 /// the first installed extension formatter, else the language server.
 pub(super) fn formatter_for(language: &str, choice: Option<&str>) -> Formatter {
@@ -207,6 +212,7 @@ pub(super) struct Consent {
     /// Programs to run, by the names it declares.
     pub programs: Vec<String>,
 }
+
 impl Consent {
     /// Everything `extension` declares that is not granted yet.
     pub fn missing(extension: &'static Extension) -> Self {
@@ -225,6 +231,7 @@ impl Consent {
                 .collect(),
         }
     }
+
     pub fn granted(&self) -> bool {
         !self.environment
             && self
@@ -232,6 +239,7 @@ impl Consent {
                 .iter()
                 .all(|program| process_grants().allows(&self.extension.manifest.id, program))
     }
+
     /// "run direnv and set the environment", naming programs verbatim.
     pub fn what(&self) -> String {
         let mut parts = Vec::new();
@@ -243,6 +251,7 @@ impl Consent {
         }
         parts.join(" and ")
     }
+
     /// The question, titled with the extension's id as well as its name so
     /// the name cannot disguise whose grant it is.
     pub fn prompt(&self, key: String, asks: &str, after: &str) -> super::messages::Prompt {
@@ -282,11 +291,13 @@ pub(super) struct PermissionCommand {
     pub label: String,
     pub keywords: String,
 }
+
 impl PermissionCommand {
     pub fn environment(&self) -> bool {
         self.program.is_empty()
     }
 }
+
 /// "Allow" entries for declared programs the user has not granted, "Stop"
 /// entries for granted ones. Labels name the extension id and the program
 /// verbatim; the display name is only a search keyword.
@@ -352,6 +363,7 @@ pub(super) struct KeyTable {
     bindings: Vec<(KeyChord, &'static Extension, &'static str)>,
     problems: Vec<String>,
 }
+
 impl KeyTable {
     fn listed_shortcuts() -> Vec<KeyChord> {
         let commands = super::navigation_ui::COMMANDS.iter().map(|c| c.shortcut);
@@ -373,6 +385,7 @@ impl KeyTable {
         }
         chords
     }
+
     fn reserved(chord: KeyChord, listed: &[KeyChord]) -> bool {
         let primary = if cfg!(target_os = "macos") {
             chord.primary
@@ -382,6 +395,7 @@ impl KeyTable {
         listed.contains(&chord)
             || primary && matches!(chord.key, Key::Char(c) if PRIMARY_KEYS.contains(c))
     }
+
     pub(super) fn build(registry: &'static Registry) -> Self {
         let listed = Self::listed_shortcuts();
         let mut table = Self {
@@ -409,6 +423,7 @@ impl KeyTable {
         }
         table
     }
+
     fn find(&self, pressed: KeyChord) -> Option<(&'static Extension, &'static str)> {
         self.bindings
             .iter()
@@ -416,6 +431,7 @@ impl KeyTable {
             .map(|(_, extension, command)| (*extension, *command))
     }
 }
+
 fn key_table() -> Option<&'static KeyTable> {
     #[cfg(test)]
     if TEST.get().is_some() {
@@ -436,6 +452,7 @@ fn key_table() -> Option<&'static KeyTable> {
         }
     }
 }
+
 /// The press as a chord, or `None` for keys extensions cannot bind.
 fn pressed(key: KeyCode, modifiers: KeyModifiers) -> Option<KeyChord> {
     let key = match key {
@@ -454,6 +471,7 @@ fn pressed(key: KeyCode, modifiers: KeyModifiers) -> Option<KeyChord> {
         key,
     })
 }
+
 /// The display label of an extension command's shortcut, if bound.
 pub(super) fn extension_shortcut(extension: &str, command: &str) -> Option<String> {
     key_table()?
@@ -495,6 +513,7 @@ impl App {
         }
         self.runtime.lock().unwrap().extensions.settings_applied = true;
     }
+
     /// Lets `extension` set the folder's environment, or stops it, and saves
     /// the choice. Allowing loads it now; stopping removes it.
     pub(super) fn set_environment_permission(&self, extension: &str, allowed: bool) {
@@ -519,6 +538,7 @@ impl App {
             self.decline_environment_prompt();
         }
     }
+
     /// Turns `extension` on or off and saves the choice. Its contributions
     /// (commands, keys, formatters, themes in lists, languages) follow at
     /// once; its worker refuses further work while it is off.
@@ -532,6 +552,7 @@ impl App {
             if enabled { "enabled" } else { "disabled" }
         ));
     }
+
     /// Grants or withdraws `program` for `extension` and saves the choice.
     pub(super) fn set_process_permission(
         &self,
@@ -581,9 +602,11 @@ impl App {
             self.request_environment();
         }
     }
+
     fn pending<R>(&self, f: impl FnOnce(&mut HashMap<u64, Pending>) -> R) -> R {
         f(&mut self.runtime.lock().unwrap().extensions.pending)
     }
+
     fn note_save(&self, document: DocumentId, note: String) {
         self.runtime
             .lock()
@@ -592,6 +615,7 @@ impl App {
             .save_notes
             .insert(document, note);
     }
+
     /// A message to append to the next "Saved" status of `document`.
     pub(super) fn take_save_note(&self, document: DocumentId) -> Option<String> {
         self.runtime
@@ -601,6 +625,7 @@ impl App {
             .save_notes
             .remove(&document)
     }
+
     /// A snapshot of `id` as an extension sees it, with the text kept for later.
     fn extension_snapshot(&self, id: DocumentId) -> Option<(DocumentSnapshot, Arc<String>)> {
         let selection = self.bindings(id)?.selection.get();
@@ -622,6 +647,7 @@ impl App {
             text,
         ))
     }
+
     fn remember(
         &self,
         request: u64,
@@ -741,6 +767,7 @@ impl App {
         let choice = self.preferences.get().formatter.get(language).cloned();
         Some((language, formatter_for(language, choice.as_deref())))
     }
+
     /// Queues a format of `id`. `save` makes it format-on-save.
     fn start_format(
         &self,
@@ -774,6 +801,7 @@ impl App {
         );
         true
     }
+
     /// Formats the active document when an extension is its formatter.
     /// Returns false to let the language server format instead.
     pub(super) fn format_with_extension(&self) -> bool {
@@ -798,6 +826,7 @@ impl App {
             Some((_, Formatter::LanguageServer)) | None => false,
         }
     }
+
     /// Format-on-save. Returns true when the save now waits for the formatter;
     /// the reply, an error or the timeout always ends in a save.
     pub(super) fn format_before_save(&self, id: DocumentId, path: &Path) -> bool {
@@ -870,6 +899,7 @@ impl App {
             }
         }
     }
+
     fn apply_extension_edits(
         &self,
         pending: &Pending,
@@ -889,6 +919,7 @@ impl App {
             label,
         )
     }
+
     fn apply_format(&self, pending: Pending, result: Result<CommandOutcome, String>) {
         let Purpose::Format { save } = &pending.purpose else {
             return;
@@ -925,6 +956,7 @@ impl App {
             self.deferred_save(pending.document, path.clone());
         }
     }
+
     /// Runs a save that format-on-save held back. `save_to` does nothing while
     /// another file operation or a dialog is active, so wait for those.
     fn deferred_save(&self, document: DocumentId, path: PathBuf) {
@@ -1148,6 +1180,7 @@ pub(super) mod tests {
         );
         (app, id)
     }
+
     fn revision(app: &App, id: DocumentId) -> u64 {
         app.runtime
             .lock()
@@ -1426,6 +1459,7 @@ pub(super) mod tests {
         TEST.set(Some((registry, host, timeout)));
         dir
     }
+
     fn open(app: &App, path: &Path, text: &str) -> DocumentId {
         std::fs::write(path, text).unwrap();
         let id = app
@@ -1437,6 +1471,7 @@ pub(super) mod tests {
         app.activate(id);
         id
     }
+
     pub(crate) fn wait(app: &App, what: &str, done: impl Fn(&App) -> bool) {
         let until = Instant::now() + Duration::from_secs(30);
         while !done(app) {
@@ -1450,12 +1485,14 @@ pub(super) mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
     }
+
     fn idle(app: &App) -> bool {
         let rt = app.runtime.lock().unwrap();
         rt.job.is_none()
             && rt.extensions.pending.is_empty()
             && rt.extensions.queued_saves.is_empty()
     }
+
     fn text(app: &App, id: DocumentId) -> String {
         app.bindings(id)
             .unwrap()
@@ -1521,7 +1558,8 @@ pub(super) mod tests {
     #[test]
     fn turning_an_extension_off_hides_its_contributions_and_refuses_its_work() {
         // An id of its own: the enabled set is shared by the whole process.
-        let dir = std::env::temp_dir().join(format!("kureha-extension-toggle-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kureha-extension-toggle-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let folder = dir.join("extensions/test.toggle");
         std::fs::create_dir_all(&folder).unwrap();
@@ -1564,7 +1602,11 @@ pub(super) mod tests {
         app.show_extensions();
         let rows = app.extensions_view_rows();
         assert_eq!(rows.len(), 1);
-        assert!(rows[0].enabled && rows[0].summary.contains("1 command") && rows[0].summary.contains("formats tog"));
+        assert!(
+            rows[0].enabled
+                && rows[0].summary.contains("1 command")
+                && rows[0].summary.contains("formats tog")
+        );
         // A picture of the view when KUREHA_WORKBENCH_PREVIEW names a folder.
         if let Some(folder) = std::env::var_os("KUREHA_WORKBENCH_PREVIEW") {
             use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
@@ -1577,7 +1619,11 @@ pub(super) mod tests {
             );
             pipeline.layout_initial();
             let buffer = pipeline.render().expect("workbench paints");
-            let pixels = buffer.data().chunks_exact(4).flat_map(|p| [p[2], p[1], p[0]]).collect();
+            let pixels = buffer
+                .data()
+                .chunks_exact(4)
+                .flat_map(|p| [p[2], p[1], p[0]])
+                .collect();
             image::RgbImage::from_raw(buffer.width(), buffer.height(), pixels)
                 .unwrap()
                 .save(PathBuf::from(folder).join("extensions-view.png"))
@@ -1587,14 +1633,21 @@ pub(super) mod tests {
 
         app.toggle_extension("test.toggle");
         assert!(!kureha_code::extensions::is_enabled("test.toggle"));
-        assert!(app.preferences.get().disabled_extensions.contains("test.toggle"));
+        assert!(
+            app.preferences
+                .get()
+                .disabled_extensions
+                .contains("test.toggle")
+        );
         assert_eq!(contributes(), (0, false, false));
         assert!(!app.extensions_view_rows()[0].enabled);
         // A caller that missed the switch is still refused by the worker.
         let id = open(&app, &dir.join("a.tog"), "body\n");
         app.activate(id);
         app.run_extension_command("test.toggle", "tog.run");
-        wait(&app, "the refusal", |app| app.status.get().contains("disabled"));
+        wait(&app, "the refusal", |app| {
+            app.status.get().contains("disabled")
+        });
 
         app.toggle_extension("test.toggle");
         assert_eq!(contributes(), (1, true, true));

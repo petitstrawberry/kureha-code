@@ -17,6 +17,7 @@ pub(super) enum RegionId {
     Group(usize),
     Tab(usize, TabId),
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Edge {
     Left,
@@ -24,6 +25,7 @@ pub(super) enum Edge {
     Top,
     Bottom,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Destination {
     Panel,
@@ -31,6 +33,7 @@ enum Destination {
     Split(usize, Edge),
     Outer(Edge),
 }
+
 #[derive(Clone, Copy)]
 struct Gesture {
     group: Option<usize>,
@@ -39,12 +42,14 @@ struct Gesture {
     dragging: bool,
     target: Option<Destination>,
 }
+
 #[derive(Default)]
 struct Model {
     geometry: BTreeMap<RegionId, Rect>,
     gesture: Option<Gesture>,
     press: Option<Point>,
 }
+
 #[derive(Clone, Default)]
 pub(super) struct DragState(Arc<Mutex<Model>>);
 
@@ -75,6 +80,7 @@ impl App {
                 .set((end - start) / (end - start + panel.size.height));
         }
     }
+
     pub(super) fn remember_pane_sizes(&self) {
         fn measure(
             layout: &mut groups::PaneLayout,
@@ -111,6 +117,7 @@ impl App {
                 },
             }
         }
+
         let mut geometry = self.tab_drag.0.lock().unwrap().geometry.clone();
         geometry.retain(|id, _| match id {
             RegionId::Group(g) => self.group_exists(*g),
@@ -122,6 +129,7 @@ impl App {
             self.pane_layout.set(layout);
         }
     }
+
     pub(super) fn tab_region<V: View + Clone>(
         &self,
         child: V,
@@ -149,6 +157,7 @@ impl App {
             accent: self.theme.get().colors().accent,
         }
     }
+
     pub(super) fn tab_drag_event(&self, event: &Event) -> bool {
         let root = self
             .tab_drag
@@ -287,6 +296,7 @@ impl App {
     pub(super) fn move_tab(&self, id: TabId, source: usize, target: usize, index: usize) {
         self.move_tab_internal(id, source, target, index, true);
     }
+
     pub(super) fn move_tab_internal(
         &self,
         id: TabId,
@@ -366,12 +376,15 @@ impl App {
     pub(super) fn split_tab(&self, id: TabId, source: usize, edge: Edge) {
         self.split_tab_beside(id, source, source, edge);
     }
+
     pub(super) fn split_tab_beside(&self, id: TabId, source: usize, beside: usize, edge: Edge) {
         self.split_tab_at(id, source, Some(beside), edge);
     }
+
     pub(super) fn split_tab_outer(&self, id: TabId, source: usize, edge: Edge) {
         self.split_tab_at(id, source, None, edge);
     }
+
     fn split_tab_at(&self, id: TabId, source: usize, beside: Option<usize>, edge: Edge) {
         if self.blocked()
             || !self.group_exists(source)
@@ -500,6 +513,7 @@ struct Region<V> {
     state: DragState,
     accent: Color,
 }
+
 impl<V: View + Clone> View for Region<V> {
     fn create_element(&self) -> Box<dyn Element> {
         let element = Box::new(RenderElement::with_view_children_and_updater(
@@ -527,16 +541,19 @@ impl<V: View + Clone> View for Region<V> {
             element
         }
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
+
 // Collect immediately before dispatch, including positions changed by incremental
 // layout or tab-strip scrolling. Retained GPU layers may paint at local origins.
 struct DragRoot {
     inner: Box<dyn Element>,
     state: DragState,
 }
+
 impl DragRoot {
     fn refresh_geometry(&self) {
         let mut geometry = BTreeMap::new();
@@ -550,66 +567,86 @@ impl DragRoot {
         self.state.0.lock().unwrap().geometry = geometry;
     }
 }
+
 impl Element for DragRoot {
     fn id(&self) -> scarlet_ui::element::ElementId {
         self.inner.id()
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
     fn children(&self) -> &[Box<dyn Element>] {
         self.inner.children()
     }
+
     fn children_mut(&mut self) -> &mut [Box<dyn Element>] {
         self.inner.children_mut()
     }
+
     fn update(&mut self, view: &dyn View) -> UpdateResult {
         self.inner.update(view)
     }
+
     fn rebuild(&mut self) -> UpdateResult {
         self.inner.rebuild()
     }
+
     fn mount(&mut self, ctx: &scarlet_ui::pipeline::MountContext) {
         self.inner.mount(ctx);
     }
+
     fn unmount(&mut self) {
         self.inner.unmount();
     }
+
     fn layout(&mut self, c: LayoutConstraints) -> Size {
         let size = self.inner.layout(c);
         self.refresh_geometry();
         size
     }
+
     fn last_layout_constraints(&self) -> Option<LayoutConstraints> {
         self.inner.last_layout_constraints()
     }
+
     fn set_last_layout_constraints(&mut self, c: LayoutConstraints) {
         self.inner.set_last_layout_constraints(c);
     }
+
     fn set_safe_area_insets(&mut self, insets: EdgeInsets) {
         self.inner.set_safe_area_insets(insets);
     }
+
     fn position(&self) -> Point {
         self.inner.position()
     }
+
     fn set_position(&mut self, p: Point) {
         self.inner.set_position(p);
     }
+
     fn bounds(&self) -> Rect {
         self.inner.bounds()
     }
+
     fn fill_width(&self) -> bool {
         self.inner.fill_width()
     }
+
     fn fill_height(&self) -> bool {
         self.inner.fill_height()
     }
+
     fn flex_factor(&self) -> u32 {
         self.inner.flex_factor()
     }
+
     fn handle_event(&mut self, event: &Event, phase: scarlet_ui::event::Phase) -> bool {
         if phase == scarlet_ui::event::Phase::Capture && matches!(event, Event::Mouse(_)) {
             self.refresh_geometry();
@@ -624,6 +661,7 @@ struct RegionRenderer {
     accent: Color,
     size: Size,
 }
+
 fn collect_geometry(element: &dyn Element, parent: Point, geometry: &mut BTreeMap<RegionId, Rect>) {
     let origin = Point::new(
         parent.x + element.position().x,
@@ -644,6 +682,7 @@ impl ElementRenderObject for RegionRenderer {
     fn layout(&mut self, _: LayoutConstraints) -> Size {
         self.size
     }
+
     fn layout_with_children(
         &mut self,
         c: LayoutConstraints,
@@ -652,16 +691,21 @@ impl ElementRenderObject for RegionRenderer {
         self.size = children[0].layout(c);
         self.size
     }
+
     fn size(&self) -> Size {
         self.size
     }
+
     fn render(&mut self) {}
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
     fn handle_event(&mut self, event: &Event, phase: scarlet_ui::event::Phase) -> bool {
         if !matches!(
             phase,
@@ -727,6 +771,7 @@ impl ElementRenderObject for RegionRenderer {
         }
         false
     }
+
     fn paint_overlay(&self, ctx: &mut PaintContext<'_>, origin: Point) -> bool {
         if self.id == RegionId::Panel
             && self
@@ -835,6 +880,7 @@ mod tests {
     use super::*;
     use scarlet_ui::{event::KeyModifiers, pipeline::RenderingPipeline};
     use std::time::{Duration, Instant};
+
     #[test]
     fn moving_dirty_tabs_keeps_document_history_and_collapses_empty_groups() {
         let app = App::with_document();
@@ -1214,6 +1260,7 @@ mod tests {
                 }
             })
         };
+
         // GPU records may paint each retained layer at a local origin. Painting
         // must never replace layout-space hit regions with those local positions.
         fn paint_locally(element: &dyn Element) {
@@ -1227,6 +1274,7 @@ mod tests {
                 paint_locally(child.as_ref());
             }
         }
+
         let before = app.tab_drag.0.lock().unwrap().geometry.clone();
         paint_locally(pipeline.element_tree().root().unwrap());
         assert_eq!(app.tab_drag.0.lock().unwrap().geometry, before);

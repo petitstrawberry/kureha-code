@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use syntect::{highlighting::HighlightState, parsing::ParseState};
 
 type ParserState = (HighlightState, ParseState);
+
 const CHECKPOINT_LINES: usize = 32;
 
 struct Parsed {
@@ -19,6 +20,7 @@ struct Parsed {
 
 #[derive(Default)]
 pub(super) struct WorkerCache(VecDeque<(u64, Parsed)>);
+
 impl WorkerCache {
     pub fn highlight(&mut self, catalog: &Catalog, request: &Request) -> Highlight {
         let old = self

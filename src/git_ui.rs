@@ -59,6 +59,7 @@ pub(super) struct DiffTab {
     request: u64,
     pub(super) diff: Option<Result<Arc<FileDiff>, String>>,
 }
+
 type DiffAnswer = (TabId, u64, Result<FileDiff, String>);
 
 /// The Git sidebar's own state.
@@ -75,6 +76,7 @@ pub(super) struct Panel {
     busy: Ui<bool>,
     discard: Ui<Option<(PathBuf, Entry)>>,
 }
+
 impl Panel {
     pub(super) fn new() -> Self {
         Self {
@@ -89,6 +91,7 @@ impl Panel {
             discard: Ui::new(generate_state_id(), None),
         }
     }
+
     pub(super) fn listenables(&self) -> Vec<&dyn Listenable> {
         vec![
             &self.owns_focus,
@@ -99,10 +102,12 @@ impl Panel {
             &self.discard,
         ]
     }
+
     /// The sidebar was clicked last, so the editor must not take focus.
     pub(super) fn owns_focus(&self) -> bool {
         self.owns_focus.get()
     }
+
     pub(super) fn blur(&self) {
         self.owns_focus.set(false);
         self.focus_message.set(false);
@@ -115,6 +120,7 @@ pub(super) enum GitRow {
     Header { staged: bool, count: usize },
     File { entry: Entry, staged: bool },
 }
+
 impl GitRow {
     fn key(&self) -> String {
         match self {
@@ -187,10 +193,12 @@ impl App {
                 .map(PathBuf::from)
         })
     }
+
     /// Reads the repository again at the next poll (after a save, say).
     pub(super) fn refresh_git(&self) {
         self.runtime.lock().unwrap().git.requested = None;
     }
+
     /// Sets each explorer row's change from the latest snapshot.
     pub(super) fn apply_git_marks(&self, rows: &mut [Row]) {
         let snapshot = self.runtime.lock().unwrap().git.snapshot.clone();
@@ -202,12 +210,15 @@ impl App {
             };
         }
     }
+
     pub(super) fn poll_git(&self) {
         let folder = self.git_folder();
         let (answer, cleared, failed_to_start) = {
             let mut rt = self.runtime.lock().unwrap();
             let state = &mut rt.git;
-            if state.unavailable.is_some() { return; }
+            if state.unavailable.is_some() {
+                return;
+            }
             let mut failed_to_start = None;
             if !state.started {
                 state.started = true;
@@ -256,7 +267,9 @@ impl App {
             self.status.set(error);
         }
         let mut marks_changed = cleared;
-        if cleared { self.git_panel.notice.set(String::new()); }
+        if cleared {
+            self.git_panel.notice.set(String::new());
+        }
         if cleared && !self.git_status.get().is_empty() {
             self.git_status.set(String::new());
         }
@@ -302,6 +315,7 @@ impl App {
         self.show_sidebar(super::sidebar_ui::Sidebar::Git);
         self.refresh_git();
     }
+
     /// The Git sidebar is shown and holds keyboard focus.
     pub(super) fn git_wants_focus(&self) -> bool {
         self.sidebar.get() == super::sidebar_ui::Sidebar::Git
@@ -351,6 +365,7 @@ impl App {
             }
         }
     }
+
     fn poll_git_writer(&self) {
         let answers = {
             let mut rt = self.runtime.lock().unwrap();
@@ -378,7 +393,12 @@ impl App {
                     if matches!(operation, Operation::Commit(_)) {
                         self.git_panel.message.set(String::new());
                     }
-                    if matches!(operation, Operation::Discard(_) | Operation::Switch { .. } | Operation::CreateBranch { switch: true, .. }) {
+                    if matches!(
+                        operation,
+                        Operation::Discard(_)
+                            | Operation::Switch { .. }
+                            | Operation::CreateBranch { switch: true, .. }
+                    ) {
                         self.reload_switched(&done.changed);
                     }
                     self.git_panel.notice.set(String::new());
@@ -393,6 +413,7 @@ impl App {
             self.git_panel.busy.set(false);
         }
     }
+
     pub(super) fn git_stage(&self, entries: Vec<Entry>, staged: bool) {
         if staged {
             let mut paths = Vec::new();
@@ -407,29 +428,60 @@ impl App {
             ));
         }
     }
+
     fn request_git_discard(&self, entry: Entry) {
         let rt = self.runtime.lock().unwrap();
-        if rt.git.pending != 0 || entry.folder || !matches!(entry.change, Change::Modified | Change::Deleted) { return; }
-        let Some(snapshot) = &rt.git.snapshot else { return; };
-        self.git_panel.discard.set(Some((snapshot.workdir.clone(), entry)));
+        if rt.git.pending != 0
+            || entry.folder
+            || !matches!(entry.change, Change::Modified | Change::Deleted)
+        {
+            return;
+        }
+        let Some(snapshot) = &rt.git.snapshot else {
+            return;
+        };
+        self.git_panel
+            .discard
+            .set(Some((snapshot.workdir.clone(), entry)));
     }
+
     fn confirm_git_discard(&self) {
-        let Some((workdir, entry)) = self.git_panel.discard.get() else { return; };
+        let Some((workdir, entry)) = self.git_panel.discard.get() else {
+            return;
+        };
         self.git_panel.discard.set(None);
         let rt = self.runtime.lock().unwrap();
-        if rt.git.pending != 0 || rt.git.snapshot.as_ref().is_none_or(|s| s.workdir != workdir) { return; }
+        if rt.git.pending != 0
+            || rt
+                .git
+                .snapshot
+                .as_ref()
+                .is_none_or(|s| s.workdir != workdir)
+        {
+            return;
+        }
         let target = kureha_code::git::branch::resolved(&workdir.join(&entry.path));
-        if rt.workspace.documents.iter().any(|doc| doc.editor.dirty() && doc.path.as_ref().is_some_and(|p| kureha_code::git::branch::resolved(p) == target)) {
+        if rt.workspace.documents.iter().any(|doc| {
+            doc.editor.dirty()
+                && doc
+                    .path
+                    .as_ref()
+                    .is_some_and(|p| kureha_code::git::branch::resolved(p) == target)
+        }) {
             drop(rt);
-            self.git_panel.notice.set("Save or undo unsaved editor changes before discarding this file.".into());
+            self.git_panel
+                .notice
+                .set("Save or undo unsaved editor changes before discarding this file.".into());
             return;
         }
         drop(rt);
         self.git_write(Operation::Discard(vec![entry.path]));
     }
+
     pub(super) fn git_can_operate(&self) -> bool {
         self.runtime.lock().unwrap().git.snapshot.is_some()
     }
+
     /// Local branches of the open repository, from the latest read.
     pub(super) fn git_branches(&self) -> Vec<kureha_code::git::branch::Branch> {
         let rt = self.runtime.lock().unwrap();
@@ -439,6 +491,7 @@ impl App {
             .map(|snapshot| snapshot.branches.clone())
             .unwrap_or_default()
     }
+
     /// Files open with unsaved edits, which a switch must not change.
     fn unsaved_files(&self) -> Vec<PathBuf> {
         let rt = self.runtime.lock().unwrap();
@@ -449,16 +502,23 @@ impl App {
             .filter_map(|doc| doc.path.clone())
             .collect()
     }
+
     pub(super) fn switch_branch(&self, name: String) {
-        if self.git_branches().iter().any(|b| b.current && b.name == name) {
+        if self
+            .git_branches()
+            .iter()
+            .any(|b| b.current && b.name == name)
+        {
             return;
         }
         let keep = self.unsaved_files();
         self.git_write(Operation::Switch { name, keep });
     }
+
     pub(super) fn create_branch(&self, name: String) {
         self.git_write(Operation::CreateBranch { name, switch: true });
     }
+
     /// After a switch: open documents follow their files (the switch refused
     /// to touch any with unsaved edits); those whose file is gone close.
     fn reload_switched(&self, changed: &[PathBuf]) {
@@ -540,6 +600,7 @@ impl App {
         }
         self.changed();
     }
+
     fn git_commit(&self) {
         if self.git_panel.busy.get() {
             return;
@@ -551,6 +612,7 @@ impl App {
     pub(super) fn is_git_diff_tab(&self, id: TabId) -> bool {
         self.runtime.lock().unwrap().git.diffs.contains_key(&id)
     }
+
     /// Opens (or shows) the tab for one change.
     fn open_git_diff(&self, entry: &Entry, staged: bool) {
         if entry.folder || self.blocked() {
@@ -593,6 +655,7 @@ impl App {
         self.request_diffs(Some(tab));
         self.changed();
     }
+
     /// Reads the changes shown in diff tabs again (all, or one).
     fn request_diffs(&self, only: Option<TabId>) {
         let mut rt = self.runtime.lock().unwrap();
@@ -626,6 +689,7 @@ impl App {
             }
         }
     }
+
     fn poll_diffs(&self) {
         let changed = {
             let mut rt = self.runtime.lock().unwrap();
@@ -657,6 +721,7 @@ impl App {
             self.changed();
         }
     }
+
     pub(super) fn close_git_diff_tab(&self, id: TabId) -> bool {
         if !self.is_git_diff_tab(id) {
             return false;
@@ -749,7 +814,11 @@ impl App {
         let colors = theme.colors();
         let (snapshot, pending, unavailable) = {
             let rt = self.runtime.lock().unwrap();
-            (rt.git.snapshot.clone(), rt.git.pending, rt.git.unavailable.clone())
+            (
+                rt.git.snapshot.clone(),
+                rt.git.pending,
+                rt.git.unavailable.clone(),
+            )
         };
         let refresh = self.clone();
         let commit = self.clone();
@@ -771,10 +840,9 @@ impl App {
         } else {
             String::new()
         };
-        self.nav.row_inputs.retain(
-            "git:",
-            self.git_panel.rows.get().iter().map(GitRow::key),
-        );
+        self.nav
+            .row_inputs
+            .retain("git:", self.git_panel.rows.get().iter().map(GitRow::key));
         let empty = unavailable.unwrap_or_else(|| match self.git_status.get() {
             status if status.starts_with("Git: ") => status,
             _ if self.runtime.lock().unwrap().explorer.root.is_none() => "No folder open".into(),
@@ -790,8 +858,17 @@ impl App {
         .spacing(2.0);
         let discard = self.clone();
         let cancel_discard = self.git_panel.discard.clone();
-        let discard_target = self.git_panel.discard.get().filter(|(root, _)| snapshot.as_ref().is_some_and(|s| &s.workdir == root));
-        let discard_label = discard_target.as_ref().map_or(String::new(), |(_, entry)| format!("Discard changes to {}? Staged changes are kept.", entry.path.display()));
+        let discard_target = self
+            .git_panel
+            .discard
+            .get()
+            .filter(|(root, _)| snapshot.as_ref().is_some_and(|s| &s.workdir == root));
+        let discard_label = discard_target.as_ref().map_or(String::new(), |(_, entry)| {
+            format!(
+                "Discard changes to {}? Staged changes are kept.",
+                entry.path.display()
+            )
+        });
         let row_theme = theme.clone();
         let body = if_view!(snapshot.is_some(),
             vstack! {
@@ -951,7 +1028,9 @@ impl App {
                 let target = entry.clone();
                 let stage = entry.clone();
                 let discard = self.clone();
-                let discardable = !staged && !entry.folder && matches!(entry.change, Change::Modified | Change::Deleted);
+                let discardable = !staged
+                    && !entry.folder
+                    && matches!(entry.change, Change::Modified | Change::Deleted);
                 let discard_entry = entry.clone();
                 Either::B(
                     hstack! {
@@ -1075,16 +1154,33 @@ mod tests {
         const CHILD: &str = "KUREHA_TEST_GIT_UI_MISSING";
         if std::env::var_os(CHILD).is_none() {
             let output = Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "git_ui::tests::missing_git_disables_operations_without_repeated_errors", "--nocapture"])
-                .env(CHILD, "1").env("PATH", "").output().unwrap();
-            assert!(output.status.success(), "{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+                .args([
+                    "--exact",
+                    "git_ui::tests::missing_git_disables_operations_without_repeated_errors",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("PATH", "")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
         let app = App::with_document();
         app.open_folder(std::env::current_dir().unwrap());
         app.show_git();
-        wait(&app, "Git is disabled", |app| app.runtime.lock().unwrap().git.unavailable.is_some());
-        for _ in 0..3 { app.refresh_git(); app.poll_git(); }
+        wait(&app, "Git is disabled", |app| {
+            app.runtime.lock().unwrap().git.unavailable.is_some()
+        });
+        for _ in 0..3 {
+            app.refresh_git();
+            app.poll_git();
+        }
         app.show_branch_picker();
         app.git_commit();
         assert!(!app.git_can_operate());
@@ -1113,6 +1209,7 @@ mod tests {
             .expect("git is on PATH for these tests");
         assert!(output.status.success(), "git {args:?}");
     }
+
     fn wait(app: &App, what: &str, done: impl Fn(&App) -> bool) {
         let until = Instant::now() + Duration::from_secs(20);
         while !done(app) {
@@ -1126,10 +1223,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+
     /// Writes a PNG of the workbench when `KUREHA_WORKBENCH_PREVIEW` names a folder.
     fn render_preview(app: &App, name: &str) {
         render_preview_sized(app, name, 1100.0);
     }
+
     /// The workbench at `width`; the sidebar takes its minimum below ~860.
     fn render_preview_sized(app: &App, name: &str, width: f32) {
         use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
@@ -1156,6 +1255,7 @@ mod tests {
             .unwrap();
         pipeline.teardown();
     }
+
     fn mark(app: &App, label: &str) -> Option<Change> {
         app.tree_rows
             .get()
@@ -1213,7 +1313,8 @@ mod tests {
 
     #[test]
     fn discard_requires_confirmation_preserves_dirty_buffers_and_reloads_clean_documents() {
-        let dir = std::env::temp_dir().join(format!("kureha-git-discard-ui-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kureha-git-discard-ui-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         git(&dir, &["init", "-q", "-b", "main"]);
         std::fs::write(dir.join("file.txt"), "original\n").unwrap();
@@ -1222,26 +1323,85 @@ mod tests {
         std::fs::write(dir.join("file.txt"), "changed\n").unwrap();
         let app = App::with_document();
         app.open_folder(dir.clone());
-        wait(&app, "status", |app| app.runtime.lock().unwrap().git.snapshot.as_ref().is_some_and(|s| s.unstaged.len() == 1));
-        let entry = app.runtime.lock().unwrap().git.snapshot.as_ref().unwrap().unstaged[0].clone();
+        wait(&app, "status", |app| {
+            app.runtime
+                .lock()
+                .unwrap()
+                .git
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| s.unstaged.len() == 1)
+        });
+        let entry = app
+            .runtime
+            .lock()
+            .unwrap()
+            .git
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .unstaged[0]
+            .clone();
         app.request_git_discard(entry.clone());
-        assert_eq!(std::fs::read_to_string(dir.join("file.txt")).unwrap(), "changed\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("file.txt")).unwrap(),
+            "changed\n"
+        );
         app.git_panel.discard.set(None);
         app.confirm_git_discard();
-        assert_eq!(std::fs::read_to_string(dir.join("file.txt")).unwrap(), "changed\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("file.txt")).unwrap(),
+            "changed\n"
+        );
         app.open(dir.join("file.txt"));
-        wait(&app, "file opens", |app| app.active_id().is_some_and(|id| app.runtime.lock().unwrap().workspace.get(id).unwrap().path.as_ref().is_some_and(|p| p.ends_with("file.txt"))));
+        wait(&app, "file opens", |app| {
+            app.active_id().is_some_and(|id| {
+                app.runtime
+                    .lock()
+                    .unwrap()
+                    .workspace
+                    .get(id)
+                    .unwrap()
+                    .path
+                    .as_ref()
+                    .is_some_and(|p| p.ends_with("file.txt"))
+            })
+        });
         let id = app.active_id().unwrap();
-        app.edit(id, &EditDelta { replaced_range: 0..0, inserted: "unsaved".into() });
+        app.edit(
+            id,
+            &EditDelta {
+                replaced_range: 0..0,
+                inserted: "unsaved".into(),
+            },
+        );
         app.request_git_discard(entry.clone());
         app.confirm_git_discard();
         assert!(app.git_panel.notice.get().contains("unsaved"));
-        assert_eq!(std::fs::read_to_string(dir.join("file.txt")).unwrap(), "changed\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("file.txt")).unwrap(),
+            "changed\n"
+        );
         app.undo(false);
         app.request_git_discard(entry);
         app.confirm_git_discard();
-        wait(&app, "discard reloads editor", |app| app.runtime.lock().unwrap().workspace.get(id).unwrap().editor.document.as_str().as_ref() == "original\n");
-        assert_eq!(std::fs::read_to_string(dir.join("file.txt")).unwrap(), "original\n");
+        wait(&app, "discard reloads editor", |app| {
+            app.runtime
+                .lock()
+                .unwrap()
+                .workspace
+                .get(id)
+                .unwrap()
+                .editor
+                .document
+                .as_str()
+                .as_ref()
+                == "original\n"
+        });
+        assert_eq!(
+            std::fs::read_to_string(dir.join("file.txt")).unwrap(),
+            "original\n"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1329,7 +1489,12 @@ mod tests {
         });
         assert!(app.git_panel.notice.get().is_empty());
         assert!(app.messages.progress.get().is_empty());
-        assert!(!app.messages.history().iter().any(|m| m.text.starts_with("Committed ")));
+        assert!(
+            !app.messages
+                .history()
+                .iter()
+                .any(|m| m.text.starts_with("Committed "))
+        );
         assert_eq!(app.git_panel.message.get(), "");
         assert!(app.git_panel.rows.get().is_empty());
         let log = Command::new("git")
@@ -1353,7 +1518,11 @@ mod tests {
         git(&dir, &["init", "-q", "-b", "main"]);
         git(&dir, &["config", "user.name", "Test"]);
         git(&dir, &["config", "user.email", "test@example.invalid"]);
-        for (file, text) in [("a.txt", "main\n"), ("gone.txt", "only on main\n"), ("draft.txt", "d\n")] {
+        for (file, text) in [
+            ("a.txt", "main\n"),
+            ("gone.txt", "only on main\n"),
+            ("draft.txt", "d\n"),
+        ] {
             std::fs::write(dir.join(file), text).unwrap();
         }
         git(&dir, &["add", "."]);
@@ -1366,9 +1535,14 @@ mod tests {
 
         let app = App::with_document();
         app.open_folder(dir.clone());
-        wait(&app, "the repository is read", |app| app.git_status.get() == "main");
+        wait(&app, "the repository is read", |app| {
+            app.git_status.get() == "main"
+        });
         assert_eq!(
-            app.git_branches().iter().map(|b| (b.name.as_str(), b.current)).collect::<Vec<_>>(),
+            app.git_branches()
+                .iter()
+                .map(|b| (b.name.as_str(), b.current))
+                .collect::<Vec<_>>(),
             [("main", true), ("side", false)]
         );
         let open = |name: &str| {
@@ -1381,9 +1555,17 @@ mod tests {
         let a = open("a.txt");
         let gone = open("gone.txt");
         let draft = open("draft.txt");
-        app.runtime.lock().unwrap().workspace.get_mut(draft).unwrap().editor.edit(
-            &scarlet_ui::views::EditDelta { replaced_range: 0..0, inserted: "unsaved ".into() },
-        );
+        app.runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .get_mut(draft)
+            .unwrap()
+            .editor
+            .edit(&scarlet_ui::views::EditDelta {
+                replaced_range: 0..0,
+                inserted: "unsaved ".into(),
+            });
 
         app.switch_branch("side".into());
         wait(&app, "the switch is done", |app| {
@@ -1391,21 +1573,42 @@ mod tests {
         });
         assert!(app.git_panel.notice.get().is_empty());
         assert!(app.messages.progress.get().is_empty());
-        assert!(!app.messages.history().iter().any(|m| m.text.starts_with("Switched to ")));
+        assert!(
+            !app.messages
+                .history()
+                .iter()
+                .any(|m| m.text.starts_with("Switched to "))
+        );
         let rt = app.runtime.lock().unwrap();
         let doc = rt.workspace.get(a).unwrap();
         assert_eq!(doc.editor.document.as_str(), "side\n");
         assert!(!doc.editor.dirty());
-        assert!(rt.workspace.get(gone).is_none(), "the deleted file's tab closes");
-        assert!(rt.workspace.get(draft).unwrap().editor.dirty(), "unsaved edits stay");
+        assert!(
+            rt.workspace.get(gone).is_none(),
+            "the deleted file's tab closes"
+        );
+        assert!(
+            rt.workspace.get(draft).unwrap().editor.dirty(),
+            "unsaved edits stay"
+        );
         drop(rt);
 
         // Unsaved edits to a file the switch would change stop it.
-        app.runtime.lock().unwrap().workspace.get_mut(a).unwrap().editor.edit(
-            &scarlet_ui::views::EditDelta { replaced_range: 0..0, inserted: "x".into() },
-        );
+        app.runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .get_mut(a)
+            .unwrap()
+            .editor
+            .edit(&scarlet_ui::views::EditDelta {
+                replaced_range: 0..0,
+                inserted: "x".into(),
+            });
         app.switch_branch("main".into());
-        wait(&app, "the switch is refused", |app| !app.git_panel.busy.get() && app.status.get().starts_with("Save or close"));
+        wait(&app, "the switch is refused", |app| {
+            !app.git_panel.busy.get() && app.status.get().starts_with("Save or close")
+        });
         assert_eq!(app.git_status.get(), "side");
         let _ = std::fs::remove_dir_all(&dir);
     }

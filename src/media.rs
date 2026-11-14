@@ -75,6 +75,7 @@ pub fn decode(bytes: &[u8]) -> Result<ImageAsset, String> {
 mod tests {
     use super::*;
     use image::ImageEncoder;
+
     #[test]
     fn decodes_png_pixels_and_alpha_without_treating_binary_as_text() {
         let mut encoded = Vec::new();

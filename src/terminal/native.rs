@@ -14,13 +14,16 @@ pub(crate) struct Pty {
     pid: u32,
     reaped: bool,
 }
+
 fn error(value: impl std::fmt::Debug) -> io::Error {
     io::Error::other(format!("native PTY: {value:?}"))
 }
+
 fn control(handle: &Handle, command: u32, value: usize) -> io::Result<i32> {
     // SAFETY: callers use only fixed scalar PTY/TTY operations, never pointers.
     unsafe { handle.control(command, value) }.map_err(error)
 }
+
 impl Pty {
     pub fn open(cwd: &Path, size: (u16, u16)) -> io::Result<Self> {
         // Validate cwd before clone; the child must use no allocator or locks.
@@ -133,6 +136,7 @@ impl Pty {
             reaped: false,
         })
     }
+
     pub fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         self.master
             .as_ref()
@@ -142,6 +146,7 @@ impl Pty {
             .read(bytes)
             .map_err(stream_error)
     }
+
     pub fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.master
             .as_ref()
@@ -151,6 +156,7 @@ impl Pty {
             .write(bytes)
             .map_err(stream_error)
     }
+
     pub fn resize(&self, cols: u16, rows: u16) -> io::Result<()> {
         control(
             self.master.as_ref().unwrap(),
@@ -159,6 +165,7 @@ impl Pty {
         )
         .map(|_| ())
     }
+
     pub fn try_wait(&mut self) -> io::Result<Option<Option<i32>>> {
         let (pid, status) = waitpid(self.pid as i32, WAIT_NOHANG);
         if pid < 0 {
@@ -171,6 +178,7 @@ impl Pty {
         Ok(Some(Some(status)))
     }
 }
+
 unsafe fn child_exit() -> ! {
     // SAFETY: terminate only the copied child process; no borrowed parent memory.
     unsafe {
@@ -180,6 +188,7 @@ unsafe fn child_exit() -> ! {
         std::hint::spin_loop();
     }
 }
+
 fn stream_error(value: scarlet_os::handle::capability::StreamError) -> io::Error {
     use scarlet_os::handle::capability::StreamError;
     match value {
@@ -188,6 +197,7 @@ fn stream_error(value: scarlet_os::handle::capability::StreamError) -> io::Error
         other => error(other),
     }
 }
+
 impl Drop for Pty {
     fn drop(&mut self) {
         let foreground = self

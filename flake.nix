@@ -64,7 +64,7 @@
           src = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
-              ./Cargo.toml ./Cargo.lock ./build.rs ./src ./assets ./tests
+              ./Cargo.toml ./Cargo.lock ./build.rs ./src ./assets ./tests ./vendor
               ./appcoat.toml ./LICENSE
               # Existing editor tests open these repository fixtures.
               ./README.md ./docs/screenshots/panel-bottom.png
@@ -75,7 +75,7 @@
             pname = "kureha-code-unwrapped";
             version = manifest.package.version;
             inherit src;
-            cargoHash = "sha256-P+kshEquA1RcySyZEHssD2hDj4btckNjit2RmLps7HE=";
+            cargoHash = "sha256-YDE6HVvj395SevaLvjh710nJy61gP4daH8rGqm459w8=";
             nativeBuildInputs = [ pkgs.pkg-config ];
             # Git tests build their fixture repositories with the git command line.
             nativeCheckInputs = [ pkgs.python3 pkgs.git ];

@@ -13,28 +13,33 @@ struct Key {
     path: Option<PathBuf>,
     theme: Theme,
 }
+
 struct Entry {
     key: Key,
     document: Arc<Document>,
     pending: BTreeSet<String>,
 }
+
 struct Job {
     id: DocumentId,
     key: Key,
     receiver: mpsc::Receiver<Arc<Document>>,
     cancel: Arc<AtomicBool>,
 }
+
 impl Drop for Job {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
 }
+
 struct ImageJob {
     id: DocumentId,
     path: Option<PathBuf>,
     destination: String,
     receiver: mpsc::Receiver<markdown_resources::Resource>,
 }
+
 #[derive(Clone)]
 pub(super) struct PreviewTab {
     pub document: DocumentId,
@@ -42,6 +47,7 @@ pub(super) struct PreviewTab {
     pub follow_file: bool,
     pub sync_position: bool,
 }
+
 #[derive(Clone)]
 pub(super) struct PreviewView {
     pub position: Arc<Mutex<crate::markdown_view::PreviewPosition>>,
@@ -52,6 +58,7 @@ pub(super) struct PreviewView {
     last_geometry: u64,
     last_document: Option<DocumentId>,
 }
+
 impl Default for PreviewView {
     fn default() -> Self {
         Self {
@@ -65,6 +72,7 @@ impl Default for PreviewView {
         }
     }
 }
+
 impl PreviewView {
     fn reveal(&mut self, y: f32) {
         let height = self.position.lock().unwrap().viewport.size.height.max(1.0);
@@ -75,6 +83,7 @@ impl PreviewView {
         }
     }
 }
+
 #[derive(Default)]
 pub(super) struct Previews {
     pub tabs: BTreeMap<TabId, PreviewTab>,
@@ -84,6 +93,7 @@ pub(super) struct Previews {
     image_job: Option<ImageJob>,
     links: Vec<(DocumentId, String)>,
 }
+
 impl Previews {
     pub fn remove(&mut self, id: DocumentId) {
         self.entries.remove(&id);
@@ -94,6 +104,7 @@ impl Previews {
             self.job = None;
         }
     }
+
     pub fn move_view(&mut self, tab: TabId, source: usize, target: usize, copy: bool) {
         if source == target {
             return;
@@ -114,17 +125,21 @@ impl Previews {
             self.views.insert((tab, target), view);
         }
     }
+
     pub fn views_forget(&mut self, tab: TabId, group: usize) {
         self.views.remove(&(tab, group));
     }
+
     pub fn retire_pane(&mut self, group: usize) {
         self.views.retain(|(_, g), _| *g != group);
     }
+
     pub fn remove_tab(&mut self, tab: TabId) {
         self.tabs.remove(&tab);
         self.views.retain(|(t, _), _| *t != tab);
     }
 }
+
 impl Runtime {
     pub(super) fn document_for_tab(&self, tab: TabId) -> Option<DocumentId> {
         self.markdown
@@ -134,25 +149,31 @@ impl Runtime {
             .or_else(|| self.workspace.get(tab).map(|d| d.id))
     }
 }
+
 impl App {
     pub(super) fn group_document(&self, group: usize) -> Option<DocumentId> {
         self.group_id(group)
             .and_then(|tab| self.runtime.lock().unwrap().document_for_tab(tab))
     }
+
     pub(super) fn preview_tab(&self, group: usize) -> Option<TabId> {
         self.group_id(group)
             .filter(|tab| self.runtime.lock().unwrap().markdown.tabs.contains_key(tab))
     }
+
     #[cfg(test)]
     pub(super) fn markdown_previewing(&self, id: DocumentId, group: usize) -> bool {
         self.preview_tab(group).is_some() && self.group_document(group) == Some(id)
     }
+
     pub(super) fn open_markdown_preview(&self) {
         self.open_preview(false);
     }
+
     pub(super) fn markdown_preview_to_side(&self) {
         self.open_preview(true);
     }
+
     fn open_preview(&self, beside: bool) {
         if self.blocked() {
             return;
@@ -219,6 +240,7 @@ impl App {
         self.poll_markdown();
         self.changed();
     }
+
     fn sync_preview_files(&self) {
         let panes = self.panes.get();
         let order = self.pane_order();
@@ -264,6 +286,7 @@ impl App {
             self.changed();
         }
     }
+
     fn preview_follow(&self, group: usize) {
         let Some(tab) = self.preview_tab(group) else {
             return;
@@ -274,6 +297,7 @@ impl App {
         self.sync_preview_files();
         self.changed();
     }
+
     fn preview_scroll_sync(&self, group: usize) {
         let Some(tab) = self.preview_tab(group) else {
             return;
@@ -291,12 +315,15 @@ impl App {
         drop(rt);
         self.changed();
     }
+
     pub(super) fn markdown_follow_toggle(&self) {
         self.preview_follow(self.focused_group.get());
     }
+
     pub(super) fn markdown_scroll_toggle(&self) {
         self.preview_scroll_sync(self.focused_group.get());
     }
+
     pub(super) fn markdown_source(&self) {
         let Some(tab) = self.preview_tab(self.focused_group.get()) else {
             return;
@@ -307,6 +334,7 @@ impl App {
         }
         self.activate(preview.document);
     }
+
     pub(super) fn refresh_markdown_preview(&self) {
         let Some(id) = self.active_id() else {
             return;
@@ -315,6 +343,7 @@ impl App {
         self.poll_markdown();
         self.changed();
     }
+
     pub(super) fn poll_markdown(&self) {
         self.sync_preview_files();
         let visible: BTreeSet<_> = self
@@ -547,6 +576,7 @@ impl App {
         }
         self.sync_preview_position();
     }
+
     fn preview_source_line_height(&self) -> f32 {
         let font_size = self.theme.get().editor_font_size();
         self.document_font()
@@ -557,6 +587,7 @@ impl App {
             )
             .max(1) as f32
     }
+
     fn request_preview_scroll(&self, group: usize, y: f32) {
         let Some(tab) = self.preview_tab(group) else {
             return;
@@ -589,6 +620,7 @@ impl App {
             }
         }
     }
+
     fn sync_preview_position(&self) {
         let active = self.panes.get();
         let previews: Vec<_> = {
@@ -681,6 +713,7 @@ impl App {
             }
         }
     }
+
     fn open_markdown_link(&self, id: DocumentId, link: &str) {
         if link.starts_with("https://")
             || link.starts_with("http://")
@@ -713,6 +746,7 @@ impl App {
             Err(error) => self.status.set(error),
         }
     }
+
     pub(super) fn markdown_view(&self, tab: TabId, group: usize) -> impl View + Clone + use<> {
         LivePreview {
             app: self.clone(),
@@ -720,6 +754,7 @@ impl App {
             group,
         }
     }
+
     fn markdown_content(&self, tab: TabId, group: usize) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let (id, view, document) = {
@@ -776,6 +811,7 @@ struct LivePreview {
     tab: TabId,
     group: usize,
 }
+
 impl View for LivePreview {
     fn create_element(&self) -> Box<dyn Element> {
         Box::new(scarlet_ui::element::ComponentElement::new_with_builder(
@@ -783,9 +819,11 @@ impl View for LivePreview {
             |view| Box::new(view.app.markdown_content(view.tab, view.group)),
         ))
     }
+
     fn listenables(&self) -> Vec<&dyn Listenable> {
         vec![&self.app.markdown_revision]
     }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -795,6 +833,7 @@ impl View for LivePreview {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
     fn preview_state(app: &App, group: usize) -> PreviewView {
         let tab = app.preview_tab(group).unwrap();
         app.runtime
@@ -806,6 +845,7 @@ mod tests {
             .or_default()
             .clone()
     }
+
     fn settle(app: &App) {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
@@ -820,6 +860,7 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
     }
+
     #[test]
     fn preview_tracks_unsaved_edits_undo_theme_moves_and_cleanup() {
         let app = App::with_document();
@@ -901,6 +942,7 @@ mod tests {
         );
         assert!(app.runtime.lock().unwrap().markdown.tabs.is_empty());
     }
+
     #[test]
     fn stale_worker_results_never_replace_latest_revision() {
         let app = App::with_document();
@@ -947,6 +989,7 @@ mod tests {
                 .is_empty()
         );
     }
+
     #[test]
     #[cfg(not(target_os = "scarlet"))]
     fn slow_image_response_does_not_delay_text_revisions() {
@@ -1024,6 +1067,7 @@ mod tests {
                 .is_ok()
         );
     }
+
     #[test]
     #[ignore = "manual native renderer review; writes KUREHA_MARKDOWN_PREVIEW PNG"]
     fn markdown_preview_screenshot() {
@@ -1065,6 +1109,7 @@ mod tests {
         .unwrap();
         pipeline.teardown();
     }
+
     #[test]
     fn preview_is_an_ordinary_tab_with_its_own_identity_and_document_lifetime() {
         let app = App::new();
@@ -1117,6 +1162,7 @@ mod tests {
         assert_eq!(app.group_id(0), Some(source));
         assert!(app.runtime.lock().unwrap().markdown.tabs.is_empty());
     }
+
     #[test]
     fn preview_file_follow_and_pin_do_not_replace_other_tabs() {
         let app = App::new();
@@ -1146,6 +1192,7 @@ mod tests {
         app.close_active();
         assert!(app.runtime.lock().unwrap().workspace.get(first).is_some());
     }
+
     #[test]
     fn typing_and_async_preview_updates_do_not_rebuild_workbench() {
         use scarlet_ui::pipeline::RenderingPipeline;
@@ -1298,6 +1345,7 @@ mod tests {
             "reveal never settled"
         );
         let source_before = bindings.scroll.get().y;
+
         fn viewport_point(e: &dyn Element, origin: Point) -> Option<Point> {
             let point = Point::new(origin.x + e.position().x, origin.y + e.position().y);
             if e.type_name_debug().contains("ScrollViewRenderObject") && contains_markdown(e) {
@@ -1307,12 +1355,14 @@ mod tests {
                 .iter()
                 .find_map(|child| viewport_point(child.as_ref(), point))
         }
+
         fn contains_markdown(e: &dyn Element) -> bool {
             e.type_name_debug().contains("markdown_view::Renderer")
                 || e.children()
                     .iter()
                     .any(|child| contains_markdown(child.as_ref()))
         }
+
         let point = viewport_point(pipeline.element_tree().root().unwrap(), Point::ZERO)
             .expect("preview viewport");
         let wheel = |pipeline: &mut RenderingPipeline| {
@@ -1381,6 +1431,7 @@ mod tests {
         assert_eq!(position.lock().unwrap().viewport.origin.y, 0.0);
         pipeline.teardown();
     }
+
     #[test]
     #[ignore = "release CPU submission profiling; no GPU timing claim"]
     fn preview_frame_profile() {
@@ -1390,12 +1441,16 @@ mod tests {
             renderer::{BackendFrame, PaintBackend, PaintContext},
         };
         use std::{cell::Cell, rc::Rc};
+
         struct CountBackend(Rc<Cell<usize>>);
+
         impl PaintBackend for CountBackend {
             fn supports_retained_display_lists(&self) -> bool {
                 true
             }
+
             fn resize(&mut self, _: Size, _: u32) {}
+
             fn render<'a>(
                 &'a mut self,
                 _: &PaintContext<'_>,
@@ -1407,6 +1462,7 @@ mod tests {
                 Ok(BackendFrame::External)
             }
         }
+
         let app = App::new();
         app.complete_open(
             0,

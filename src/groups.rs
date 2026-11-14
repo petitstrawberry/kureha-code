@@ -1,6 +1,7 @@
 //! Pane IDs remain stable when neighbours close, so async opens cannot target a
 //! newly-created pane accidentally. Each pane owns its caret and viewport.
 use super::*;
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum PaneLayout {
     Leaf(usize),
@@ -12,6 +13,7 @@ pub(super) enum PaneLayout {
         second: Box<PaneLayout>,
     },
 }
+
 impl PaneLayout {
     pub fn leaves(&self) -> Vec<usize> {
         match self {
@@ -23,6 +25,7 @@ impl PaneLayout {
             }
         }
     }
+
     pub fn split(&mut self, beside: usize, group: usize, edge: tab_drag::Edge) {
         match self {
             Self::Leaf(id) if *id == beside => {
@@ -35,6 +38,7 @@ impl PaneLayout {
             _ => {}
         }
     }
+
     pub fn wrap(&mut self, group: usize, edge: tab_drag::Edge) {
         let old = Box::new(self.clone());
         let new = Box::new(Self::Leaf(group));
@@ -51,6 +55,7 @@ impl PaneLayout {
             second,
         };
     }
+
     pub fn retain(&self, keep: &impl Fn(usize) -> bool) -> Option<Self> {
         match self {
             Self::Leaf(group) => keep(*group).then(|| self.clone()),
@@ -73,6 +78,7 @@ impl PaneLayout {
         }
     }
 }
+
 impl App {
     pub(super) fn pane_order(&self) -> Vec<usize> {
         self.pane_layout
@@ -97,15 +103,19 @@ impl App {
                 .clone(),
         )
     }
+
     pub(super) fn group_exists(&self, group: usize) -> bool {
         self.pane_layout.get().leaves().contains(&group)
     }
+
     pub(super) fn group_id(&self, group: usize) -> Option<TabId> {
         self.panes.get().get(group).copied().flatten()
     }
+
     pub(super) fn set_group_id(&self, group: usize, id: TabId) {
         self.panes.update(|panes| panes[group] = Some(id));
     }
+
     pub(super) fn focus_group(&self, group: usize) {
         if !self.group_exists(group) {
             return;
@@ -119,12 +129,14 @@ impl App {
         }
         self.focus_group_terminal(group);
     }
+
     pub(super) fn allocate_group(&self, id: TabId) -> usize {
         let group = self.panes.get().len();
         self.runtime.lock().unwrap().group_tabs.push(vec![id]);
         self.panes.update(|panes| panes.push(Some(id)));
         group
     }
+
     pub(super) fn add_group(&self, id: TabId, beside: usize, edge: tab_drag::Edge) -> usize {
         self.remember_pane_sizes();
         let group = self.allocate_group(id);
@@ -132,6 +144,7 @@ impl App {
             .update(|layout| layout.split(beside, group, edge));
         group
     }
+
     pub(super) fn split_editor(&self, down: bool) {
         if self.blocked() {
             return;
@@ -174,6 +187,7 @@ impl App {
             .into(),
         );
     }
+
     /// Remove only a view; tabs and PTYs migrate to its nearest neighbour.
     pub(super) fn close_split(&self) {
         let order = self.pane_order();
@@ -202,6 +216,7 @@ impl App {
         self.status
             .set("Pane closed; tabs moved to neighbour".into());
     }
+
     pub(super) fn retire_empty_group(&self, group: usize) {
         if self.pane_order().len() < 2 {
             return;
@@ -222,6 +237,7 @@ impl App {
             self.focus_group(self.pane_order()[0]);
         }
     }
+
     pub(super) fn focus_other_group(&self) {
         let order = self.pane_order();
         let index = order
@@ -230,6 +246,7 @@ impl App {
             .unwrap_or(0);
         self.focus_group(order[(index + 1) % order.len()]);
     }
+
     pub(super) fn focus_pane_number(&self, number: usize) {
         if let Some(group) = self.pane_order().get(number).copied() {
             self.focus_group(group);
@@ -237,6 +254,7 @@ impl App {
             self.split_editor(false);
         }
     }
+
     pub(super) fn close_shared_tab(&self, tab: TabId) -> bool {
         if self.blocked() {
             return false;
@@ -279,6 +297,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn three_views_share_edits_but_keep_viewports_and_transform_every_selection() {
         let app = App::with_document();
@@ -318,6 +337,7 @@ mod tests {
         assert_eq!(app.pane_order(), vec![0, 2]);
         assert_eq!(app.bindings_for(id, 2).unwrap().scroll.get().y, 40.0);
     }
+
     #[test]
     fn async_open_cannot_target_a_new_pane_after_its_origin_closes() {
         let app = App::with_document();

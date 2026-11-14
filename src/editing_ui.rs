@@ -11,7 +11,9 @@ pub(super) enum Command {
     MoveUp,
     MoveDown,
     Newline,
+    BackspaceIndent,
 }
+
 impl App {
     pub(super) fn edit_command(&self, command: Command) {
         let Some(id) = self.active_id() else {
@@ -24,6 +26,7 @@ impl App {
             return;
         };
         let selection = bindings.selection.get();
+        let preferences = self.preferences.get();
         {
             let mut rt = self.runtime.lock().unwrap();
             let Some(doc) = rt.workspace.get_mut(id) else {
@@ -40,15 +43,28 @@ impl App {
                         .and_then(|s| s.to_str())
                         .unwrap_or(""),
                 ),
-                Command::Indent => editing::indent(&text, selection),
-                Command::Outdent => editing::outdent(&text, selection),
+                Command::Indent => editing::indent_with(
+                    &text,
+                    selection,
+                    preferences.insert_spaces,
+                    preferences.tab_size,
+                ),
+                Command::Outdent => editing::outdent_with(&text, selection, preferences.tab_size),
                 Command::DuplicateUp => editing::duplicate_lines(&text, selection, Direction::Up),
                 Command::DuplicateDown => {
                     editing::duplicate_lines(&text, selection, Direction::Down)
                 }
                 Command::MoveUp => editing::move_lines(&text, selection, Direction::Up),
                 Command::MoveDown => editing::move_lines(&text, selection, Direction::Down),
-                Command::Newline => editing::newline(&text, selection),
+                Command::BackspaceIndent => {
+                    editing::backspace_indent(&text, selection, preferences.tab_size)
+                }
+                Command::Newline => editing::newline_with(
+                    &text,
+                    selection,
+                    preferences.insert_spaces,
+                    preferences.tab_size,
+                ),
             };
             let Some(plan) = plan else {
                 return;
@@ -71,6 +87,7 @@ impl App {
         self.dismiss_language_panel();
         self.changed();
     }
+
     pub(super) fn code_edit_key(
         &self,
         key: KeyCode,
@@ -93,6 +110,22 @@ impl App {
             }
         } else if !modifiers.alt && !modifiers.control && !modifiers.super_key {
             match key {
+                KeyCode::Backspace
+                    if !modifiers.shift
+                        && self
+                            .active_id()
+                            .and_then(|id| self.bindings(id))
+                            .is_some_and(|b| {
+                                editing::backspace_indent(
+                                    &b.document.get().as_str(),
+                                    b.selection.get(),
+                                    self.preferences.get().tab_size,
+                                )
+                                .is_some()
+                            }) =>
+                {
+                    Some(Command::BackspaceIndent)
+                }
                 KeyCode::Enter if !modifiers.shift => Some(Command::Newline),
                 KeyCode::Tab if modifiers.shift => Some(Command::Outdent),
                 KeyCode::Tab

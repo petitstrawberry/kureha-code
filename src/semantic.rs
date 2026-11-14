@@ -76,9 +76,7 @@ pub fn decode(
                 "parameter" => "variable.parameter",
                 "variable" => "variable.other",
                 "property" | "event" => "variable.other.member",
-                "decorator" | "attribute" | "derive" | "deriveHelper" => {
-                    "entity.name.function"
-                }
+                "decorator" | "attribute" | "derive" | "deriveHelper" => "entity.name.function",
                 "lifetime" | "label" => "storage.modifier",
                 // Keep richer lexical string/comment coloring (escapes, doc fences).
                 "comment" | "string" | "regexp" | "number" => return None,

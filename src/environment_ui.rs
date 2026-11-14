@@ -459,6 +459,7 @@ mod tests {
             .as_ref()
             .map(|(id, ..)| *id)
     }
+
     /// What a program Kureha starts now prints for `script`.
     fn shell(script: &str) -> String {
         let mut command = std::process::Command::new("sh");
@@ -466,6 +467,7 @@ mod tests {
         environment::apply(&mut command);
         String::from_utf8(command.output().unwrap().stdout).unwrap()
     }
+
     fn prompt(app: &App, key: &str) -> Option<crate::messages::Prompt> {
         app.messages
             .prompts
@@ -473,6 +475,7 @@ mod tests {
             .into_iter()
             .find(|p| p.key == key)
     }
+
     fn latest(app: &App) -> (Level, String) {
         let message = app.messages.history().remove(0);
         (message.level, message.text)

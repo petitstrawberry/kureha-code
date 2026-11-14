@@ -12,6 +12,9 @@ pub(super) struct Preferences {
     pub wrap_at_words: bool,
     pub indent_depth_background: bool,
     pub active_block_guide: bool,
+    pub inline_type_hints: bool,
+    pub insert_spaces: bool,
+    pub tab_size: usize,
     /// Format with the chosen formatter before each save (extension formatters).
     pub format_on_save: bool,
     /// Formatter per language id: `"lsp"` or an extension id.
@@ -24,6 +27,7 @@ pub(super) struct Preferences {
     /// environment of the programs Kureha starts (direnv's, say).
     pub allow_environment: BTreeSet<String>,
 }
+
 #[derive(Clone, Debug)]
 pub(super) enum Change {
     Color(Option<String>),
@@ -34,6 +38,9 @@ pub(super) enum Change {
     WrapAtWords(bool),
     IndentDepthBackground(bool),
     ActiveBlockGuide(bool),
+    InlineTypeHints(bool),
+    InsertSpaces(bool),
+    TabSize(usize),
     FormatOnSave(bool),
     /// Grants or withdraws one program for one extension.
     AllowProcess {
@@ -42,13 +49,17 @@ pub(super) enum Change {
         allowed: bool,
     },
     /// Turns an extension on or off.
-    ExtensionEnabled { extension: String, enabled: bool },
+    ExtensionEnabled {
+        extension: String,
+        enabled: bool,
+    },
     /// Lets an extension set the environment, or stops it.
     AllowEnvironment {
         extension: String,
         allowed: bool,
     },
 }
+
 impl Default for Preferences {
     fn default() -> Self {
         Self {
@@ -60,6 +71,9 @@ impl Default for Preferences {
             wrap_at_words: true,
             indent_depth_background: false,
             active_block_guide: false,
+            inline_type_hints: false,
+            insert_spaces: true,
+            tab_size: 4,
             format_on_save: false,
             formatter: BTreeMap::new(),
             allow_process: BTreeMap::new(),
@@ -68,6 +82,7 @@ impl Default for Preferences {
         }
     }
 }
+
 impl Preferences {
     pub fn wrap_mode(&self) -> scarlet_ui::WrapMode {
         if !self.word_wrap {
@@ -78,6 +93,7 @@ impl Preferences {
             scarlet_ui::WrapMode::CodeAnywhere
         }
     }
+
     pub fn parse(source: &str) -> Result<Self, String> {
         let value: toml::Table = source
             .parse()
@@ -118,12 +134,31 @@ impl Preferences {
                         .ok_or("hide_minimap must be true or false")?
                 }
                 "indent_depth_background" => {
-                    result.indent_depth_background = value.as_bool()
+                    result.indent_depth_background = value
+                        .as_bool()
                         .ok_or("indent_depth_background must be true or false")?;
                 }
                 "active_block_guide" => {
-                    result.active_block_guide = value.as_bool()
+                    result.active_block_guide = value
+                        .as_bool()
                         .ok_or("active_block_guide must be true or false")?;
+                }
+                "inline_type_hints" => {
+                    result.inline_type_hints = value
+                        .as_bool()
+                        .ok_or("inline_type_hints must be true or false")?;
+                }
+                "insert_spaces" => {
+                    result.insert_spaces = value
+                        .as_bool()
+                        .ok_or("insert_spaces must be true or false")?;
+                }
+                "tab_size" => {
+                    result.tab_size = value
+                        .as_integer()
+                        .filter(|n| (1..=8).contains(n))
+                        .ok_or("tab_size must be between 1 and 8")?
+                        as usize;
                 }
                 "format_on_save" => {
                     result.format_on_save = value
@@ -206,6 +241,7 @@ impl Preferences {
         }
         Ok(result)
     }
+
     pub fn change(&mut self, change: &Change) {
         match change {
             Change::Color(value) => {
@@ -219,6 +255,9 @@ impl Preferences {
             Change::WrapAtWords(enabled) => self.wrap_at_words = *enabled,
             Change::IndentDepthBackground(enabled) => self.indent_depth_background = *enabled,
             Change::ActiveBlockGuide(enabled) => self.active_block_guide = *enabled,
+            Change::InlineTypeHints(enabled) => self.inline_type_hints = *enabled,
+            Change::InsertSpaces(enabled) => self.insert_spaces = *enabled,
+            Change::TabSize(size) => self.tab_size = (*size).clamp(1, 8),
             Change::FormatOnSave(enabled) => self.format_on_save = *enabled,
             Change::AllowProcess {
                 extension,
@@ -251,6 +290,7 @@ impl Preferences {
             }
         }
     }
+
     pub fn apply(&self, custom: Theme) -> Result<Theme, String> {
         let mut theme = match &self.color_theme {
             Some(name) => named_theme(name)?,
@@ -265,6 +305,7 @@ impl Preferences {
         Ok(theme)
     }
 }
+
 pub(super) fn named_theme(name: &str) -> Result<Theme, String> {
     match name.to_ascii_lowercase().as_str() {
         "light" => Ok(Theme::Light),
@@ -278,6 +319,25 @@ pub(super) fn named_theme(name: &str) -> Result<Theme, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indentation_defaults_to_four_spaces_and_validates_settings() {
+        let defaults = Preferences::default();
+        assert!(defaults.insert_spaces);
+        assert_eq!(defaults.tab_size, 4);
+        let configured = Preferences::parse("insert_spaces=false\ntab_size=2").unwrap();
+        assert!(!configured.insert_spaces);
+        assert_eq!(configured.tab_size, 2);
+        for invalid in [
+            "tab_size=0",
+            "tab_size=9",
+            "tab_size=2.5",
+            "insert_spaces='true'",
+        ] {
+            assert!(Preferences::parse(invalid).is_err(), "{invalid}");
+        }
+    }
+
     #[test]
     fn wrapping_defaults_on_and_validates_persisted_choices() {
         assert!(Preferences::parse("").unwrap().word_wrap);
@@ -301,6 +361,7 @@ mod tests {
         preferences.change(&Change::Color(Some("Nord".into())));
         assert!(!preferences.word_wrap);
     }
+
     #[test]
     fn indent_decorations_are_opt_in_independent_and_validate_types() {
         let mut p = Preferences::parse("").unwrap();
@@ -310,7 +371,8 @@ mod tests {
         p.change(&Change::ActiveBlockGuide(true));
         p.change(&Change::IndentDepthBackground(false));
         assert!(!p.indent_depth_background && p.active_block_guide);
-        let p = Preferences::parse("indent_depth_background=true\nactive_block_guide=true").unwrap();
+        let p =
+            Preferences::parse("indent_depth_background=true\nactive_block_guide=true").unwrap();
         assert!(p.indent_depth_background && p.active_block_guide);
         for key in ["indent_depth_background", "active_block_guide"] {
             for bad in ["1", "'true'", "[]"] {
@@ -318,6 +380,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn formatter_choices_are_validated() {
         let preferences = Preferences::parse(
@@ -331,6 +394,7 @@ mod tests {
         assert!(Preferences::parse("[formatter]\njson = \"Not An Id\"").is_err());
         assert!(Preferences::parse("formatter = \"lsp\"").is_err());
     }
+
     #[test]
     fn process_grants_are_validated_and_changed_one_program_at_a_time() {
         let preferences = Preferences::parse(

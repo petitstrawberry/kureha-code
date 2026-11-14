@@ -84,12 +84,14 @@ impl Explorer {
         }
         self.generation
     }
+
     pub fn reset(&mut self) -> u64 {
         self.generation += 1;
         self.root = None;
         self.directories.clear();
         self.generation
     }
+
     pub fn set_root(&mut self, generation: u64, path: PathBuf, listing: Listing) -> bool {
         if self.generation != generation {
             return false;
@@ -106,6 +108,7 @@ impl Explorer {
         self.complete(generation, &path, Ok(listing));
         true
     }
+
     pub fn toggle(&mut self, path: &Path, depth: usize) -> Result<bool, String> {
         let count: usize = self
             .directories
@@ -126,6 +129,7 @@ impl Explorer {
         directory.loading = true;
         Ok(true)
     }
+
     pub fn complete(
         &mut self,
         generation: u64,
@@ -160,6 +164,7 @@ impl Explorer {
         }
         true
     }
+
     pub fn rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
         if let Some(root) = &self.root {
@@ -167,6 +172,7 @@ impl Explorer {
         }
         rows
     }
+
     fn append(&self, path: &Path, depth: usize, is_directory: bool, rows: &mut Vec<Row>) {
         let directory = self.directories.get(path);
         let expanded = directory.is_some_and(|d| d.expanded);
@@ -224,6 +230,7 @@ impl Explorer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn traversal_is_lazy_and_old_root_results_are_rejected() {
         let mut explorer = Explorer::default();
@@ -253,6 +260,7 @@ mod tests {
         ));
         assert!(explorer.rows().is_empty());
     }
+
     #[test]
     fn enumeration_caps_large_directories_without_scanning_children() {
         let root = std::env::temp_dir().join(format!("kureha-tree-{}", std::process::id()));
