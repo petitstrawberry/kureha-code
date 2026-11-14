@@ -26,6 +26,23 @@ fn workbench_preview() {
             "name='Code Colors'\nbase='light'\n[code]\ntheme='tokyo-night'\nfont_size=18",
         )
         .unwrap()]);
+    // Optional custom candidates use the same native workbench fixture.
+    let themes: Vec<_> = if let Some(path) = std::env::var_os("KUREHA_PREVIEW_THEME_DIR") {
+        let mut paths: Vec<_> = std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        paths.sort();
+        paths
+            .into_iter()
+            .map(|path| {
+                kureha_code::theme::parse_theme(&std::fs::read_to_string(path).unwrap()).unwrap()
+            })
+            .collect()
+    } else {
+        themes.collect()
+    };
     for theme in themes {
         for scene in ["empty", "workbench", "find", "palette", "search", "themes"] {
             if !matches!(theme, Theme::Light | Theme::Dark)
@@ -80,18 +97,6 @@ fn workbench_preview() {
                     .open(path.clone(), include_str!("theme.rs"));
                 app.activate(id);
                 app.language_status.set("Rust".into());
-                let _ = app.content(); // Schedule syntax work, then wait for that exact revision.
-                let deadline = Instant::now() + Duration::from_secs(5);
-                loop {
-                    syntax::poll();
-                    if syntax::cached(id, 0, Some(&path))
-                        .is_some_and(|snapshot| !snapshot.spans().is_empty())
-                    {
-                        break;
-                    }
-                    assert!(Instant::now() < deadline, "syntax fixture timed out");
-                    thread::sleep(Duration::from_millis(5));
-                }
             }
             match scene {
                 "find" => app.show_find(),
@@ -111,7 +116,37 @@ fn workbench_preview() {
                     .create_element(),
             );
             pipeline.layout_initial();
+            if scene != "empty" {
+                let id = app.active_id().unwrap();
+                let path = PathBuf::from("/project/kureha-code/src/theme.rs");
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    syntax::poll();
+                    if syntax::cached(id, 0, Some(&path))
+                        .is_some_and(|snapshot| !snapshot.spans().is_empty())
+                    {
+                        app.syntax_revision
+                            .update(|revision| *revision = revision.wrapping_add(1));
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "syntax fixture timed out");
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
             let buffer = pipeline.render().expect("workbench paints");
+            let rgb: Vec<_> = buffer
+                .data()
+                .chunks_exact(4)
+                .flat_map(|pixel| [pixel[2], pixel[1], pixel[0]])
+                .collect();
+            image::save_buffer(
+                directory.join(format!("{scene}-{}.png", theme.name().to_lowercase())),
+                &rgb,
+                buffer.width(),
+                buffer.height(),
+                image::ColorType::Rgb8,
+            )
+            .unwrap();
             let mut file = std::io::BufWriter::new(
                 std::fs::File::create(
                     directory.join(format!("{scene}-{}.ppm", theme.name().to_lowercase())),
@@ -307,7 +342,8 @@ fn selection_preview() {
         PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
     std::fs::create_dir_all(&directory).unwrap();
     let themes = [Theme::Light, Theme::Dark].into_iter().chain(
-        kureha_code::theme::PRESETS.iter()
+        kureha_code::theme::PRESETS
+            .iter()
             .map(|(id, _)| kureha_code::theme::preset(id).unwrap()),
     );
     for theme in themes {

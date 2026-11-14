@@ -63,6 +63,7 @@ enum Login {
     Reading,
     Read(BTreeMap<String, String>),
 }
+
 static LOGIN: RwLock<Login> = RwLock::new(Login::Unused);
 /// Why reading it failed, until the app shows it.
 static LOGIN_ERROR: Mutex<Option<String>> = Mutex::new(None);
@@ -79,6 +80,7 @@ pub fn read_login_shell_if_outside_terminal() {
         read_login_shell(LOGIN_SHELL_TIMEOUT);
     }
 }
+
 /// Reads `$SHELL`'s login environment on a worker; until it is in (or the
 /// shell failed or timed out), [`is_pending`] and [`reading_login_shell`]
 /// are true.
@@ -113,10 +115,12 @@ pub fn read_login_shell(timeout: Duration) {
     #[cfg(not(unix))]
     let _ = timeout;
 }
+
 /// Whether the login shell's environment is still being read.
 pub fn reading_login_shell() -> bool {
     matches!(*LOGIN.read().unwrap(), Login::Reading)
 }
+
 /// Why reading the login shell's environment failed, once.
 pub fn take_login_shell_error() -> Option<String> {
     LOGIN_ERROR.lock().unwrap().take()
@@ -228,14 +232,17 @@ static ALLOWED: RwLock<std::collections::BTreeSet<String>> =
 pub fn set_allowed(ids: &std::collections::BTreeSet<String>) {
     *ALLOWED.write().unwrap() = ids.clone();
 }
+
 /// Whether the user allowed `extension` to set the environment.
 pub fn allows(extension: &str) -> bool {
     ALLOWED.read().unwrap().contains(extension)
 }
+
 /// The palette entry granting it, for messages that ask for it.
 pub fn allow_command_label(extension: &str) -> String {
     format!("Extensions: Allow {extension} to Set the Environment")
 }
+
 pub fn revoke_command_label(extension: &str) -> String {
     format!("Extensions: Stop {extension} Setting the Environment")
 }
@@ -249,10 +256,12 @@ pub fn set(overlay: Option<Overlay>) {
         REVISION.fetch_add(1, Ordering::Relaxed);
     }
 }
+
 /// Marks `folder`'s environment as being read (or nothing with `None`).
 pub fn set_pending(folder: Option<PathBuf>) {
     STATE.write().unwrap().pending = folder;
 }
+
 /// Whether programs for `folder` (the pending folder or one inside it)
 /// should wait for its environment. Every folder waits while the login
 /// shell's environment is read.
@@ -265,9 +274,11 @@ pub fn is_pending(folder: &Path) -> bool {
             .as_deref()
             .is_some_and(|pending| folder.starts_with(pending))
 }
+
 pub fn overlay() -> Option<Overlay> {
     STATE.read().unwrap().overlay.clone()
 }
+
 /// Changes whenever the overlay does.
 pub fn revision() -> u64 {
     REVISION.load(Ordering::Relaxed)
@@ -287,6 +298,7 @@ pub fn var_os(key: &str) -> Option<OsString> {
         None => base_var_os(key),
     }
 }
+
 /// `key` without the overlay: the login shell's, else Kureha's own.
 pub fn base_var_os(key: &str) -> Option<OsString> {
     if let Login::Read(vars) = &*LOGIN.read().unwrap()
@@ -475,7 +487,10 @@ mod login_tests {
     fn a_login_shell_starts_at_home_or_the_root() {
         let temp = std::env::temp_dir();
         assert_eq!(start_folder(Some(temp.clone().into())), temp);
-        assert_eq!(start_folder(Some("/homeless-shelter".into())), PathBuf::from("/"));
+        assert_eq!(
+            start_folder(Some("/homeless-shelter".into())),
+            PathBuf::from("/")
+        );
         assert_eq!(start_folder(None), PathBuf::from("/"));
     }
 

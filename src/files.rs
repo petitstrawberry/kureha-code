@@ -27,12 +27,14 @@ pub fn read(path: &Path) -> io::Result<String> {
 pub fn save(path: &Path, text: &str, crlf: bool) -> io::Result<()> {
     save_inner(path, text, crlf, None)
 }
+
 /// Refuse a stale save instead of overwriting edits from another application.
 /// Recheck after staging too; portable filesystems have no compare-and-rename
 /// operation, so this is conflict detection, not a cross-process lock.
 pub fn save_checked(path: &Path, text: &str, crlf: bool, expected: Option<&str>) -> io::Result<()> {
     save_inner(path, text, crlf, Some(expected))
 }
+
 fn verify(path: &Path, expected: Option<&str>) -> io::Result<()> {
     let matches = match expected {
         Some(expected) => read(path).is_ok_and(|actual| actual == expected),
@@ -48,6 +50,7 @@ fn verify(path: &Path, expected: Option<&str>) -> io::Result<()> {
         ))
     }
 }
+
 fn save_inner(
     path: &Path,
     text: &str,
@@ -92,12 +95,15 @@ fn save_inner(
         }
         options.open(&temporary)?
     };
+
     struct Cleanup(PathBuf);
+
     impl Drop for Cleanup {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.0);
         }
     }
+
     let _cleanup = Cleanup(temporary.clone());
     #[cfg(not(target_os = "scarlet"))]
     if let Ok(metadata) = fs::metadata(&target) {

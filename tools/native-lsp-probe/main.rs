@@ -14,10 +14,12 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, String>;
+
 const SOURCE: &str = "mod numbers;\nfn main() {\n    let answer = numbers::VALUE;\n    let _copy = answer;\n    let text = std::string::String::new();\n    let _text_copy = text;\n}\n";
 const NUMBERS: &str = "pub const VALUE: u32 = 42;\npub const OTHER: u64 = 84;\n";
 
 struct Scratch(PathBuf);
+
 impl Scratch {
     fn create() -> Result<Self> {
         let nonce = SystemTime::now()
@@ -50,6 +52,7 @@ impl Scratch {
         Ok(scratch)
     }
 }
+
 impl Drop for Scratch {
     fn drop(&mut self) {
         if let Err(error) = fs::remove_dir_all(&self.0) {
@@ -63,6 +66,7 @@ struct Probe {
     deadline: Instant,
     server_status: Value,
 }
+
 impl Probe {
     fn check_deadline(&self, stage: &str) -> Result<()> {
         if Instant::now() >= self.deadline {
@@ -389,6 +393,7 @@ impl Probe {
 fn position_params(uri: &str, text: &str, offset: usize) -> Value {
     json!({"textDocument":{"uri":uri},"position":offset_to_position(text, offset).to_value()})
 }
+
 fn evidence(method: &str, result: &Value) -> String {
     let selected = if method == "textDocument/completion" {
         result
@@ -401,6 +406,7 @@ fn evidence(method: &str, result: &Value) -> String {
     };
     selected.to_string().chars().take(2048).collect()
 }
+
 fn locations(value: &Value) -> Vec<&Value> {
     match value {
         Value::Array(values) => values.iter().collect(),
@@ -408,6 +414,7 @@ fn locations(value: &Value) -> Vec<&Value> {
         _ => vec![],
     }
 }
+
 fn ensure(condition: bool, message: String) -> Result<()> {
     if condition { Ok(()) } else { Err(message) }
 }
@@ -483,6 +490,7 @@ fn run() -> Result<()> {
     println!("SCARLET_NATIVE_LSP_OK target_os={}", std::env::consts::OS);
     Ok(())
 }
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("SCARLET_NATIVE_LSP_FAILED: {error}");

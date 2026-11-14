@@ -3,12 +3,12 @@ name = "My Theme"
 base = "kureha-light" # kureha-light/dark, sakura, classic-light/dark, dracula, monokai, nord, solarized-dark/light, gruvbox-dark, tokyo-night
 
 [colors]
-workspace = "#f2eded"
-background = "#ffffff"
-foreground = "#242424"
-elevated = "#fafafa"
-accent = "#b32635"
-selection = "#e7aab570"
+# workspace = "#f2eded"
+# background = "#ffffff"
+# foreground = "#242424"
+# elevated = "#fafafa"
+# accent = "#b32635"
+# selection = "#e7aab570"
 # Also: surface, muted, border, current_line, error, warning,
 # selected_background, selected_foreground (rows/tabs), minimap_viewport, minimap_border. Colors accept #RRGGBB or #RRGGBBAA.
 
@@ -20,9 +20,9 @@ input_opacity = 0.78
 blur_radius = 18.0
 
 [syntax]
-comment = "#467546"
-keyword = "#0000aa"
-string = "#a31515"
+# comment = "#467546"
+# keyword = "#0000aa"
+# string = "#a31515"
 # Also: constant, number, function, type, tag.
 
 # Optional TextMate scope overrides:

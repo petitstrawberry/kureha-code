@@ -1144,6 +1144,7 @@ mod tests {
     }
 
     struct Fixture(PathBuf);
+
     impl Fixture {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -1156,6 +1157,7 @@ mod tests {
             Self(std::fs::canonicalize(path).unwrap())
         }
     }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
@@ -1262,6 +1264,7 @@ mod tests {
             .update(&window());
         pipeline.layout_initial();
         pipeline.render();
+
         fn locate(e: &dyn Element, origin: Point, label: &str) -> Option<Point> {
             let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
             if let Some(render) = e.render_object() {
@@ -1275,6 +1278,7 @@ mod tests {
                 .iter()
                 .find_map(|child| locate(child.as_ref(), p, label))
         }
+
         let hit = locate(
             pipeline.element_tree().root().unwrap(),
             Point::ZERO,
@@ -1388,6 +1392,7 @@ mod tests {
         );
         pipeline.teardown();
     }
+
     #[test]
     fn unopened_search_result_navigates_after_worker_invalidates_clipboard_generation() {
         for split in [false, true] {

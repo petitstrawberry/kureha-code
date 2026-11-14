@@ -49,6 +49,7 @@ fn long_hover_scrolls_repeatedly_inside_the_workbench() {
     );
     pipeline.layout_initial();
     pipeline.render();
+
     fn body(e: &dyn Element, origin: Point) -> Option<Point> {
         let absolute = Point::new(origin.x + e.position().x, origin.y + e.position().y);
         if e.type_name_debug()
@@ -60,6 +61,7 @@ fn long_hover_scrolls_repeatedly_inside_the_workbench() {
             .iter()
             .find_map(|child| body(child.as_ref(), absolute))
     }
+
     let origin = body(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
     let start = Instant::now();
     for direction in [-1, 1] {
@@ -132,6 +134,7 @@ fn scrolling_document_dismisses_hover_and_invalidates_its_pending_target() {
     pipeline.set_root(window().create_element());
     pipeline.layout_initial();
     pipeline.render();
+
     fn editor(e: &dyn Element, origin: Point) -> Option<Rect> {
         let origin = Point::new(origin.x + e.position().x, origin.y + e.position().y);
         if e.type_name_debug()
@@ -143,6 +146,7 @@ fn scrolling_document_dismisses_hover_and_invalidates_its_pending_target() {
             .iter()
             .find_map(|child| editor(child.as_ref(), origin))
     }
+
     let bounds = editor(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
     // Below the popup, but inside the document: this is not a popup wheel event.
     let x = (bounds.origin.x + 110.0) as i32;
@@ -232,6 +236,7 @@ fn document_scroll_discards_late_manual_hover_without_cancelling_diagnostics() {
             started: Instant::now(),
             diagnostic_requests: BTreeMap::new(),
             semantic: SemanticRequests::default(),
+            inlays: inlay::Requests::default(),
             progress: Vec::new(),
         },
     );
@@ -278,6 +283,7 @@ fn hover_overlay_preserves_the_editor_bounds_document_and_selection() {
     pipeline.set_root(window().create_element());
     pipeline.layout_initial();
     pipeline.render();
+
     fn editor(e: &dyn Element, origin: Point) -> Option<(scarlet_ui::element::ElementId, Rect)> {
         let origin = Point::new(origin.x + e.position().x, origin.y + e.position().y);
         if e.type_name_debug().contains("TextViewRenderObject") {
@@ -287,6 +293,7 @@ fn hover_overlay_preserves_the_editor_bounds_document_and_selection() {
             .iter()
             .find_map(|child| editor(child.as_ref(), origin))
     }
+
     let original = editor(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
     let selection = bindings.selection.get();
     let text = bindings.document.get();
@@ -321,6 +328,7 @@ fn utf16_positions_keep_japanese_and_astral_characters_on_boundaries() {
     assert_eq!(offset(text, &json!({"line":0,"character":3})), None);
     assert_eq!(offset(text, &json!({"line":9,"character":0})), None);
 }
+
 #[test]
 fn completion_is_one_undo_step_and_applies_additional_edits() {
     let app = App::with_document();
@@ -375,6 +383,7 @@ fn completion_is_one_undo_step_and_applies_additional_edits() {
         "// 猫\nfn main() { fo }"
     );
 }
+
 #[test]
 fn stale_completion_does_not_replace_newer_text() {
     let app = App::with_document();
@@ -471,6 +480,7 @@ fn server_progress_shows_and_explains_an_empty_definition() {
             started: Instant::now(),
             diagnostic_requests: BTreeMap::new(),
             semantic: SemanticRequests::default(),
+            inlays: inlay::Requests::default(),
             progress: Vec::new(),
         },
     );
@@ -604,6 +614,7 @@ fn cancelled_background_diagnostics_keep_the_user_status() {
             started: Instant::now(),
             diagnostic_requests: BTreeMap::new(),
             semantic: SemanticRequests::default(),
+            inlays: inlay::Requests::default(),
             progress: Vec::new(),
         },
     );
@@ -641,11 +652,13 @@ fn cancelled_background_diagnostics_keep_the_user_status() {
 #[ignore = "requires installed rust-analyzer; run explicitly for integration validation"]
 fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
     struct Fixture(PathBuf);
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
+
     let fixture =
         Fixture(std::env::temp_dir().join(format!("kureha-language-app-{}", std::process::id())));
     std::fs::create_dir(&fixture.0).unwrap();
@@ -843,7 +856,11 @@ fn pointer_hover_keeps_the_caret_and_invalidates_old_pointer_targets() {
     let generation = app.runtime.lock().unwrap().language.hover_generation;
     assert_eq!(app.bindings(id).unwrap().selection.get(), selection);
     let mut modifiers = scarlet_ui::event::KeyModifiers::empty();
-    if cfg!(target_os = "macos") { modifiers.super_key = true; } else { modifiers.control = true; }
+    if cfg!(target_os = "macos") {
+        modifiers.super_key = true;
+    } else {
+        modifiers.control = true;
+    }
     app.definition_modifiers(&Event::ModifiersChanged(modifiers));
     assert_eq!(app.definition_link(id), Some(3..8));
     app.definition_modifiers(&Event::ModifiersChanged(Default::default()));
@@ -859,6 +876,7 @@ fn pointer_hover_keeps_the_caret_and_invalidates_old_pointer_targets() {
 fn edit_value(text: &str, bytes: std::ops::Range<usize>, replacement: &str) -> Value {
     json!({"range":{"start":position(text, bytes.start),"end":position(text, bytes.end)},"newText":replacement})
 }
+
 fn current_guard(app: &App) -> Guard {
     let id = app.document_id();
     let caret = app.bindings(id).unwrap().selection.get().caret.byte;
@@ -878,6 +896,7 @@ fn current_guard(app: &App) -> Guard {
         navigation: app.navigation.load(Ordering::Relaxed),
     }
 }
+
 #[test]
 fn formatting_and_rename_are_one_undo_and_keep_redo_selection() {
     let app = App::with_document();
@@ -927,6 +946,7 @@ fn formatting_and_rename_are_one_undo_and_keep_redo_selection() {
     app.undo(false);
     assert_eq!(app.bindings(id).unwrap().document.get().as_str(), before);
 }
+
 #[test]
 fn language_edits_reject_changed_document_and_overlaps_without_partial_application() {
     let app = App::with_document();
@@ -961,6 +981,7 @@ fn language_edits_reject_changed_document_and_overlaps_without_partial_applicati
     let invalid = json!({"range":{"start":{"line":0,"character":1},"end":{"line":2,"character":0}},"newText":"bad"});
     assert!(prepare_edits("猫", &[invalid], TextSelection::collapsed(0)).is_err());
 }
+
 #[test]
 fn rename_rejects_all_cross_file_resource_operations_and_wrong_versions() {
     let path = Path::new("/tmp/main.rs");
@@ -993,6 +1014,7 @@ fn rename_rejects_all_cross_file_resource_operations_and_wrong_versions() {
         assert!(valid_symbol_name(name));
     }
 }
+
 #[test]
 fn reference_results_keep_unopened_file_positions_and_show_truncation() {
     let entry = json!({"uri":"file:///tmp/unopened.rs","range":{"start":{"line":10,"character":5},"end":{"line":10,"character":9}}});
@@ -1007,6 +1029,7 @@ fn reference_results_keep_unopened_file_positions_and_show_truncation() {
     );
     assert!(locations(&json!([{"uri":"https://example.com/a","range":{}}])).is_err());
 }
+
 #[test]
 fn rename_input_escape_keeps_document_and_stale_submit_is_rejected() {
     let app = App::with_document();
@@ -1041,11 +1064,13 @@ fn rename_input_escape_keeps_document_and_stale_submit_is_rejected() {
 #[ignore = "requires installed rust-analyzer and rustfmt; run explicitly, serially"]
 fn real_rust_analyzer_formats_renames_and_finds_unopened_file_references() {
     struct Fixture(PathBuf);
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
+
     let root = std::env::temp_dir().join(format!("kureha-language-actions-{}", std::process::id()));
     std::fs::create_dir(&root).unwrap();
     let fixture = Fixture(std::fs::canonicalize(&root).unwrap());
@@ -1241,7 +1266,7 @@ fn unavailable_capabilities_do_not_dispatch_commands_and_escape_cancels_pending_
         capabilities: json!({"referencesProvider":false,"documentFormattingProvider":false,"renameProvider":false}),
         pending:BTreeMap::new(), documents:BTreeMap::new(), root,
         language:"rust".into(), label:"fixture".into(), failure:None,
-        started:Instant::now(), diagnostic_requests:BTreeMap::new(), semantic:SemanticRequests::default(), progress:Vec::new(),
+        started:Instant::now(), diagnostic_requests:BTreeMap::new(), semantic:SemanticRequests::default(), inlays:inlay::Requests::default(), progress:Vec::new(),
     });
     for method in [
         "textDocument/formatting",
@@ -1437,12 +1462,15 @@ fn real_rust_analyzer_indexes_kureha_and_navigates_with_progress() {
     };
     app.activate(id);
     let previous_theme = kureha_code::syntax::theme();
+
     struct RestoreTheme(kureha_code::theme::Theme);
+
     impl Drop for RestoreTheme {
         fn drop(&mut self) {
             kureha_code::syntax::set_theme(self.0.clone());
         }
     }
+
     let _restore_theme = RestoreTheme(previous_theme);
     app.set_theme(kureha_code::theme::preset("Monokai").unwrap());
     // rust-analyzer omits unmodified keywords and punctuation when the client
@@ -1713,6 +1741,7 @@ fn semantic_tokens_lifecycle_rejects_stale_results_accepts_cursor_moves_and_refr
             started: Instant::now(),
             diagnostic_requests: BTreeMap::new(),
             semantic: SemanticRequests::default(),
+            inlays: inlay::Requests::default(),
             progress: Vec::new(),
         },
     );
@@ -1856,4 +1885,139 @@ fn semantic_tokens_lifecycle_rejects_stale_results_accepts_cursor_moves_and_refr
     let retry = request();
     assert_ne!(retry, malformed);
     assert!(app.language_event(&key, response(retry), &moved));
+}
+
+#[test]
+#[ignore = "requires installed rust-analyzer; explicitly validates inline type hints"]
+fn real_rust_analyzer_inline_types_update_after_edits_and_toggle() {
+    struct Fixture(PathBuf);
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let fixture =
+        Fixture(std::env::temp_dir().join(format!("kureha-inlay-{}", std::process::id())));
+    std::fs::create_dir_all(fixture.0.join("src")).unwrap();
+    std::fs::write(
+        fixture.0.join("Cargo.toml"),
+        "[package]\nname='inlay_fixture'\nversion='0.1.0'\nedition='2021'\n",
+    )
+    .unwrap();
+    let source = "fn main() { let value = 42u32; println!(\"{value}\"); }\n";
+    let path = fixture.0.join("src/main.rs");
+    std::fs::write(&path, source).unwrap();
+    let app = App::with_document();
+    app.apply_theme(app.theme.get());
+    let id = {
+        let mut rt = app.runtime.lock().unwrap();
+        rt.explorer.root = Some(fixture.0.clone());
+        rt.workspace.open(path.clone(), source)
+    };
+    app.activate(id);
+    app.change_preferences(preferences::Change::InlineTypeHints(true));
+    let wait = |expected: &str| {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            app.poll_language();
+            let hints = app.language_inlay_hints(id);
+            if hints.iter().any(|hint| hint.label.contains(expected)) {
+                eprintln!("INLINE_TYPES {expected}: {hints:?}");
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "missing {expected}: {}",
+                app.language_status.get()
+            );
+            thread::sleep(Duration::from_millis(30));
+        }
+    };
+    wait("u32");
+    if let Some(path) = std::env::var_os("KUREHA_INLAY_PREVIEW") {
+        use scarlet_ui::pipeline::RenderingPipeline;
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new("Inline types", app.content())
+                .size(Size::new(1000.0, 500.0))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if kureha_code::syntax::poll() {
+                app.syntax_revision
+                    .update(|revision| *revision = revision.wrapping_add(1));
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "syntax did not finish for preview"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let buffer = pipeline.render().unwrap();
+        let rgb: Vec<_> = buffer
+            .data()
+            .chunks_exact(4)
+            .flat_map(|p| [p[2], p[1], p[0]])
+            .collect();
+        image::save_buffer(
+            path,
+            &rgb,
+            buffer.width(),
+            buffer.height(),
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+        pipeline.teardown();
+    }
+
+    assert_eq!(
+        app.runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .get(id)
+            .unwrap()
+            .editor
+            .document
+            .as_str(),
+        source
+    );
+    app.change_preferences(preferences::Change::InlineTypeHints(false));
+    assert!(app.language_inlay_hints(id).is_empty());
+    app.runtime.lock().unwrap().language.last_poll = None;
+    app.poll_language();
+    assert!(
+        app.runtime
+            .lock()
+            .unwrap()
+            .language
+            .sessions
+            .values()
+            .all(|s| s.inlays.pending.is_empty())
+    );
+    app.change_preferences(preferences::Change::InlineTypeHints(true));
+    wait("u32");
+    let start = source.find("42u32").unwrap();
+    let delta = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .get(id)
+        .unwrap()
+        .editor
+        .document
+        .replace(start..start + 5, "true")
+        .1;
+    app.edit(id, &delta);
+    assert!(
+        app.language_inlay_hints(id).is_empty(),
+        "old revision must disappear immediately"
+    );
+    wait("bool");
 }

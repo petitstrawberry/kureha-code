@@ -435,13 +435,7 @@ fn eighty_thousand_mismatched_brackets_finish_without_false_pair_colors() {
     let text = "(".repeat(HALF) + &"]".repeat(HALF);
     let mut data = Vec::with_capacity(HALF * 2 * 5);
     for index in 0..HALF * 2 {
-        data.extend([
-            0u32,
-            u32::from(index != 0),
-            1,
-            u32::from(index >= HALF),
-            0,
-        ]);
+        data.extend([0u32, u32::from(index != 0), 1, u32::from(index >= HALF), 0]);
     }
     let (sender, receiver) = std::sync::mpsc::channel();
     let input = text.clone();
@@ -562,6 +556,7 @@ fn overlay_matches_bytewise_precedence_for_all_small_disjoint_span_sets() {
         }
         result
     }
+
     for base_mask in 0..64 {
         for top_mask in 0..64 {
             let base = spans(base_mask, Color::rgb(10, 20, 30));

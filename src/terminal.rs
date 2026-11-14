@@ -45,6 +45,7 @@ pub enum TerminalStatus {
     Closed,
     Error(String),
 }
+
 impl std::fmt::Display for TerminalStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -65,6 +66,7 @@ struct Inbox {
     size: Option<(u16, u16)>,
     scroll: isize,
 }
+
 struct Snapshot {
     text: String,
     grid: TextGridBuffer,
@@ -74,16 +76,19 @@ struct Snapshot {
     bracketed_paste: bool,
     status: TerminalStatus,
 }
+
 struct Session {
     cancel: Arc<AtomicBool>,
     inbox: Arc<Mutex<Inbox>>,
     output: Arc<Mutex<Option<Snapshot>>>,
 }
+
 impl Drop for Session {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Release);
     }
 }
+
 struct Shared {
     // Only UI-facing methods access this lock. The worker never takes it.
     session: Mutex<Option<Session>>,
@@ -106,11 +111,13 @@ struct Shared {
 pub struct Terminal {
     shared: Arc<Shared>,
 }
+
 impl Default for Terminal {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl Terminal {
     /// Construct an idle terminal. `open` is deliberately separate so opening
     /// the application does not implicitly start a process.
@@ -190,6 +197,7 @@ impl Terminal {
         self.apply_snapshot(snapshot);
         true
     }
+
     fn apply_snapshot(&self, snapshot: Snapshot) {
         *self.shared.text.lock().unwrap() = snapshot.text;
         let grid = self
@@ -208,6 +216,7 @@ impl Terminal {
             .bracketed_paste
             .store(snapshot.bracketed_paste, Ordering::Relaxed);
     }
+
     /// Recolor existing output without restarting the shell or waiting for I/O.
     pub fn set_palette(&self, palette: TerminalPalette) {
         if self.shared.palette.get() == palette {
@@ -219,32 +228,40 @@ impl Terminal {
             .set(palette.recolor(self.shared.grid.get(), &colors));
         self.shared.palette.set(palette);
     }
+
     pub fn status(&self) -> TerminalStatus {
         self.shared.status.get()
     }
+
     pub fn is_running(&self) -> bool {
         matches!(
             self.status(),
             TerminalStatus::Starting | TerminalStatus::Running
         )
     }
+
     /// Plain text in the currently displayed viewport, including combining
     /// characters and soft-wrapped lines retained by the terminal parser.
     pub fn visible_text(&self) -> String {
         self.shared.text.lock().unwrap().clone()
     }
+
     pub fn grid(&self) -> TextGridBuffer {
         self.shared.grid.get()
     }
+
     pub fn is_focused(&self) -> bool {
         self.focused()
     }
+
     pub fn focused(&self) -> bool {
         self.shared.focused.get()
     }
+
     pub fn focus(&self) {
         self.shared.focused.set(true);
     }
+
     pub fn blur(&self) {
         self.clear_preedit();
         self.shared.focused.set(false);
@@ -254,12 +271,14 @@ impl Terminal {
     pub fn generation(&self) -> u64 {
         self.shared.generation.load(Ordering::Relaxed)
     }
+
     pub fn close(&self) {
         self.shared.generation.fetch_add(1, Ordering::Relaxed);
         self.shared.session.lock().unwrap().take();
         self.shared.status.set(TerminalStatus::Closed);
         self.blur();
     }
+
     /// Resize is coalesced and bounded, including when a pane is collapsed.
     pub fn resize(&self, columns: u16, rows: u16) {
         let size = (columns.clamp(2, 300), rows.clamp(1, 120));
@@ -275,11 +294,13 @@ impl Terminal {
             *previous = size;
         }
     }
+
     pub fn resize_pixels(&self, width: f32, height: f32) {
         if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
             self.resize((width / CELL_WIDTH) as u16, (height / CELL_HEIGHT) as u16);
         }
     }
+
     fn with_inbox(&self, f: impl FnOnce(&mut Inbox) -> bool) -> bool {
         let session = self.shared.session.lock().unwrap();
         let Some(session) = session.as_ref() else {
@@ -290,6 +311,7 @@ impl Terminal {
         };
         f(&mut inbox)
     }
+
     /// Atomic bounded enqueue; false means closed, busy, or input capacity full.
     /// Callers providing bulk paste can retry on a later UI tick.
     pub fn send_input(&self, bytes: &[u8]) -> bool {
@@ -305,6 +327,7 @@ impl Terminal {
             true
         })
     }
+
     pub fn paste(&self, text: &str) -> bool {
         if text.len() > INPUT_LIMIT - 12 {
             return false;
@@ -317,12 +340,14 @@ impl Terminal {
             self.send_input(text.as_bytes())
         }
     }
+
     pub fn scroll(&self, lines: isize) -> bool {
         self.with_inbox(|inbox| {
             inbox.scroll = inbox.scroll.saturating_add(lines);
             true
         })
     }
+
     pub fn handle_key(&self, event: KeyEvent) -> bool {
         if self.composing() {
             if matches!(
@@ -365,18 +390,21 @@ impl Terminal {
             None => false,
         }
     }
+
     /// Parent should let terminal keyboard events reach this focused view before
     /// applying editor shortcuts (Ctrl+C, Ctrl+D, Ctrl+Z belong to the shell).
     /// `view()` measures its allocated panel and queues PTY resizes automatically.
     pub fn view(&self) -> impl View + Clone + use<> {
         self.view_with_font(None)
     }
+
     pub fn view_with_font(&self, font: Option<FontStack>) -> impl View + Clone + use<> {
         view::LiveView {
             terminal: self.clone(),
             font,
         }
     }
+
     fn content(&self, font: Option<FontStack>) -> impl View + Clone + use<> {
         let terminal = self.clone();
         let cell_size = view::cell_size(font.as_ref());

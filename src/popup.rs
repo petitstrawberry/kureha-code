@@ -4,6 +4,7 @@ use scarlet_ui::element::{
 };
 use scarlet_ui::prelude::*;
 use std::any::Any;
+
 #[derive(Clone)]
 pub struct Anchored<V: View + Clone> {
     content: V,
@@ -13,6 +14,7 @@ pub struct Anchored<V: View + Clone> {
     bottom: Option<f32>,
     max_size: Size,
 }
+
 impl<V: View + Clone> Anchored<V> {
     pub fn new(content: V, anchor: State<Point>) -> Self {
         Self {
@@ -23,6 +25,7 @@ impl<V: View + Clone> Anchored<V> {
             max_size: Size::new(440.0, 260.0),
         }
     }
+
     pub fn top_right(content: V) -> Self {
         Self {
             content,
@@ -32,6 +35,7 @@ impl<V: View + Clone> Anchored<V> {
             max_size: Size::new(440.0, 260.0),
         }
     }
+
     pub fn top_center(content: V) -> Self {
         Self {
             content,
@@ -41,6 +45,7 @@ impl<V: View + Clone> Anchored<V> {
             max_size: Size::new(620.0, 380.0),
         }
     }
+
     /// In the bottom-right corner, `inset` above the bottom edge (over the
     /// workbench, above the status bar).
     pub fn bottom_right(content: V, inset: f32) -> Self {
@@ -52,11 +57,13 @@ impl<V: View + Clone> Anchored<V> {
             max_size: Size::new(480.0, 420.0),
         }
     }
+
     pub fn max_size(mut self, size: Size) -> Self {
         self.max_size = size;
         self
     }
 }
+
 impl<V: View + Clone + 'static> View for Anchored<V> {
     fn create_element(&self) -> Box<dyn Element> {
         Box::new(RenderElement::with_view_children_and_updater(
@@ -79,16 +86,19 @@ impl<V: View + Clone + 'static> View for Anchored<V> {
             |v| vec![v.content.clone_view()],
         ))
     }
+
     fn listenables(&self) -> Vec<&dyn Listenable> {
         let mut v: Vec<&dyn Listenable> =
             self.anchor.iter().map(|s| s as &dyn Listenable).collect();
         v.extend(self.content.listenables());
         v
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
+
 struct Popover {
     anchor: Option<Point>,
     centered: bool,
@@ -97,14 +107,17 @@ struct Popover {
     size: Size,
     panel: Rect,
 }
+
 impl ElementRenderObject for Popover {
     fn update_needs_layout(&self) -> bool {
         true
     }
+
     fn layout(&mut self, c: LayoutConstraints) -> Size {
         self.size = Size::new(c.max_width, c.max_height);
         self.size
     }
+
     fn layout_with_children(
         &mut self,
         c: LayoutConstraints,
@@ -140,20 +153,26 @@ impl ElementRenderObject for Popover {
         }
         self.size
     }
+
     fn size(&self) -> Size {
         self.size
     }
+
     fn hit_test(&self, p: Point) -> bool {
         self.panel.contains(p)
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
     fn render(&mut self) {}
 }
+
 fn place(anchor: Point, viewport: Size, panel: Size) -> Rect {
     let x = anchor.x.clamp(0.0, (viewport.width - panel.width).max(0.0));
     let y = if anchor.y + panel.height > viewport.height {
@@ -166,9 +185,11 @@ fn place(anchor: Point, viewport: Size, panel: Size) -> Rect {
         panel,
     )
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn popovers_stay_inside_the_editor_and_flip_above_its_bottom() {
         let r = place(

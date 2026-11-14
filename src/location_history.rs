@@ -9,11 +9,13 @@ pub(super) struct Location {
     selection: TextSelection,
     scroll: TextViewScroll,
 }
+
 #[derive(Default)]
 pub(super) struct History {
     back: Vec<Location>,
     forward: Vec<Location>,
 }
+
 impl History {
     fn push(entries: &mut Vec<Location>, location: Location) {
         if entries.last() == Some(&location) {
@@ -24,11 +26,13 @@ impl History {
         }
         entries.push(location);
     }
+
     pub fn remove(&mut self, id: DocumentId) {
         self.back.retain(|location| location.id != id);
         self.forward.retain(|location| location.id != id);
     }
 }
+
 impl App {
     fn location_in(&self, group: usize) -> Option<Location> {
         if self.preview_tab(group).is_some() {
@@ -43,6 +47,7 @@ impl App {
             scroll: bindings.scroll.get(),
         })
     }
+
     pub(super) fn remember_location_in(&self, group: usize) {
         let Some(location) = self.location_in(group) else {
             return;
@@ -54,21 +59,27 @@ impl App {
         }
         self.changed();
     }
+
     pub(super) fn remember_location(&self) {
         self.remember_location_in(self.focused_group.get());
     }
+
     pub(super) fn can_go_back(&self) -> bool {
         !self.runtime.lock().unwrap().history.back.is_empty()
     }
+
     pub(super) fn can_go_forward(&self) -> bool {
         !self.runtime.lock().unwrap().history.forward.is_empty()
     }
+
     pub(super) fn go_back(&self) {
         self.traverse_history(false);
     }
+
     pub(super) fn go_forward(&self) {
         self.traverse_history(true);
     }
+
     fn traverse_history(&self, forward: bool) {
         if self.blocked() || self.runtime.lock().unwrap().job.is_some() {
             return;

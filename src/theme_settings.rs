@@ -16,6 +16,7 @@ pub(super) enum Update {
     Open(PathBuf),
     Error(String),
 }
+
 enum Command {
     Reload,
     Open,
@@ -23,11 +24,13 @@ enum Command {
     Save(Change),
     Shutdown,
 }
+
 pub(super) struct Watcher {
     commands: mpsc::Sender<Command>,
     updates: Mutex<mpsc::Receiver<Update>>,
     worker: Option<thread::JoinHandle<()>>,
 }
+
 impl Watcher {
     pub fn start(path: PathBuf) -> std::io::Result<Self> {
         let (commands, receiver) = mpsc::channel();
@@ -50,12 +53,12 @@ impl Watcher {
                             let prefs = Preferences::parse(settings.as_deref().unwrap_or(""))?;
                             let custom = match source {
                                 _ if prefs.color_theme.is_some() => {
-                                    kureha_code::theme::preset("kureha").unwrap()
+                                    kureha_code::theme::Theme::default()
                                 }
                                 Some(source) => parse_theme(source)?.prepare_font(
                                     path.parent().unwrap_or(std::path::Path::new(".")),
                                 )?,
-                                None => kureha_code::theme::preset("kureha").unwrap(),
+                                None => kureha_code::theme::Theme::default(),
                             };
                             let theme = prefs.apply(custom)?;
                             Ok::<_, String>(if from_save {
@@ -118,22 +121,28 @@ impl Watcher {
             worker: Some(worker),
         })
     }
+
     pub fn open(&self) {
         let _ = self.commands.send(Command::Open);
     }
+
     pub fn open_settings(&self) {
         let _ = self.commands.send(Command::OpenSettings);
     }
+
     pub fn save(&self, change: Change) {
         let _ = self.commands.send(Command::Save(change));
     }
+
     pub fn reload(&self) {
         let _ = self.commands.send(Command::Reload);
     }
+
     pub fn poll(&self) -> Vec<Update> {
         self.updates.lock().unwrap().try_iter().collect()
     }
 }
+
 impl Drop for Watcher {
     fn drop(&mut self) {
         let _ = self.commands.send(Command::Shutdown);
@@ -160,6 +169,7 @@ fn read(path: &std::path::Path) -> Result<Option<String>, String> {
         .map(Some)
         .map_err(|e| e.to_string())
 }
+
 fn create(path: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
@@ -171,7 +181,8 @@ fn create(path: &std::path::Path) -> std::io::Result<()> {
     }
 }
 
-const SETTINGS_TEMPLATE: &str = "# Theme selections and editor preferences. Changes apply automatically.\n# Omit color_theme to use theme.toml; omit code_theme to follow it.\n# color_theme = \"kureha\"\n# code_theme = \"monokai\"\n# font_size = 14\nhide_minimap = false\nword_wrap = true\nwrap_at_words = true\nformat_on_save = false\nindent_depth_background = false\nactive_block_guide = false\n# Pick a formatter per language: \"lsp\" or an extension id.\n# [formatter]\n# json = \"lsp\"\n";
+const SETTINGS_TEMPLATE: &str = "# Theme selections and editor preferences. Changes apply automatically.\n# Omit color_theme to use theme.toml; omit code_theme to follow it.\n# color_theme = \"kureha-light\"\n# code_theme = \"monokai\"\n# font_size = 14\nhide_minimap = false\nword_wrap = true\nwrap_at_words = true\nformat_on_save = false\nindent_depth_background = false\nactive_block_guide = false\ninline_type_hints = false\ninsert_spaces = true\ntab_size = 4\n# Pick a formatter per language: \"lsp\" or an extension id.\n# [formatter]\n# json = \"lsp\"\n";
+
 fn create_settings(path: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -182,6 +193,7 @@ fn create_settings(path: &std::path::Path) -> std::io::Result<()> {
         Err(e) => Err(e),
     }
 }
+
 /// Adds `extension` to (or, with `listed` false, removes it from) the list
 /// `[extensions] <key>`, dropping empty lists and tables.
 fn set_listed(
@@ -251,8 +263,19 @@ fn save(path: &std::path::Path, change: &Change) -> Result<(), String> {
         Change::Minimap(visible) => document["hide_minimap"] = toml_edit::value(!visible),
         Change::WordWrap(enabled) => document["word_wrap"] = toml_edit::value(*enabled),
         Change::WrapAtWords(enabled) => document["wrap_at_words"] = toml_edit::value(*enabled),
-        Change::IndentDepthBackground(enabled) => document["indent_depth_background"] = toml_edit::value(*enabled),
-        Change::ActiveBlockGuide(enabled) => document["active_block_guide"] = toml_edit::value(*enabled),
+        Change::IndentDepthBackground(enabled) => {
+            document["indent_depth_background"] = toml_edit::value(*enabled)
+        }
+        Change::ActiveBlockGuide(enabled) => {
+            document["active_block_guide"] = toml_edit::value(*enabled)
+        }
+        Change::InlineTypeHints(enabled) => {
+            document["inline_type_hints"] = toml_edit::value(*enabled)
+        }
+        Change::InsertSpaces(enabled) => document["insert_spaces"] = toml_edit::value(*enabled),
+        Change::TabSize(size) => {
+            document["tab_size"] = toml_edit::value((*size).clamp(1, 8) as i64)
+        }
         Change::FormatOnSave(enabled) => document["format_on_save"] = toml_edit::value(*enabled),
         Change::AllowProcess {
             extension,
@@ -347,18 +370,21 @@ impl super::App {
             Err(e) => self.status.set(format!("Cannot watch theme: {e}")),
         }
     }
+
     pub(super) fn open_theme_settings(&self) {
         self.start_theme_settings();
         if let Some(watcher) = self.theme_settings.lock().unwrap().as_ref() {
             watcher.open();
         }
     }
+
     pub(super) fn open_preferences_file(&self) {
         self.start_theme_settings();
         if let Some(watcher) = self.theme_settings.lock().unwrap().as_ref() {
             watcher.open_settings();
         }
     }
+
     pub(super) fn change_preferences(&self, change: Change) {
         self.preferences.update(|p| p.change(&change));
         let preferences = self.preferences.get();
@@ -373,12 +399,14 @@ impl super::App {
             watcher.save(change);
         }
     }
+
     pub(super) fn reload_theme_settings(&self) {
         self.start_theme_settings();
         if let Some(watcher) = self.theme_settings.lock().unwrap().as_ref() {
             watcher.reload();
         }
     }
+
     pub(super) fn poll_theme_settings(&self) {
         let updates = self
             .theme_settings
@@ -397,6 +425,7 @@ impl super::App {
             }
         }
     }
+
     fn apply_settings_update(&self, update: Update) {
         let (theme, preferences, from_save) = match update {
             Update::Loaded(theme, preferences) => (theme, preferences, false),
@@ -432,6 +461,7 @@ impl super::App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn watcher_recovers_from_invalid_and_atomic_saves_without_overwriting_settings() {
         let dir = std::env::temp_dir().join(format!("kureha-theme-{}", std::process::id()));
@@ -439,6 +469,7 @@ mod tests {
         let path = dir.join("theme.toml");
         fs::write(&path, "name='First'\nbase='light'").unwrap();
         let watcher = Watcher::start(path.clone()).unwrap();
+
         fn next(w: &Watcher) -> Update {
             w.updates
                 .lock()
@@ -446,6 +477,7 @@ mod tests {
                 .recv_timeout(Duration::from_secs(5))
                 .unwrap()
         }
+
         assert!(matches!(next(&watcher), Update::Loaded(t, _) if t.name() == "First"));
         fs::write(&path, "[broken").unwrap();
         watcher.reload();
@@ -469,7 +501,9 @@ mod tests {
 mod persistence_tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
     struct Fixture(PathBuf);
+
     impl Fixture {
         fn new() -> Self {
             static N: AtomicUsize = AtomicUsize::new(0);
@@ -481,18 +515,22 @@ mod persistence_tests {
             fs::create_dir(&path).unwrap();
             Self(path)
         }
+
         fn theme(&self) -> PathBuf {
             self.0.join("theme.toml")
         }
+
         fn settings(&self) -> PathBuf {
             self.0.join("settings.toml")
         }
     }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+
     fn next(w: &Watcher) -> Update {
         match w
             .updates
@@ -505,6 +543,7 @@ mod persistence_tests {
             update => update,
         }
     }
+
     #[test]
     fn choices_are_saved_restored_and_preserve_comments_and_custom_theme() {
         let f = Fixture::new();
@@ -526,9 +565,21 @@ mod persistence_tests {
         watcher.save(Change::WrapAtWords(false));
         assert!(matches!(next(&watcher),Update::Loaded(_,p) if !p.wrap_at_words));
         watcher.save(Change::IndentDepthBackground(true));
-        assert!(matches!(next(&watcher),Update::Loaded(_,p) if p.indent_depth_background && !p.active_block_guide));
+        assert!(
+            matches!(next(&watcher),Update::Loaded(_,p) if p.indent_depth_background && !p.active_block_guide)
+        );
         watcher.save(Change::ActiveBlockGuide(true));
-        assert!(matches!(next(&watcher),Update::Loaded(_,p) if p.indent_depth_background && p.active_block_guide));
+        assert!(
+            matches!(next(&watcher),Update::Loaded(_,p) if p.indent_depth_background && p.active_block_guide)
+        );
+        watcher.save(Change::InsertSpaces(false));
+        assert!(matches!(next(&watcher),Update::Loaded(_,p) if !p.insert_spaces));
+        watcher.save(Change::TabSize(2));
+        assert!(matches!(next(&watcher),Update::Loaded(_,p) if p.tab_size == 2));
+        watcher.save(Change::InlineTypeHints(true));
+        assert!(matches!(next(&watcher),Update::Loaded(_,p) if p.inline_type_hints));
+        watcher.save(Change::InlineTypeHints(false));
+        assert!(matches!(next(&watcher),Update::Loaded(_,p) if !p.inline_type_hints));
         watcher.save(Change::WordWrap(false));
         assert!(matches!(next(&watcher),Update::Loaded(_,p) if !p.word_wrap));
         drop(watcher);
@@ -544,6 +595,7 @@ mod persistence_tests {
         );
         drop(restored);
     }
+
     #[test]
     fn invalid_settings_are_not_overwritten_and_atomic_edits_reload() {
         let f = Fixture::new();
@@ -560,6 +612,7 @@ mod persistence_tests {
         );
         drop(watcher);
     }
+
     #[test]
     fn process_grants_are_saved_and_removed_without_touching_other_settings() {
         let f = Fixture::new();
@@ -587,6 +640,7 @@ mod persistence_tests {
         let saved = fs::read_to_string(f.settings()).unwrap();
         assert_eq!(saved, "# mine\ncolor_theme = 'nord'\n");
     }
+
     #[test]
     fn disabled_extensions_are_saved_beside_their_grants() {
         let f = Fixture::new();
@@ -604,15 +658,24 @@ mod persistence_tests {
         save(&f.settings(), &toggle(false)).unwrap();
         save(&f.settings(), &toggle(false)).unwrap();
         let preferences = Preferences::parse(&fs::read_to_string(f.settings()).unwrap()).unwrap();
-        assert_eq!(preferences.disabled_extensions, ["example.fmt".to_string()].into());
+        assert_eq!(
+            preferences.disabled_extensions,
+            ["example.fmt".to_string()].into()
+        );
         // Turning it off keeps what it may run.
         assert!(preferences.allow_process["example.fmt"].contains("ruff"));
         save(&f.settings(), &toggle(true)).unwrap();
         let saved = fs::read_to_string(f.settings()).unwrap();
         assert!(!saved.contains("disabled"), "{saved}");
-        assert!(Preferences::parse(&saved).unwrap().disabled_extensions.is_empty());
+        assert!(
+            Preferences::parse(&saved)
+                .unwrap()
+                .disabled_extensions
+                .is_empty()
+        );
         assert!(Preferences::parse("[extensions]\ndisabled = [\"Not An Id\"]").is_err());
     }
+
     #[test]
     fn environment_grants_are_saved_beside_the_disabled_list() {
         let f = Fixture::new();
@@ -650,6 +713,7 @@ mod persistence_tests {
         assert!(Preferences::parse("[extensions]\nallow_environment = \"x.y\"").is_err());
         assert!(Preferences::parse("[extensions]\nallow_environment = [\"Not An Id\"]").is_err());
     }
+
     #[test]
     fn save_acknowledgement_waits_for_preview_without_losing_preferences() {
         let app = crate::App::new();
@@ -671,6 +735,7 @@ mod persistence_tests {
         app.poll_theme_settings();
         assert_eq!(app.preferences.get().font_size, Some(22.0));
     }
+
     #[test]
     fn shutdown_flushes_queued_choices() {
         let f = Fixture::new();
@@ -684,6 +749,7 @@ mod persistence_tests {
         assert_eq!(saved.code_theme.as_deref(), Some("Nord"));
         assert_eq!(saved.font_size, Some(18.0));
     }
+
     #[test]
     #[cfg(unix)]
     fn saving_follows_settings_symlinks() {
@@ -699,6 +765,7 @@ mod persistence_tests {
                 .hide_minimap
         );
     }
+
     #[test]
     fn preset_selection_recovers_from_a_broken_custom_theme() {
         let f = Fixture::new();

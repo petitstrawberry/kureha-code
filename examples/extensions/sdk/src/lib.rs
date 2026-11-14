@@ -33,6 +33,7 @@ pub struct Document {
     /// Ordered, possibly empty.
     pub selection: Range<usize>,
 }
+
 impl Document {
     fn parse(value: &Value) -> Option<Self> {
         let offset = |v: &Value| v.as_u64().and_then(|n| usize::try_from(n).ok());
@@ -44,6 +45,7 @@ impl Document {
             selection: offset(&selection[0])?..offset(&selection[1])?,
         })
     }
+
     /// Reads `range` of this document from the host.
     pub fn read(&self, range: Range<usize>) -> Result<String, String> {
         if range.len() > MAX_READ_BYTES {
@@ -59,6 +61,7 @@ impl Document {
             .map(str::to_owned)
             .ok_or_else(|| "the host returned no text".into())
     }
+
     /// Reads the whole document.
     pub fn text(&self) -> Result<String, String> {
         self.read(0..self.length)
@@ -93,6 +96,7 @@ pub enum Request<'a> {
     },
     Other(&'a Value),
 }
+
 impl<'a> Request<'a> {
     pub fn parse(message: &'a Value) -> Self {
         let document = || message.get("document").and_then(Document::parse);
@@ -169,6 +173,7 @@ pub struct Process {
     cwd: Cwd,
     timeout_ms: Option<u64>,
 }
+
 impl Process {
     /// A bare program name, looked up on the editor's `PATH`.
     pub fn new(program: impl Into<String>) -> Self {
@@ -180,33 +185,40 @@ impl Process {
             timeout_ms: None,
         }
     }
+
     pub fn arg(mut self, arg: impl Into<String>) -> Self {
         self.args.push(arg.into());
         self
     }
+
     pub fn args<I: IntoIterator<Item = S>, S: Into<String>>(mut self, args: I) -> Self {
         self.args.extend(args.into_iter().map(Into::into));
         self
     }
+
     /// Sends `text` as standard input.
     pub fn stdin(mut self, text: impl Into<String>) -> Self {
         self.input = Input::Text(text.into());
         self
     }
+
     /// Sends the whole document as standard input, straight from the host.
     pub fn stdin_document(mut self) -> Self {
         self.input = Input::Document;
         self
     }
+
     pub fn cwd(mut self, cwd: Cwd) -> Self {
         self.cwd = cwd;
         self
     }
+
     /// Stops the program after this long (the host allows up to 20 s; 5 s by default).
     pub fn timeout_ms(mut self, ms: u64) -> Self {
         self.timeout_ms = Some(ms);
         self
     }
+
     /// The host request this run sends.
     pub fn request(&self) -> Value {
         let mut request = json!({
@@ -228,6 +240,7 @@ impl Process {
         }
         request
     }
+
     /// Runs the program to completion. Refusals (not declared, not allowed,
     /// not found), timeouts and oversized output are errors; a failing exit
     /// status is not, see `Output::success`.
@@ -245,6 +258,7 @@ pub struct Output {
     /// The first 16 KiB at most.
     pub stderr: String,
 }
+
 impl Output {
     pub fn parse(reply: &Value) -> Result<Self, String> {
         Ok(Self {
@@ -256,9 +270,11 @@ impl Output {
             stderr: reply["stderr"].as_str().unwrap_or_default().to_owned(),
         })
     }
+
     pub fn success(&self) -> bool {
         self.status == Some(0)
     }
+
     /// A one-line reason for a failed run: the first line of standard error,
     /// else the exit status.
     pub fn failure(&self) -> String {
@@ -280,17 +296,21 @@ impl Output {
 /// The reply to one message.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reply(pub Value);
+
 impl Reply {
     pub fn ok() -> Self {
         Self(json!({}))
     }
+
     pub fn unsupported() -> Self {
         Self::error("unsupported request")
     }
+
     /// Shown in the status bar; nothing is applied.
     pub fn error(message: impl Into<String>) -> Self {
         Self(json!({"error": message.into()}))
     }
+
     /// Offers one of this extension's own commands as a way out of an error
     /// (an `environment` call's, for now): Kureha shows it as a button
     /// titled as in the manifest. At most two; others are ignored.
@@ -301,18 +321,22 @@ impl Reply {
         }
         self
     }
+
     /// A status bar message without edits.
     pub fn status(message: impl Into<String>) -> Self {
         Self(json!({"status": message.into()}))
     }
+
     /// Replaces `range` with `text`, applied as one undo step.
     pub fn edit(range: Range<usize>, text: impl Into<String>) -> Self {
         Self(json!({"edits": [{"start": range.start, "end": range.end, "text": text.into()}]}))
     }
+
     /// A successful reply that changes nothing.
     pub fn unchanged() -> Self {
         Self(json!({"edits": []}))
     }
+
     /// An environment: each variable set to a value, or (`None`) removed.
     pub fn environment<I, K>(vars: I) -> Self
     where
@@ -325,6 +349,7 @@ impl Reply {
             .collect();
         Self(json!({ "environment": vars }))
     }
+
     pub fn with_status(mut self, message: impl Into<String>) -> Self {
         self.0["status"] = Value::String(message.into());
         self
@@ -365,6 +390,7 @@ pub fn host(request: &Value) -> Result<Value, String> {
         None => Ok(reply),
     }
 }
+
 #[cfg(not(target_arch = "wasm32"))]
 pub fn host(_request: &Value) -> Result<Value, String> {
     Err("the Kureha host is only available inside WebAssembly".into())

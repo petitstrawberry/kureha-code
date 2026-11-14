@@ -43,6 +43,7 @@ pub struct Capabilities {
     /// user's grant), through `[contributes.environment]`.
     pub environment: bool,
 }
+
 impl Default for Capabilities {
     fn default() -> Self {
         Self {
@@ -114,6 +115,7 @@ pub struct KeyChord {
     pub shift: bool,
     pub key: Key,
 }
+
 impl KeyChord {
     /// Parses one chord. Chords with a second press (`Primary+K Primary+T`)
     /// are rejected.
@@ -164,6 +166,7 @@ impl KeyChord {
         };
         Ok(chord)
     }
+
     /// The same press with `Primary` resolved for this platform.
     pub fn normalized(self) -> Self {
         if cfg!(target_os = "macos") || !self.primary {
@@ -176,6 +179,7 @@ impl KeyChord {
             }
         }
     }
+
     /// The display form used by built-in shortcuts, such as `Primary+Alt+L`.
     pub fn label(&self) -> String {
         let mut parts = Vec::new();
@@ -195,6 +199,7 @@ impl KeyChord {
         });
         parts.join("+")
     }
+
     /// Extensions get Alt combinations and function keys, with a letter,
     /// digit or F-key. Most built-in shortcuts use Primary without Alt, so
     /// this space rarely collides, and plain typing is never taken.
@@ -269,6 +274,7 @@ fn reject_unknown(table: &Table, context: &str, allowed: &[&str]) -> Result<(), 
         None => Ok(()),
     }
 }
+
 fn sub_table<'a>(table: &'a Table, key: &str) -> Result<Option<&'a Table>, String> {
     table
         .get(key)
@@ -278,9 +284,11 @@ fn sub_table<'a>(table: &'a Table, key: &str) -> Result<Option<&'a Table>, Strin
         })
         .transpose()
 }
+
 fn string(table: &Table, key: &str, context: &str) -> Result<String, String> {
     optional_string(table, key, context)?.ok_or_else(|| format!("{context}: `{key}` is required"))
 }
+
 fn optional_string(table: &Table, key: &str, context: &str) -> Result<Option<String>, String> {
     let Some(value) = table.get(key) else {
         return Ok(None);
@@ -295,6 +303,7 @@ fn optional_string(table: &Table, key: &str, context: &str) -> Result<Option<Str
     }
     Ok(Some(text.into()))
 }
+
 fn strings(table: &Table, key: &str, context: &str) -> Result<Vec<String>, String> {
     let Some(value) = table.get(key) else {
         return Ok(Vec::new());
@@ -317,6 +326,7 @@ fn strings(table: &Table, key: &str, context: &str) -> Result<Vec<String>, Strin
         })
         .collect()
 }
+
 fn tables<'a>(table: &'a Table, key: &str) -> Result<Vec<&'a Table>, String> {
     let Some(value) = table.get(key) else {
         return Ok(Vec::new());
@@ -348,6 +358,7 @@ pub fn valid_id(id: &str) -> bool {
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
         })
 }
+
 fn valid_version(version: &str) -> bool {
     version.len() <= 32
         && version.starts_with(|c: char| c.is_ascii_digit())
@@ -355,6 +366,7 @@ fn valid_version(version: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
 }
+
 /// A bare executable name: no path, no shell syntax.
 pub fn valid_program(program: &str) -> bool {
     program.len() <= 128
@@ -363,6 +375,7 @@ pub fn valid_program(program: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'+'))
 }
+
 fn valid_host(host: &str) -> bool {
     host.len() <= 253
         && host.split('.').all(|label| {
@@ -375,6 +388,7 @@ fn valid_host(host: &str) -> bool {
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         })
 }
+
 /// A relative path that stays inside its base by construction.
 fn relative_path(text: &str, context: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(text);
@@ -700,6 +714,7 @@ fn read_limited(path: &Path, limit: u64) -> Result<String, String> {
     }
     std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
 }
+
 /// Resolves `relative` under `root`, rejecting symbolic links that leave it.
 fn contained(root: &Path, relative: &Path) -> Result<PathBuf, String> {
     let path = root
@@ -805,6 +820,7 @@ impl Registry {
             .iter()
             .filter(|extension| is_enabled(&extension.manifest.id))
     }
+
     /// Contributed themes in load order, as (extension id, theme).
     pub fn themes(&self) -> impl Iterator<Item = (&str, &Theme)> {
         self.enabled().flat_map(|extension| {
@@ -814,12 +830,14 @@ impl Registry {
                 .map(|theme| (extension.manifest.id.as_str(), theme))
         })
     }
+
     /// The first contributed theme whose name matches, ignoring ASCII case.
     pub fn theme(&self, name: &str) -> Option<Theme> {
         self.themes()
             .find(|(_, theme)| theme.name().eq_ignore_ascii_case(name))
             .map(|(_, theme)| theme.clone())
     }
+
     /// Language id for a lowercase file extension, first contribution wins.
     pub fn language_for_extension(&self, extension: &str) -> Option<&str> {
         self.enabled()
@@ -827,6 +845,7 @@ impl Registry {
             .find(|language| language.extensions.iter().any(|ext| ext == extension))
             .map(|language| language.id.as_str())
     }
+
     /// Extensions able to format `language`, in load order.
     pub fn formatters(&self, language: &str) -> impl Iterator<Item = &Extension> {
         self.enabled().filter(move |e| {
@@ -838,6 +857,7 @@ impl Registry {
                     .any(|f| f.languages.iter().any(|l| l == language))
         })
     }
+
     /// Enabled extensions that supply an environment for a folder.
     pub fn environment_providers(
         &self,
@@ -852,6 +872,7 @@ impl Registry {
                 .map(|contribution| (extension, contribution))
         })
     }
+
     /// Contributed keybindings as (extension, binding), in load order.
     pub fn keybindings(&self) -> impl Iterator<Item = (&Extension, &KeybindingContribution)> {
         self.enabled().flat_map(|extension| {
@@ -863,11 +884,13 @@ impl Registry {
                 .map(move |binding| (extension, binding))
         })
     }
+
     /// Launch settings for a language, first contribution wins.
     pub fn language_server(&self, language: &str) -> Option<&LanguageServerContribution> {
         self.language_server_entry(language)
             .map(|(_, server)| server)
     }
+
     /// The language server for `language` with the extension that provides it.
     pub fn language_server_entry(
         &self,
@@ -882,6 +905,7 @@ impl Registry {
                 .map(|server| (e, server))
         })
     }
+
     /// One-line summary for the status bar, or `None` when nothing failed.
     pub fn error_summary(&self) -> Option<String> {
         let (folder, reason) = self.errors.first()?;
@@ -918,6 +942,7 @@ static DISABLED_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::Atom
 pub fn is_enabled(id: &str) -> bool {
     !DISABLED.read().unwrap().contains(id)
 }
+
 /// Replaces the disabled set; returns whether it changed.
 pub fn set_disabled(ids: &std::collections::BTreeSet<String>) -> bool {
     let mut disabled = DISABLED.write().unwrap();
@@ -928,6 +953,7 @@ pub fn set_disabled(ids: &std::collections::BTreeSet<String>) -> bool {
     DISABLED_REVISION.fetch_add(1, Ordering::Relaxed);
     true
 }
+
 /// Changes whenever an extension is turned on or off.
 pub fn disabled_revision() -> u64 {
     DISABLED_REVISION.load(Ordering::Relaxed)
@@ -945,10 +971,12 @@ pub fn registry() -> &'static Registry {
             .unwrap_or_default()
     })
 }
+
 /// The registry if loading has finished, without blocking.
 pub fn loaded() -> Option<&'static Registry> {
     REGISTRY.get()
 }
+
 /// Starts loading on a worker so later lookups do not touch the disk.
 pub fn preload() {
     if REGISTRY.get().is_none() {
@@ -959,6 +987,7 @@ pub fn preload() {
             });
     }
 }
+
 /// Returns load problems once, after loading finished.
 pub fn take_load_report() -> Option<String> {
     let registry = loaded()?;
@@ -1167,6 +1196,7 @@ args = ["--log", "off"]
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
+
     fn write(path: &Path, text: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();

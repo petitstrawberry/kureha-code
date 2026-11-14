@@ -40,12 +40,53 @@ impl Editor {
     pub fn dirty(&self) -> bool {
         !self.buffer.is_pristine()
     }
+
     pub fn revision(&self) -> u64 {
         self.buffer.rev()
     }
+
     pub fn saved(&mut self) {
         self.buffer.set_pristine();
         self.buffer.reset_edit_type();
+    }
+
+    /// Replace the changed region without resetting revisions or view identities.
+    /// External reloads remain undoable, and undo correctly makes the file dirty.
+    pub fn reload(&mut self, text: &str) {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        let old = self.document.as_str();
+        if old == text {
+            return;
+        }
+        let mut start = old
+            .bytes()
+            .zip(text.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !old.is_char_boundary(start) || !text.is_char_boundary(start) {
+            start -= 1;
+        }
+        let mut suffix = old[start..]
+            .bytes()
+            .rev()
+            .zip(text[start..].bytes().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !old.is_char_boundary(old.len() - suffix)
+            || !text.is_char_boundary(text.len() - suffix)
+        {
+            suffix -= 1;
+        }
+        let before = self.selection;
+        let edit = EditDelta {
+            replaced_range: start..old.len() - suffix,
+            inserted: text[start..text.len() - suffix].to_owned(),
+        };
+        self.edit_transaction(&edit);
+        if let Some(delta) = &self.pending_delta {
+            self.selection = transform_selection(delta, before);
+        }
+        self.saved();
     }
 
     pub fn moved(&mut self, selection: TextSelection) {
@@ -86,6 +127,7 @@ impl Editor {
         self.edit(edit);
         self.buffer.reset_edit_type();
     }
+
     pub fn edit_plan(&mut self, plan: &crate::editing::EditPlan) {
         let parts = if plan.parts.is_empty() {
             std::slice::from_ref(&plan.edit)
@@ -169,6 +211,24 @@ fn to_engine(selection: TextSelection) -> Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_reload_tracks_unicode_caret_and_keeps_undo_history() {
+        let mut editor = Editor::new("struct 猫 {}\nfn main() {}\n");
+        let caret = editor.document.as_str().find("main").unwrap();
+        editor.moved(TextSelection::collapsed(caret));
+        let revision = editor.revision();
+        editor.reload("struct 犬 {}\n\nfn main() {}\n");
+        assert_eq!(editor.selection.caret.byte, caret + 1);
+        assert!(!editor.dirty());
+        assert!(editor.revision() > revision);
+        editor.undo(false);
+        assert_eq!(editor.document.as_str(), "struct 猫 {}\nfn main() {}\n");
+        assert!(editor.dirty());
+        editor.undo(true);
+        assert_eq!(editor.document.as_str(), "struct 犬 {}\n\nfn main() {}\n");
+        assert!(!editor.dirty());
+    }
 
     fn assert_snapshot(editor: &Editor, text: &str, selection: TextSelection) {
         assert_eq!(editor.document.as_str(), text);

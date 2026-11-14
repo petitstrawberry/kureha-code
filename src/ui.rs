@@ -1,8 +1,8 @@
 //! The workbench uses ScarletUI controls; the window menu is the app menu.
-#[path = "indent.rs"]
-mod indent;
 #[path = "editor_events.rs"]
 mod editor_events;
+#[path = "indent.rs"]
+mod indent;
 
 use super::*;
 use kureha_code::{file_icons, git::Change, syntax};
@@ -17,6 +17,7 @@ use std::{any::Any, rc::Rc};
 // Each list prunes keys when its model changes, including virtualized rows.
 #[derive(Clone, Default)]
 pub(super) struct RowInputs(Arc<Mutex<BTreeMap<String, RowInput>>>);
+
 impl RowInputs {
     pub(super) fn retain(&self, prefix: &str, keys: impl Iterator<Item = String>) {
         let keys: BTreeSet<_> = keys.map(|key| format!("{prefix}{key}")).collect();
@@ -25,6 +26,7 @@ impl RowInputs {
             .unwrap()
             .retain(|key, _| !key.starts_with(prefix) || keys.contains(key));
     }
+
     pub(super) fn get(&self, key: String) -> RowInput {
         self.0
             .lock()
@@ -38,6 +40,7 @@ impl RowInputs {
             .clone()
     }
 }
+
 #[derive(Clone)]
 pub(super) struct RowInput {
     focused: State<bool>,
@@ -82,11 +85,13 @@ impl<V: View + Clone> View for ListRow<V> {
             build_list_row::<V>,
         ))
     }
+
     fn listenables(&self) -> Vec<&dyn Listenable> {
         let mut states = self.content.listenables();
         states.push(&self.input.focused);
         states
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -317,19 +322,23 @@ mod row_tests {
 
 #[derive(Clone)]
 pub(super) struct ViewCollection<V: View + Clone>(pub(super) Vec<V>);
+
 impl<V: View + Clone> ViewTuple for ViewCollection<V> {
     fn create_elements(&self) -> Vec<Box<dyn Element>> {
         self.0.iter().map(|view| view.create_element()).collect()
     }
+
     fn clone_views(&self) -> Vec<Box<dyn View>> {
         self.0.iter().map(|view| view.clone_view()).collect()
     }
+
     fn collect_listenables<'a>(&'a self, target: &mut Vec<&'a dyn Listenable>) {
         for view in &self.0 {
             target.extend(view.listenables());
         }
     }
 }
+
 impl App {
     pub(super) fn content(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
@@ -455,6 +464,7 @@ impl App {
         });
         self.tab_region(content, tab_drag::RegionId::Root)
     }
+
     fn editor_area(&self) -> impl View + Clone + use<> {
         let visible = self.panel_visible.get();
         vstack! {
@@ -468,6 +478,7 @@ impl App {
             self.language_panel(),
         }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY)
     }
+
     fn editor_groups(&self) -> impl View + Clone + use<> {
         self.tab_region(
             PaneStack {
@@ -481,25 +492,46 @@ impl App {
             tab_drag::RegionId::EditorArea,
         )
     }
+
     fn editor_group(&self, group: usize) -> impl View + Clone + use<> {
-        self.tab_region(TabPane::new(
-            self.tabs_view(group),
-            if self.group_id(group).is_some_and(|id| self.is_settings_tab(id)) {
-                Either::A(self.settings_view(group))
-            } else if let Some(tab) = self.group_id(group).filter(|id| self.is_git_diff_tab(*id)) {
-                Either::B(Either::A(self.git_diff_view(tab)))
-            } else { Either::B(Either::B(match self.group_id(group).filter(|tab| self.terminal.for_tab(*tab).is_some()) {
-                Some(tab) => Either::A(self.terminal_tab_view(tab, group)),
-                None => Either::B(match self.group_document(group) {
-                    Some(id) => Either::A(self.document_view(id, group)),
-                    None => Either::B(VStack::new(()).frame(f32::INFINITY,f32::INFINITY).background(self.theme.get().editor_colors().background)),
-                }),
-            })) },
-        )
+        self.tab_region(
+            TabPane::new(
+                self.tabs_view(group),
+                if self
+                    .group_id(group)
+                    .is_some_and(|id| self.is_settings_tab(id))
+                {
+                    Either::A(self.settings_view(group))
+                } else if let Some(tab) =
+                    self.group_id(group).filter(|id| self.is_git_diff_tab(*id))
+                {
+                    Either::B(Either::A(self.git_diff_view(tab)))
+                } else {
+                    Either::B(Either::B(
+                        match self
+                            .group_id(group)
+                            .filter(|tab| self.terminal.for_tab(*tab).is_some())
+                        {
+                            Some(tab) => Either::A(self.terminal_tab_view(tab, group)),
+                            None => Either::B(match self.group_document(group) {
+                                Some(id) => Either::A(self.document_view(id, group)),
+                                None => Either::B(
+                                    VStack::new(())
+                                        .frame(f32::INFINITY, f32::INFINITY)
+                                        .background(self.theme.get().editor_colors().background),
+                                ),
+                            }),
+                        },
+                    ))
+                },
+            )
             .surface_style(self.theme.get().chrome_style())
             .border_color(self.theme.get().colors().border)
-            .key(format!("editor-group-{group}")), tab_drag::RegionId::Group(group))
+            .key(format!("editor-group-{group}")),
+            tab_drag::RegionId::Group(group),
+        )
     }
+
     fn tabs_view(&self, group: usize) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let active = self.group_id(group);
@@ -560,6 +592,7 @@ impl App {
                 .frame(f32::INFINITY, 34.0),
         }.spacing(2.0).padding_insets(EdgeInsets::new(8.0, 8.0, 8.0, 6.0))
     }
+
     pub(super) fn editor_view(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         LiveEditor {
             app: self.clone(),
@@ -568,6 +601,7 @@ impl App {
             document: self.bindings_for(id, group).unwrap().document,
         }
     }
+
     fn editor_content(&self, id: DocumentId, group: usize) -> impl View + Clone + use<> {
         let bindings = self.bindings_for(id, group).unwrap();
         let edited = self.clone();
@@ -596,12 +630,16 @@ impl App {
                 (doc.editor.document.clone(), doc.path.clone(), revision),
             )
         };
-        let snapshot = self.runtime.lock().unwrap().minimap.snapshot(
-            id,
-            minimap.2,
-            minimap.1.as_deref(),
-            &minimap.0,
-        );
+        let snapshot = if self.minimap_visible.get() {
+            self.runtime.lock().unwrap().minimap.snapshot(
+                id,
+                minimap.2,
+                minimap.1.as_deref(),
+                &minimap.0,
+            )
+        } else {
+            Arc::new(kureha_code::minimap::Snapshot::empty(theme.clone()))
+        };
         let show_minimap = self.minimap_visible.get() && snapshot.source_len > 0;
         let minimap_scroll = bindings.scroll.clone();
         let editor = TextView::with_document(bindings.document, bindings.selection)
@@ -618,6 +656,7 @@ impl App {
                     TextEditAction::SelectAll => edit_actions.select_all(),
                 }
             })
+            .inlay_hints(self.language_inlay_hints(id))
             .text_spans(styles.clone())
             .diagnostic_spans(self.language_diagnostics(id))
             .caret_rect_state(if self.focused_group.get() == group {
@@ -646,7 +685,11 @@ impl App {
             .wrap_mode(self.preferences.get().wrap_mode())
             .line_numbers(true)
             .current_line_highlight(true)
-            .tab_mode(TabMode::Spaces(4))
+            .tab_mode(if self.preferences.get().insert_spaces {
+                TabMode::Spaces(self.preferences.get().tab_size as u8)
+            } else {
+                TabMode::Tab
+            })
             .font_size(theme.editor_font_size())
             .padding(10.0)
             .reveal_selection_on_change(true)
@@ -676,7 +719,19 @@ impl App {
             preferences.indent_depth_background,
             preferences.active_block_guide && self.focused_group.get() == group,
             theme.editor_colors(),
-        ).decorations(&minimap.0.as_str(), &syntax::bracket_spans(id, minimap.2, minimap.1.as_deref()), self.definition_link(id)).observe(move |event| modifiers.definition_modifiers(event));
+        )
+        .indent_size(preferences.tab_size)
+        .decorations(
+            &minimap.0.as_str(),
+            &if preferences.active_block_guide {
+                syntax::bracket_spans(id, minimap.2, minimap.1.as_deref())
+            } else {
+                Vec::new()
+            },
+            self.definition_link(id),
+        )
+        .link_style(&styles)
+        .observe(move |event| modifiers.definition_modifiers(event));
         let editor = editor
             .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {
@@ -754,6 +809,7 @@ impl App {
         .fill(theme.editor_colors().background).corner_radius(12.0).clip_content(true)
         .padding_insets(EdgeInsets::new(4.0, 0.0, 4.0, 4.0))
     }
+
     pub(super) fn explorer_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let open = self.clone();
@@ -820,6 +876,7 @@ impl App {
             ),
         }.spacing(0.0).frame(f32::INFINITY, f32::INFINITY)
     }
+
     fn find_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let submit = self.clone();
@@ -854,6 +911,7 @@ impl App {
             Text::from_state(self.search_status.clone()).font_size(11.0).color(theme.colors().muted),
         }.alignment(Alignment::Leading).spacing(6.0).padding(10.0).surface_style(theme.popup_style()).corner_radius(10.0).clip_content(true)
     }
+
     pub(super) fn confirmation_view(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let save = self.clone();
@@ -877,6 +935,7 @@ impl App {
         .frame(f32::INFINITY, f32::INFINITY)
         .surface_style(theme.chrome_style())
     }
+
     pub(super) fn item(
         &self,
         id: &str,
@@ -898,11 +957,15 @@ impl App {
                 })),
         )
     }
+
     pub(super) fn menu(&self) -> MenuBarModel {
         MenuBarModel::new(vec![
-            MenuItemModel::app().children(vec![
-                self.item("settings", "Settings…", "Ctrl+,", App::open_settings),
-            ]),
+            MenuItemModel::app().children(vec![self.item(
+                "settings",
+                "Settings…",
+                "Ctrl+,",
+                App::open_settings,
+            )]),
             MenuItemModel::new("file", "File").children(vec![
                 self.item("new", "New File", "Ctrl+N", App::new_document),
                 self.item("open", "Open File…", "Ctrl+O", |a| {
@@ -1075,7 +1138,12 @@ impl App {
                     a.show_theme_picker(true)
                 }),
                 MenuEntry::Separator,
-                self.item("word-wrap", "Toggle Word Wrap", "Alt+Z", App::toggle_word_wrap),
+                self.item(
+                    "word-wrap",
+                    "Toggle Word Wrap",
+                    "Alt+Z",
+                    App::toggle_word_wrap,
+                ),
                 self.item(
                     "minimap",
                     if self.minimap_visible.get() {
@@ -1144,15 +1212,22 @@ struct LiveEditor {
     group: usize,
     document: State<TextDocument>,
 }
+
 impl View for LiveEditor {
     fn create_element(&self) -> Box<dyn Element> {
         Box::new(ComponentElement::new_with_builder(self.clone(), |view| {
             Box::new(view.app.editor_content(view.id, view.group))
         }))
     }
+
     fn listenables(&self) -> Vec<&dyn Listenable> {
-        vec![&self.document, &self.app.syntax_revision, &self.app.preferences]
+        vec![
+            &self.document,
+            &self.app.syntax_revision,
+            &self.app.preferences,
+        ]
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -1164,6 +1239,7 @@ struct PaneStack {
     app: App,
     layout: groups::PaneLayout,
 }
+
 impl View for PaneStack {
     fn create_element(&self) -> Box<dyn Element> {
         Box::new(scarlet_ui::element::ComponentElement::new_with_builder(
@@ -1171,10 +1247,12 @@ impl View for PaneStack {
             build_panes,
         ))
     }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
 }
+
 fn build_panes(stack: &PaneStack) -> Box<dyn View> {
     match &stack.layout {
         groups::PaneLayout::Leaf(group) => Box::new(stack.app.editor_group(*group)),

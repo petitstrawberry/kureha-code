@@ -1,5 +1,7 @@
 //! LSP workbench integration. All process I/O belongs to the transport workers.
 use super::*;
+#[path = "inlay.rs"]
+mod inlay;
 use kureha_code::extensions::process;
 use kureha_code::lsp::{self, Client, Event as LspEvent};
 use serde_json::{Value, json};
@@ -18,6 +20,7 @@ struct Snapshot {
     caret: usize,
     saved: bool,
 }
+
 #[derive(Clone)]
 struct Guard {
     id: DocumentId,
@@ -25,6 +28,7 @@ struct Guard {
     caret: usize,
     navigation: u64,
 }
+
 #[derive(Clone)]
 pub(super) struct Problem {
     pub path: PathBuf,
@@ -33,12 +37,14 @@ pub(super) struct Problem {
     pub severity: u64,
     revision: u64,
 }
+
 #[derive(Clone)]
 struct Choice {
     label: String,
     detail: String,
     item: Value,
 }
+
 #[derive(Clone)]
 enum Panel {
     Closed,
@@ -48,16 +54,19 @@ enum Panel {
     References(Vec<Location>, bool),
     Rename(Guard, State<String>),
 }
+
 impl Default for Panel {
     fn default() -> Self {
         Self::Closed
     }
 }
+
 #[derive(Clone)]
 struct Location {
     path: PathBuf,
     range: Value,
 }
+
 struct Pending {
     guard: Guard,
     method: String,
@@ -67,6 +76,7 @@ struct Pending {
     hover_generation: Option<u64>,
     document_version: Option<i32>,
 }
+
 struct OpenDocument {
     id: DocumentId,
     revision: u64,
@@ -74,6 +84,7 @@ struct OpenDocument {
     text: String,
     saved: bool,
 }
+
 #[derive(Default)]
 struct SemanticRequests {
     requested: BTreeMap<PathBuf, (u64, kureha_code::theme::Theme, Instant, bool)>,
@@ -95,9 +106,11 @@ struct Session {
     started: Instant,
     diagnostic_requests: BTreeMap<PathBuf, (u64, Instant)>,
     semantic: SemanticRequests,
+    inlays: inlay::Requests,
     /// Active work, most recently updated last.
     progress: Vec<WorkProgress>,
 }
+
 #[derive(Default)]
 pub(super) struct Service {
     sessions: BTreeMap<String, Session>,
@@ -124,6 +137,7 @@ pub(super) fn language(path: &Path) -> Option<&'static str> {
         super::extension_ui::registry()?.language_for_extension(&extension)
     })
 }
+
 fn builtin_language(extension: &str) -> Option<&'static str> {
     match extension {
         "rs" => Some("rust"),
@@ -138,6 +152,7 @@ fn builtin_language(extension: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
 fn command(language: &str) -> Result<(String, Vec<String>), String> {
     let key = language.to_ascii_uppercase();
     if let Ok(program) = std::env::var(format!("KUREHA_LSP_{key}")) {
@@ -200,6 +215,7 @@ fn command(language: &str) -> Result<(String, Vec<String>), String> {
         _ => return Err("No language server configured".into()),
     })
 }
+
 /// An extension's language server runs only with the user's grant, like any
 /// other program an extension starts, and is found in absolute PATH entries.
 fn extension_server(
@@ -220,12 +236,14 @@ fn extension_server(
         .ok_or_else(|| format!("`{program}` was not found on PATH"))?;
     Ok((path.to_string_lossy().into_owned(), server.args.clone()))
 }
+
 struct WorkProgress {
     token: String,
     title: String,
     message: String,
     percentage: Option<u64>,
 }
+
 impl WorkProgress {
     fn update(&mut self, value: &Value) {
         // Omitted report fields retain their previous values.
@@ -236,6 +254,7 @@ impl WorkProgress {
             self.percentage = Some(percentage.min(100));
         }
     }
+
     fn text(&self) -> String {
         let mut text = self.title.clone();
         if !self.message.is_empty() {
@@ -248,6 +267,7 @@ impl WorkProgress {
         short_progress_text(&text)
     }
 }
+
 fn short_progress_text(text: &str) -> String {
     if text.chars().count() > 60 {
         text.chars().take(59).collect::<String>() + "…"
@@ -255,12 +275,15 @@ fn short_progress_text(text: &str) -> String {
         text.to_string()
     }
 }
+
 fn session_key(language: &str, root: &Path) -> String {
     format!("{language}:{}", root.display())
 }
+
 fn uri(path: &Path) -> String {
     lsp::path_to_uri(path).unwrap_or_default()
 }
+
 fn position(text: &str, byte: usize) -> Value {
     let mut byte = byte.min(text.len());
     while !text.is_char_boundary(byte) {
@@ -271,6 +294,7 @@ fn position(text: &str, byte: usize) -> Value {
     let start = before.rfind('\n').map_or(0, |i| i + 1);
     json!({"line":line,"character":text[start..byte].encode_utf16().count()})
 }
+
 fn offset(text: &str, pos: &Value) -> Option<usize> {
     let line = usize::try_from(pos.get("line")?.as_u64()?).ok()?;
     let units = usize::try_from(pos.get("character")?.as_u64()?).ok()?;
@@ -292,11 +316,13 @@ fn offset(text: &str, pos: &Value) -> Option<usize> {
     }
     (count == units).then_some(end)
 }
+
 fn range(text: &str, value: &Value) -> Option<std::ops::Range<usize>> {
     let start = offset(text, value.get("start")?)?;
     let end = offset(text, value.get("end")?)?;
     (start <= end).then_some(start..end)
 }
+
 fn markup(value: &Value) -> String {
     if let Some(s) = value.as_str() {
         s.into()
@@ -308,6 +334,7 @@ fn markup(value: &Value) -> String {
         String::new()
     }
 }
+
 fn parse_diagnostics(path: &Path, revision: u64, text: &str, items: &Value) -> Vec<Problem> {
     items
         .as_array()
@@ -335,6 +362,7 @@ fn parse_diagnostics(path: &Path, revision: u64, text: &str, items: &Value) -> V
         })
         .collect()
 }
+
 const MAX_LANGUAGE_EDITS: usize = 4096;
 const MAX_LANGUAGE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_REFERENCES: usize = 1000;
@@ -357,6 +385,7 @@ fn symbol_at(text: &str, caret: usize) -> Option<&str> {
         .map_or(caret, |(i, ch)| caret + i + ch.len_utf8());
     (start < end).then(|| &text[start..end])
 }
+
 fn valid_symbol_name(name: &str) -> bool {
     let mut chars = name.chars();
     name.len() <= 256
@@ -365,6 +394,7 @@ fn valid_symbol_name(name: &str) -> bool {
             .is_some_and(|ch| ch.is_alphabetic() || matches!(ch, '_' | '$'))
         && chars.all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'))
 }
+
 fn locations(result: &Value) -> Result<(Vec<Location>, bool), String> {
     if result.is_null() {
         return Ok((vec![], false));
@@ -565,6 +595,7 @@ fn prepare_edits(
         parts,
     ))
 }
+
 impl Service {
     fn ensure(&mut self, language: &str, root: &Path) -> String {
         let key = session_key(language, root);
@@ -607,6 +638,7 @@ impl Service {
                     started: Instant::now(),
                     diagnostic_requests: BTreeMap::new(),
                     semantic: SemanticRequests::default(),
+                    inlays: inlay::Requests::default(),
                     progress: Vec::new(),
                 },
             );
@@ -614,6 +646,7 @@ impl Service {
         key
     }
 }
+
 impl App {
     fn language_snapshots(&self) -> Vec<Snapshot> {
         let mut rt = self.runtime.lock().unwrap();
@@ -653,6 +686,7 @@ impl App {
         rt.language.snapshots = snapshots.iter().cloned().map(|doc| (doc.id, doc)).collect();
         snapshots
     }
+
     pub(super) fn poll_language(&self) {
         {
             let mut rt = self.runtime.lock().unwrap();
@@ -666,6 +700,7 @@ impl App {
             rt.language.last_poll = Some(Instant::now());
         }
         let snapshots = self.language_snapshots();
+        let inline_type_hints = self.preferences.get().inline_type_hints;
         let root = self.runtime.lock().unwrap().explorer.root.clone();
         let active = self.active_id();
         let mut changed = false;
@@ -710,9 +745,10 @@ impl App {
                                     options = json!({});
                                 }
                                 options["semanticHighlighting"] = json!({"punctuation":{"enable":true,"specialization":{"enable":true}}});
-                                options["files"] = json!({"excludeDirs":[".git", ".direnv", "target"]});
+                                options["files"] =
+                                    json!({"excludeDirs":[".git", ".direnv", "target"]});
                             }
-                            let params = json!({"processId":std::process::id(),"clientInfo":{"name":"Kureha Code","version":env!("CARGO_PKG_VERSION")},"rootUri":root_uri,"initializationOptions":options,"workspaceFolders":[{"uri":root_uri,"name":session.root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"semanticTokens":kureha_code::semantic::capabilities(),"diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false},"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"publishDiagnostics":{"versionSupport":true},"hover":{"contentFormat":["plaintext"]},"rename":{"prepareSupport":true,"honorsChangeAnnotations":false}},"workspace":{"configuration":true,"workspaceFolders":true,"semanticTokens":{"refreshSupport":true}},"window":{"workDoneProgress":true}}});
+                            let params = json!({"processId":std::process::id(),"clientInfo":{"name":"Kureha Code","version":env!("CARGO_PKG_VERSION")},"rootUri":root_uri,"initializationOptions":options,"workspaceFolders":[{"uri":root_uri,"name":session.root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"inlayHint":{"dynamicRegistration":false},"semanticTokens":kureha_code::semantic::capabilities(),"diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false},"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"publishDiagnostics":{"versionSupport":true},"hover":{"contentFormat":["plaintext"]},"rename":{"prepareSupport":true,"honorsChangeAnnotations":false}},"workspace":{"inlayHint":{"refreshSupport":true},"configuration":true,"workspaceFolders":true,"semanticTokens":{"refreshSupport":true}},"window":{"workDoneProgress":true}}});
                             match client.request("initialize", params) {
                                 Ok(id) => session.initialize = Some(id),
                                 Err(e) => session.failure = Some(e),
@@ -829,19 +865,43 @@ impl App {
                     }
                     let theme = self.theme.get();
                     if doc.text.len() <= kureha_code::syntax::MAX_BYTES
-                        && kureha_code::syntax::cached(doc.id, doc.revision, Some(&doc.path)).is_some()
-                        && session.capabilities.pointer("/semanticTokensProvider/full")
+                        && kureha_code::syntax::cached(doc.id, doc.revision, Some(&doc.path))
+                            .is_some()
+                        && session
+                            .capabilities
+                            .pointer("/semanticTokensProvider/full")
                             .is_some_and(|v| v == &Value::Bool(true) || v.is_object())
-                        && !session.semantic.pending.values().any(|(old, _, _)| old.id == doc.id)
-                        && session.semantic.requested.get(&doc.path).is_none_or(|(revision, previous_theme, time, complete)| {
-                            *revision != doc.revision || previous_theme != &theme
-                                || ((!complete || !kureha_code::syntax::has_semantic_spans(doc.id, doc.revision, &doc.path))
-                                    && time.elapsed() > Duration::from_secs(2))
-                        })
+                        && !session
+                            .semantic
+                            .pending
+                            .values()
+                            .any(|(old, _, _)| old.id == doc.id)
+                        && session.semantic.requested.get(&doc.path).is_none_or(
+                            |(revision, previous_theme, time, complete)| {
+                                *revision != doc.revision
+                                    || previous_theme != &theme
+                                    || ((!complete
+                                        || !kureha_code::syntax::has_semantic_spans(
+                                            doc.id,
+                                            doc.revision,
+                                            &doc.path,
+                                        ))
+                                        && time.elapsed() > Duration::from_secs(2))
+                            },
+                        )
                     {
-                        if let Ok(id) = client.request("textDocument/semanticTokens/full", json!({"textDocument":{"uri":uri(&doc.path)}})) {
-                            session.semantic.requested.insert(doc.path.clone(), (doc.revision, theme.clone(), Instant::now(), false));
-                            session.semantic.pending.insert(id, ((*doc).clone(), theme, Instant::now()));
+                        if let Ok(id) = client.request(
+                            "textDocument/semanticTokens/full",
+                            json!({"textDocument":{"uri":uri(&doc.path)}}),
+                        ) {
+                            session.semantic.requested.insert(
+                                doc.path.clone(),
+                                (doc.revision, theme.clone(), Instant::now(), false),
+                            );
+                            session
+                                .semantic
+                                .pending
+                                .insert(id, ((*doc).clone(), theme, Instant::now()));
                         }
                     }
                     if session
@@ -890,16 +950,39 @@ impl App {
                                 .insert(doc.path.clone(), (doc.revision, Instant::now()));
                         }
                     }
+                    if inline_type_hints
+                        && session
+                            .capabilities
+                            .get("inlayHintProvider")
+                            .is_some_and(|v| v == true || v.is_object())
+                    {
+                        session.inlays.request(client, doc);
+                    }
                     if failure.is_some() {
                         session.failure = failure;
                         changed = true;
                     }
                 }
-                session.semantic.requested.retain(|path, _| session.documents.contains_key(path));
-                let expired_semantic: Vec<_> = session.semantic.pending.iter()
-                    .filter(|(_, (doc, _, time))| time.elapsed() > Duration::from_secs(15)
-                        || !session.documents.get(&doc.path).is_some_and(|d| d.id == doc.id && d.revision == doc.revision))
-                    .map(|(id, _)| *id).collect();
+                session
+                    .inlays
+                    .prune(client, &session.documents, inline_type_hints);
+                session
+                    .semantic
+                    .requested
+                    .retain(|path, _| session.documents.contains_key(path));
+                let expired_semantic: Vec<_> = session
+                    .semantic
+                    .pending
+                    .iter()
+                    .filter(|(_, (doc, _, time))| {
+                        time.elapsed() > Duration::from_secs(15)
+                            || !session
+                                .documents
+                                .get(&doc.path)
+                                .is_some_and(|d| d.id == doc.id && d.revision == doc.revision)
+                    })
+                    .map(|(id, _)| *id)
+                    .collect();
                 for id in expired_semantic {
                     session.semantic.pending.remove(&id);
                     let _ = client.notify("$/cancelRequest", json!({"id":id}));
@@ -986,10 +1069,19 @@ impl App {
             self.changed();
         }
     }
+
     fn language_event(&self, key: &str, event: LspEvent, snapshots: &[Snapshot]) -> bool {
         let mut rt = self.runtime.lock().unwrap();
         match event {
-            LspEvent::Notification { method, .. } if method == "workspace/semanticTokens/refresh" => {
+            LspEvent::Notification { method, .. } if method == "workspace/inlayHint/refresh" => {
+                if let Some(session) = rt.language.sessions.get_mut(key) {
+                    session.inlays.refresh(session.client.as_mut());
+                }
+                false
+            }
+            LspEvent::Notification { method, .. }
+                if method == "workspace/semanticTokens/refresh" =>
+            {
                 if let Some(session) = rt.language.sessions.get_mut(key) {
                     session.semantic.requested.clear();
                     for (id, _) in std::mem::take(&mut session.semantic.pending) {
@@ -1015,7 +1107,8 @@ impl App {
                 let Some(token) = params
                     .get("token")
                     .filter(|token| {
-                        token.is_string() || token.as_i64().is_some_and(|n| i32::try_from(n).is_ok())
+                        token.is_string()
+                            || token.as_i64().is_some_and(|n| i32::try_from(n).is_ok())
                     })
                     .map(Value::to_string)
                 else {
@@ -1121,19 +1214,48 @@ impl App {
                 let Some(session) = rt.language.sessions.get_mut(key) else {
                     return false;
                 };
+                if session.inlays.pending.contains_key(&id) {
+                    let published = session.inlays.response(
+                        id,
+                        &result,
+                        error.is_some(),
+                        snapshots,
+                        self.preferences.get().inline_type_hints,
+                    );
+                    drop(rt);
+                    if published {
+                        self.syntax_revision.update(|n| *n = n.wrapping_add(1));
+                    }
+                    return published;
+                }
                 if let Some((doc, theme, _)) = session.semantic.pending.remove(&id) {
-                    if error.is_some() || !snapshots.iter().any(|s| s.id == doc.id && s.revision == doc.revision && s.path == doc.path) {
+                    if error.is_some()
+                        || !snapshots.iter().any(|s| {
+                            s.id == doc.id && s.revision == doc.revision && s.path == doc.path
+                        })
+                    {
                         return false;
                     }
                     let legend = &session.capabilities["semanticTokensProvider"]["legend"];
                     // Invalid or oversized batches fall back to lexical colors
                     // until an edit/theme change/refresh, avoiding endless full
                     // transfers of the same response. Transport errors retry.
-                    let spans = kureha_code::semantic::decode(&doc.text, &result, legend, &theme).unwrap_or_default();
-                    let published = kureha_code::syntax::set_semantic_spans(doc.id, doc.revision, &doc.path, &theme, spans);
+                    let spans = kureha_code::semantic::decode(&doc.text, &result, legend, &theme)
+                        .unwrap_or_default();
+                    let published = kureha_code::syntax::set_semantic_spans(
+                        doc.id,
+                        doc.revision,
+                        &doc.path,
+                        &theme,
+                        spans,
+                    );
                     if published {
-                        if let Some((revision, requested_theme, _, complete)) = session.semantic.requested.get_mut(&doc.path) {
-                            if *revision == doc.revision && requested_theme == &theme { *complete = true; }
+                        if let Some((revision, requested_theme, _, complete)) =
+                            session.semantic.requested.get_mut(&doc.path)
+                        {
+                            if *revision == doc.revision && requested_theme == &theme {
+                                *complete = true;
+                            }
                         }
                     }
                     return published;
@@ -1408,12 +1530,14 @@ impl App {
             }
         }
     }
+
     pub(super) fn language_request(&self, method: &str) {
         let rect = self.caret_rect.get();
         self.language_anchor
             .set(Point::new(rect.origin.x, rect.origin.y + rect.size.height));
         self.language_request_at(method, None, None, false);
     }
+
     fn language_request_at(
         &self,
         method: &str,
@@ -1423,6 +1547,7 @@ impl App {
     ) {
         self.language_send(method, byte, hover_generation, quiet, None);
     }
+
     fn language_send(
         &self,
         method: &str,
@@ -1500,7 +1625,8 @@ impl App {
             let label = session.label.clone();
             drop(rt);
             if !quiet {
-                self.status.set(format!("{label} has stopped; see its status"));
+                self.status
+                    .set(format!("{label} has stopped; see its status"));
             }
             return;
         }
@@ -1567,6 +1693,7 @@ impl App {
             }
         }
     }
+
     pub(super) fn format_document(&self) {
         // An extension chosen for this language formats instead of the server.
         if self.format_with_extension() {
@@ -1574,20 +1701,24 @@ impl App {
         }
         self.language_request("textDocument/formatting");
     }
+
     pub(super) fn find_references(&self) {
         self.language_request("textDocument/references");
     }
+
     pub(super) fn show_rename(&self) {
         self.dismiss_language_panel();
         self.runtime.lock().unwrap().language.completion_due = None;
         self.language_request("textDocument/prepareRename");
     }
+
     pub(super) fn language_rename_open(&self) -> bool {
         matches!(
             self.runtime.lock().unwrap().language.panel,
             Panel::Rename(..)
         )
     }
+
     fn submit_rename(&self) {
         let (guard, name) = {
             let rt = self.runtime.lock().unwrap();
@@ -1625,6 +1756,7 @@ impl App {
         self.dismiss_language_panel();
         self.language_send("textDocument/rename", None, None, false, Some(&name));
     }
+
     /// Applies byte-offset edits computed against `text` at `revision`, through
     /// the same stale-result checks as language server edits.
     pub(super) fn apply_offset_edits(
@@ -1653,6 +1785,7 @@ impl App {
         };
         self.apply_language_edits(&guard, &values, label)
     }
+
     /// Returns whether the edits were applied.
     fn apply_language_edits(&self, guard: &Guard, edits: &[Value], label: &str) -> bool {
         let Some(id) = self.active_id() else {
@@ -1707,6 +1840,7 @@ impl App {
             }
         }
     }
+
     pub(super) fn schedule_completion(&self, id: DocumentId, delta: &EditDelta) {
         let caret = self
             .bindings(id)
@@ -1732,28 +1866,44 @@ impl App {
             })
             .map(|(rev, caret)| (id, rev, caret, Instant::now()));
     }
+
     pub(super) fn definition_modifiers(&self, event: &Event) {
         let primary = match event {
             Event::Focus(scarlet_ui::event::FocusEvent::Lost) => false,
             Event::ModifiersChanged(modifiers) => modifiers.primary(),
-            Event::Keyboard(KeyEvent::Pressed { modifiers, .. } | KeyEvent::Released { modifiers, .. }) => modifiers.primary(),
+            Event::Keyboard(
+                KeyEvent::Pressed { modifiers, .. } | KeyEvent::Released { modifiers, .. },
+            ) => modifiers.primary(),
             _ => return,
         };
         let mut rt = self.runtime.lock().unwrap();
-        if rt.language.primary_hover == primary { return; }
+        if rt.language.primary_hover == primary {
+            return;
+        }
         rt.language.primary_hover = primary;
         drop(rt);
         self.syntax_revision.update(|v| *v = v.wrapping_add(1));
     }
+
     pub(super) fn definition_link(&self, id: DocumentId) -> Option<std::ops::Range<usize>> {
         let rt = self.runtime.lock().unwrap();
-        if !rt.language.primary_hover { return None; }
+        if !rt.language.primary_hover {
+            return None;
+        }
         let (doc, start, _, _) = rt.language.hover_target?;
-        if doc != id { return None; }
+        if doc != id {
+            return None;
+        }
         let text = rt.workspace.get(id)?.editor.document.as_str();
-        let len: usize = text.get(start..)?.chars().take_while(|c| c.is_alphanumeric() || *c == '_').map(char::len_utf8).sum();
+        let len: usize = text
+            .get(start..)?
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .map(char::len_utf8)
+            .sum();
         (len > 0).then_some(start..start + len)
     }
+
     pub(super) fn pointer_hover(&self, id: DocumentId, hit: Option<(usize, Point)>) {
         let mut rt = self.runtime.lock().unwrap();
         let hit = hit.and_then(|(byte, point)| {
@@ -1797,6 +1947,7 @@ impl App {
             self.changed();
         }
     }
+
     pub(super) fn dismiss_hover_for_scroll(&self) {
         let mut rt = self.runtime.lock().unwrap();
         let service = &mut rt.language;
@@ -1828,9 +1979,11 @@ impl App {
             self.changed();
         }
     }
+
     pub(super) fn keep_hover_open(&self) {
         self.runtime.lock().unwrap().language.hover_hide = None;
     }
+
     pub(super) fn definition_at(&self, id: DocumentId, byte: usize) {
         if Some(id) != self.active_id() {
             return;
@@ -1845,6 +1998,7 @@ impl App {
         bindings.selection.set(TextSelection::collapsed(byte));
         self.language_request("textDocument/definition");
     }
+
     pub(super) fn poll_language_interactions(&self) {
         let active = self.active_id();
         let active_caret = active
@@ -1918,6 +2072,7 @@ impl App {
             }
         }
     }
+
     pub(super) fn language_key(
         &self,
         key: KeyCode,
@@ -2004,15 +2159,18 @@ impl App {
         }
         false
     }
+
     pub(super) fn restart_language_server(&self) {
         self.runtime.lock().unwrap().language = Service::default();
         self.status.set("Restarting language servers…".into());
         self.changed();
     }
+
     pub(super) fn show_problems(&self) {
         self.runtime.lock().unwrap().language.panel = Panel::Problems;
         self.changed();
     }
+
     pub(super) fn dismiss_language_panel(&self) -> bool {
         let mut rt = self.runtime.lock().unwrap();
         let mut open = !matches!(rt.language.panel, Panel::Closed);
@@ -2041,6 +2199,7 @@ impl App {
         }
         open
     }
+
     pub(super) fn language_navigate(&self, path: PathBuf, target: Value) {
         let existing = self.runtime.lock().unwrap().workspace.find_path(&path);
         if let Some(id) = existing {
@@ -2066,6 +2225,7 @@ impl App {
             }
         }
     }
+
     fn language_select(&self, id: DocumentId, target: &Value, remember: bool) {
         let Some(active_bindings) = self.bindings(id) else {
             return;
@@ -2098,6 +2258,7 @@ impl App {
         self.status.set("Location opened".into());
         self.changed();
     }
+
     pub(super) fn language_opened(&self, path: &Path, id: DocumentId) {
         let target =
             {
@@ -2115,6 +2276,7 @@ impl App {
             self.language_select(id, &target, false);
         }
     }
+
     fn accept_completion(&self, index: usize) {
         let Some(id) = self.active_id() else {
             return;
@@ -2212,6 +2374,7 @@ impl App {
         self.changed();
         self.status.set("Completion applied".into());
     }
+
     pub(super) fn language_diagnostics(&self, id: DocumentId) -> Vec<TextDiagnosticSpan> {
         let rt = self.runtime.lock().unwrap();
         let Some(doc) = rt.workspace.get(id) else {
@@ -2239,6 +2402,7 @@ impl App {
             })
             .collect()
     }
+
     pub(super) fn language_popup(&self) -> impl View + Clone + use<> {
         let active = self.active_id();
         let (panel, selected, path) = {
@@ -2349,6 +2513,7 @@ impl App {
         // itself intercept input outside either panel.
         if_view!(rename.is_some(), rename_view, information)
     }
+
     pub(super) fn language_panel(&self) -> impl View + Clone + use<> {
         let (panel, problems, root) = {
             let rt = self.runtime.lock().unwrap();

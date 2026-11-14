@@ -805,6 +805,7 @@ fn incoming_flood_produces_one_failure_instead_of_unbounded_growth() {
 }
 
 struct Scratch(PathBuf);
+
 impl Scratch {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -817,6 +818,7 @@ impl Scratch {
         Self(path)
     }
 }
+
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

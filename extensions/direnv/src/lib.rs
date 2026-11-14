@@ -114,6 +114,7 @@ fn handle(request: Request) -> Reply {
         _ => Reply::unsupported(),
     }
 }
+
 kureha_extension::export!(handle);
 
 #[cfg(test)]

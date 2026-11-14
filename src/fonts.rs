@@ -48,6 +48,7 @@ fn load() -> Option<FontStack> {
 #[cfg(all(test, not(target_os = "scarlet")))]
 mod tests {
     use super::*;
+
     #[test]
     fn bundled_editor_stack_parses_and_reuses_its_cache_identity() {
         let first = editor_stack().expect("bundled fonts must parse");

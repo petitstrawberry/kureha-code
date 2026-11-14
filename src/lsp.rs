@@ -87,6 +87,7 @@ fn progress_report(event: &Event) -> Option<&Value> {
         _ => None,
     }
 }
+
 fn event_token(event: &Event) -> Option<&Value> {
     match event {
         Event::Notification { params, .. } => params.get("token").filter(|token| {
@@ -472,7 +473,10 @@ fn dispatch(
             if !id.is_string() && id.as_i64().is_none_or(|n| i32::try_from(n).is_err()) {
                 return Err("Invalid LSP server request ID".into());
             }
-            if method == "workspace/semanticTokens/refresh" {
+            if matches!(
+                method.as_str(),
+                "workspace/semanticTokens/refresh" | "workspace/inlayHint/refresh"
+            ) {
                 shared.event(
                     Event::Notification {
                         method: method.clone(),
@@ -536,7 +540,8 @@ fn server_reply(id: Value, method: &str, params: &Value) -> Value {
         "workspace/workspaceFolders"
         | "window/showMessageRequest"
         | "window/workDoneProgress/create"
-        | "workspace/semanticTokens/refresh" => Value::Null,
+        | "workspace/semanticTokens/refresh"
+        | "workspace/inlayHint/refresh" => Value::Null,
         "workspace/applyEdit" => {
             json!({"applied":false,"failureReason":"Workspace edits require editor approval and are not supported by this transport"})
         }

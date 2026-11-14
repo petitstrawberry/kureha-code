@@ -16,6 +16,7 @@ pub(crate) struct Pty {
     child: Child,
     reaped: bool,
 }
+
 impl Pty {
     pub fn open(cwd: &Path, size: (u16, u16)) -> io::Result<Self> {
         let mut master_fd = -1;
@@ -98,10 +99,12 @@ impl Pty {
             reaped: false,
         })
     }
+
     #[cfg(test)]
     pub fn pid_for_test(&self) -> libc::pid_t {
         self.child.id() as libc::pid_t
     }
+
     pub fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         match self.master.as_mut().unwrap().read(bytes) {
             // Linux reports EIO for the normal slave-side close.
@@ -109,9 +112,11 @@ impl Pty {
             result => result,
         }
     }
+
     pub fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.master.as_mut().unwrap().write(bytes)
     }
+
     pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
         let size = libc::winsize {
             ws_col: columns,
@@ -133,6 +138,7 @@ impl Pty {
             Ok(())
         }
     }
+
     pub fn try_wait(&mut self) -> io::Result<Option<Option<i32>>> {
         self.child.try_wait().map(|exit| {
             exit.map(|exit| {
@@ -142,6 +148,7 @@ impl Pty {
         })
     }
 }
+
 impl Drop for Pty {
     fn drop(&mut self) {
         // Read the foreground group before closing the controlling PTY, so a

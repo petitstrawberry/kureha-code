@@ -10,6 +10,9 @@ pub(super) struct Settings {
     format_on_save: State<bool>,
     indent_depth_background: State<bool>,
     active_block_guide: State<bool>,
+    inline_type_hints: State<bool>,
+    insert_spaces: State<bool>,
+    tab_size: State<usize>,
     license: State<usize>,
     query: State<String>,
     rows: State<Vec<usize>>,
@@ -20,6 +23,7 @@ pub(super) struct Settings {
     document: State<Arc<kureha_code::markdown::Document>>,
     position: Arc<Mutex<crate::markdown_view::PreviewPosition>>,
 }
+
 impl Settings {
     pub fn new() -> Self {
         Self {
@@ -29,6 +33,9 @@ impl Settings {
             format_on_save: state(false),
             indent_depth_background: state(false),
             active_block_guide: state(false),
+            inline_type_hints: state(false),
+            insert_spaces: state(true),
+            tab_size: state(3),
             license: state(0),
             query: state(String::new()),
             rows: state(Vec::new()),
@@ -40,9 +47,11 @@ impl Settings {
             position: Arc::new(Mutex::new(Default::default())),
         }
     }
+
     pub fn listenables(&self) -> Vec<&dyn Listenable> {
         vec![&self.page, &self.license, &self.document]
     }
+
     pub(super) fn sync_preferences(&self, preferences: &preferences::Preferences) {
         if self.word_wrap.get() != preferences.word_wrap {
             self.word_wrap.set(preferences.word_wrap);
@@ -51,16 +60,27 @@ impl Settings {
             self.format_on_save.set(preferences.format_on_save);
         }
         if self.indent_depth_background.get() != preferences.indent_depth_background {
-            self.indent_depth_background.set(preferences.indent_depth_background);
+            self.indent_depth_background
+                .set(preferences.indent_depth_background);
         }
         if self.active_block_guide.get() != preferences.active_block_guide {
             self.active_block_guide.set(preferences.active_block_guide);
+        }
+        if self.inline_type_hints.get() != preferences.inline_type_hints {
+            self.inline_type_hints.set(preferences.inline_type_hints);
+        }
+        if self.insert_spaces.get() != preferences.insert_spaces {
+            self.insert_spaces.set(preferences.insert_spaces);
+        }
+        if self.tab_size.get() != preferences.tab_size - 1 {
+            self.tab_size.set(preferences.tab_size - 1);
         }
         let mode = usize::from(!preferences.wrap_at_words);
         if self.wrap_mode.get() != mode {
             self.wrap_mode.set(mode);
         }
     }
+
     pub(super) fn refresh_license_list(&self) {
         let query = self.query.get();
         let mut previous = self.last_query.lock().unwrap();
@@ -81,6 +101,7 @@ impl Settings {
         self.rows.set(rows);
         *previous = Some(query);
     }
+
     pub(super) fn show_license(&self, index: usize) {
         if let Some(entry) = acknowledgements().get(index) {
             self.license.set(index);
@@ -112,6 +133,7 @@ impl Settings {
         }
     }
 }
+
 fn state<T: Clone + Send + Sync + 'static>(value: T) -> State<T> {
     State::new(generate_state_id(), value)
 }
@@ -159,10 +181,12 @@ pub(super) fn acknowledgements() -> &'static Vec<(String, String)> {
             .collect()
     })
 }
+
 impl App {
     pub(super) fn is_settings_tab(&self, id: TabId) -> bool {
         self.runtime.lock().unwrap().settings_tab == Some(id)
     }
+
     fn show_settings_tab(&self) {
         if self.blocked() {
             return;
@@ -198,16 +222,19 @@ impl App {
         self.update_position();
         self.changed();
     }
+
     pub(super) fn open_settings(&self) {
         self.settings_ui.page.set(0);
         self.show_settings_tab();
     }
+
     pub(super) fn open_acknowledgements(&self) {
         self.settings_ui.page.set(1);
         self.settings_ui
             .show_license(self.settings_ui.license.get());
         self.show_settings_tab();
     }
+
     pub(super) fn close_settings_tab(&self, id: TabId) -> bool {
         if !self.is_settings_tab(id) {
             return false;
@@ -237,6 +264,7 @@ impl App {
         self.changed();
         true
     }
+
     pub(super) fn settings_view(&self, group: usize) -> impl View + Clone + use<> {
         let colors = self.theme.get().colors();
         let appearance = self.clone();
@@ -275,6 +303,7 @@ impl App {
             false
         })
     }
+
     fn appearance_settings(&self) -> impl View + Clone + use<> {
         let theme = self.theme.get();
         let colors = theme.colors();
@@ -292,6 +321,7 @@ impl App {
         let format_app = self.clone();
         let indent_app = self.clone();
         let guide_app = self.clone();
+        let hints_app = self.clone();
         let file_app = self.clone();
         let custom_app = self.clone();
         let button = |label: String| {
@@ -303,6 +333,8 @@ impl App {
         };
         let label = |text: &str| Text::new(text).font_size(13.0).color(colors.muted);
         let size = theme.editor_font_size();
+        let spaces_app = self.clone();
+        let tab_size_app = self.clone();
         ScrollView::new(vstack! {
             vstack! {
                 label("Color theme"),
@@ -366,6 +398,24 @@ impl App {
                 Toggle::new(self.settings_ui.active_block_guide.clone())
                     .on_change(move |enabled| guide_app.change_preferences(Change::ActiveBlockGuide(enabled))),
             }.alignment(Alignment::Leading).spacing(6.0),
+            vstack! {
+            vstack! {
+                label("Inline type hints"),
+                Toggle::new(self.settings_ui.inline_type_hints.clone())
+                    .on_change(move |enabled| hints_app.change_preferences(Change::InlineTypeHints(enabled))),
+                label("Show inferred types beside code when supported by the language server."),
+            }.alignment(Alignment::Leading).spacing(6.0),
+            vstack! {
+                label("Insert spaces when pressing Tab"),
+                Toggle::new(self.settings_ui.insert_spaces.clone())
+                    .on_change(move |enabled| spaces_app.change_preferences(Change::InsertSpaces(enabled))),
+                label("Indent size"),
+                Select::new((1..=8).map(|n| format!("{n} spaces")).collect(), self.settings_ui.tab_size.clone())
+                    .width(150.0)
+                    .on_change(move |index| tab_size_app.change_preferences(Change::TabSize(index + 1))),
+                label("Applies to typing and indentation commands; existing text is unchanged."),
+            }.alignment(Alignment::Leading).spacing(6.0),
+            }.alignment(Alignment::Leading).spacing(16.0),
             hstack! {
                 Button::new("Open Settings File…").header_style().text_color(colors.accent).background_color(Color::TRANSPARENT)
                     .on_click(move || file_app.open_preferences_file()),
@@ -374,6 +424,7 @@ impl App {
             }.spacing(8.0),
         }.alignment(Alignment::Leading).spacing(16.0).padding(20.0)).frame(f32::INFINITY, f32::INFINITY)
     }
+
     fn license_settings(&self) -> impl View + Clone + use<> {
         let colors = self.theme.get().colors();
         let rows = self.settings_ui.clone();
@@ -464,6 +515,7 @@ mod tests {
     fn appearance_switches_update_preferences_and_follow_external_changes() {
         use scarlet_ui::event::{MouseButton, MouseEvent};
         use scarlet_ui::views::ToggleRenderObject;
+
         fn switches(element: &dyn Element, parent: Point, points: &mut Vec<Point>) {
             let origin = Point::new(
                 parent.x + element.position().x,
@@ -481,13 +533,14 @@ mod tests {
                 switches(child.as_ref(), origin, points);
             }
         }
+
         let app = App::new();
         app.open_settings();
         let mut pipeline = RenderingPipeline::new();
         let window = || {
             Window::new("Settings", app.content())
                 .decorated(false)
-                .size(Size::new(1100.0, 1000.0))
+                .size(Size::new(1100.0, 1200.0))
         };
         pipeline.set_root(window().create_element());
         pipeline.layout_initial();
@@ -498,7 +551,7 @@ mod tests {
             &mut points,
         );
         // Word wrap, format on save, minimap, indent backgrounds, active guide.
-        assert_eq!(points.len(), 5);
+        assert_eq!(points.len(), 7);
         for (index, point) in points.iter().enumerate() {
             let (x, y) = (point.x as i32, point.y as i32);
             pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
@@ -518,7 +571,9 @@ mod tests {
                 1 => assert!(app.preferences.get().format_on_save),
                 2 => assert!(app.preferences.get().hide_minimap),
                 3 => assert!(app.preferences.get().indent_depth_background),
-                _ => assert!(app.preferences.get().active_block_guide),
+                4 => assert!(app.preferences.get().active_block_guide),
+                5 => assert!(app.preferences.get().inline_type_hints),
+                _ => assert!(!app.preferences.get().insert_spaces),
             }
             pipeline
                 .element_tree_mut()
@@ -533,8 +588,10 @@ mod tests {
         app.change_preferences(Change::FormatOnSave(false));
         app.change_preferences(Change::IndentDepthBackground(false));
         app.change_preferences(Change::ActiveBlockGuide(false));
+        app.change_preferences(Change::InlineTypeHints(false));
         assert!(!app.settings_ui.indent_depth_background.get());
         assert!(!app.settings_ui.active_block_guide.get());
+        assert!(!app.settings_ui.inline_type_hints.get());
         assert!(!app.settings_ui.format_on_save.get());
         assert!(app.settings_ui.word_wrap.get());
         assert_eq!(app.settings_ui.wrap_mode.get(), 1);
@@ -692,6 +749,7 @@ mod tests {
         }
         std::fs::write(dir.join("alignment.csv"), measurements).unwrap();
     }
+
     #[test]
     fn settings_menu_uses_the_existing_application_menu_contract() {
         let app = App::new();
@@ -720,6 +778,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn settings_reuses_a_tab_and_moves_and_closes_independently_of_documents() {
         let app = App::with_document();
@@ -761,6 +820,7 @@ mod tests {
         app.close_active();
         assert!(app.panes.get().iter().all(Option::is_none));
     }
+
     #[test]
     fn settings_shortcuts_work_without_an_open_document() {
         use scarlet_ui::event::KeyModifiers;
@@ -798,6 +858,7 @@ mod tests {
         assert_eq!(app.group_id(0), None);
         pipeline.teardown();
     }
+
     #[test]
     fn inline_license_filter_keeps_notice_identity_when_rows_change() {
         let app = App::new();
@@ -828,6 +889,7 @@ mod tests {
         assert!(Arc::ptr_eq(&document, &settings.document.get()));
         assert!(!app.nav.is_open());
     }
+
     #[test]
     fn license_page_blocks_typing_without_changing_the_editor() {
         use scarlet_ui::event::{MouseButton, MouseEvent};
@@ -878,6 +940,7 @@ mod tests {
         );
         pipeline.teardown();
     }
+
     #[test]
     #[ignore = "manual native settings preview"]
     fn settings_preview() {

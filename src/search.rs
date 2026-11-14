@@ -7,6 +7,7 @@ pub struct Options {
     pub whole_word: bool,
     pub regex: bool,
 }
+
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -16,7 +17,9 @@ impl Default for Options {
         }
     }
 }
+
 pub struct Pattern(regex::Regex);
+
 impl Pattern {
     pub fn new(query: &str, options: Options) -> Result<Self, String> {
         if query.is_empty() {
@@ -42,9 +45,11 @@ impl Pattern {
             .map(Self)
             .map_err(|e| format!("Invalid search: {e}"))
     }
+
     pub fn ranges<'a>(&'a self, text: &'a str) -> impl Iterator<Item = Range<usize>> + 'a {
         self.0.find_iter(text).map(|m| m.range())
     }
+
     pub fn next(
         &self,
         text: &str,
@@ -78,6 +83,7 @@ impl Pattern {
             first.or(skipped)
         }
     }
+
     pub fn replacement(
         &self,
         text: &str,
@@ -97,6 +103,7 @@ impl Pattern {
         }
         Some(output)
     }
+
     pub fn replace(
         &self,
         text: &str,
@@ -107,6 +114,7 @@ impl Pattern {
         self.replacement_plan(text, replacement, expand, limit)
             .map(|plan| plan.map(|(text, edits)| (text, edits.len())))
     }
+
     pub fn replacement_plan(
         &self,
         text: &str,
@@ -202,6 +210,7 @@ pub fn replace_all(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn next_wraps_to_the_only_match_including_zero_width() {
         let pattern = Pattern::new("猫", Options::default()).unwrap();
@@ -218,6 +227,7 @@ mod tests {
         .unwrap();
         assert_eq!(pattern.next("one line", 0, false, Some(0..0)), Some(0..0));
     }
+
     #[test]
     fn regex_captures_case_words_and_zero_width_matches_are_bounded() {
         let p = Pattern::new(
@@ -270,6 +280,7 @@ mod tests {
             Some((">a\n>b".into(), 2))
         );
     }
+
     #[test]
     fn unicode_search_wraps_both_directions_and_empty_query_is_safe() {
         let text = "猫 a 猫";

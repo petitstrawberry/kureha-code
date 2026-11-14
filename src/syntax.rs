@@ -37,16 +37,19 @@ struct Key {
     revision: u64,
     path: Option<PathBuf>,
 }
+
 impl Key {
     fn matches(&self, revision: u64, path: Option<&Path>) -> bool {
         self.revision == revision && self.path.as_deref() == path
     }
 }
+
 #[derive(Default)]
 struct Highlight {
     spans: Vec<TextStyleSpan>,
     fallback: Option<&'static str>,
 }
+
 impl Highlight {
     fn plain(reason: &'static str) -> Self {
         Self {
@@ -55,6 +58,7 @@ impl Highlight {
         }
     }
 }
+
 struct Entry {
     key: Key,
     text: Arc<str>,
@@ -63,8 +67,10 @@ struct Entry {
     highlight: Arc<Highlight>,
     lexical: Arc<Highlight>,
     semantic: Option<Vec<TextStyleSpan>>,
+    provisional_semantic: Vec<TextStyleSpan>,
     generation: u64,
 }
+
 struct Request {
     id: u64,
     key: Key,
@@ -72,6 +78,7 @@ struct Request {
     text: String,
     theme: EditorTheme,
 }
+
 #[derive(Default)]
 struct Cache {
     entries: HashMap<u64, Entry>,
@@ -80,6 +87,7 @@ struct Cache {
     changed: bool,
     theme: EditorTheme,
 }
+
 impl Cache {
     fn set_theme(&mut self, theme: EditorTheme) -> bool {
         if self.theme == theme {
@@ -121,6 +129,21 @@ impl Cache {
             .get(&id)
             .filter(|entry| entry.key.path.as_deref() == path && text.len() <= MAX_BYTES)
             .map(|entry| remap_spans(&entry.text, text, &entry.highlight.spans))
+            .unwrap_or_default();
+        let provisional_semantic = self
+            .entries
+            .get(&id)
+            .filter(|entry| entry.key.path.as_deref() == path && text.len() <= MAX_BYTES)
+            .map(|entry| {
+                remap_spans(
+                    &entry.text,
+                    text,
+                    entry
+                        .semantic
+                        .as_deref()
+                        .unwrap_or(&entry.provisional_semantic),
+                )
+            })
             .unwrap_or_default();
         self.remove(id);
         if self.entries.len() >= MAX_DOCUMENTS {
@@ -172,6 +195,7 @@ impl Cache {
                     fallback: highlight.fallback,
                 }),
                 semantic: None,
+                provisional_semantic,
                 highlight: Arc::new(highlight),
                 generation: self.clock,
             },
@@ -198,6 +222,7 @@ impl Cache {
             return false;
         };
         self.clock = self.clock.wrapping_add(1);
+        entry.provisional_semantic.clear();
         entry.semantic = Some(spans);
         entry.highlight = combined(&entry.lexical, entry.semantic.as_deref());
         entry.generation = self.clock;
@@ -218,13 +243,26 @@ impl Cache {
             return false;
         }
         self.clock = self.clock.wrapping_add(1);
+        // A fast lexical response must not erase unchanged semantic colors
+        // while the slower server catches up with this edit. They remain
+        // provisional, so has_semantic_spans still requests fresh server data.
         entry.lexical = Arc::new(highlight);
-        entry.highlight = combined(&entry.lexical, entry.semantic.as_deref());
+        if entry.lexical.fallback.is_some() {
+            entry.provisional_semantic.clear();
+        }
+        entry.highlight = combined(
+            &entry.lexical,
+            entry
+                .semantic
+                .as_deref()
+                .or(Some(&entry.provisional_semantic)),
+        );
         entry.generation = self.clock;
         self.changed = true;
         true
     }
 }
+
 fn combined(lexical: &Arc<Highlight>, semantic: Option<&[TextStyleSpan]>) -> Arc<Highlight> {
     match semantic {
         Some(spans) => Arc::new(Highlight {
@@ -268,10 +306,31 @@ pub fn has_semantic_spans(id: u64, revision: u64, path: &Path) -> bool {
 
 /// Exact semantic punctuation, excluding lexical string and comment contents.
 pub fn bracket_spans(id: u64, revision: u64, path: Option<&Path>) -> Vec<TextStyleSpan> {
-    let Some(service) = SERVICE.get() else { return Vec::new(); };
+    let Some(service) = SERVICE.get() else {
+        return Vec::new();
+    };
     let cache = service.shared.0.lock().unwrap();
-    let Some(entry) = cache.entries.get(&id).filter(|e| e.key.matches(revision, path)) else { return Vec::new(); };
-    entry.semantic.iter().flatten().filter(|span| span.range.len() == 1 && entry.text.get(span.range.clone()).is_some_and(|s| matches!(s, "(" | ")" | "[" | "]" | "{" | "}"))).cloned().collect()
+    let Some(entry) = cache
+        .entries
+        .get(&id)
+        .filter(|e| e.key.matches(revision, path))
+    else {
+        return Vec::new();
+    };
+    entry
+        .semantic
+        .as_deref()
+        .unwrap_or(&entry.provisional_semantic)
+        .iter()
+        .filter(|span| {
+            span.range.len() == 1
+                && entry
+                    .text
+                    .get(span.range.clone())
+                    .is_some_and(|s| matches!(s, "(" | ")" | "[" | "]" | "{" | "}"))
+        })
+        .cloned()
+        .collect()
 }
 
 /// Keep only unchanged pieces of the previous highlight, translated through a
@@ -322,10 +381,12 @@ struct Service {
     shared: Arc<(Mutex<Cache>, Condvar)>,
     running: bool,
 }
+
 impl Service {
     fn new() -> Self {
         Self::with_theme(EditorTheme::default())
     }
+
     fn with_theme(theme: EditorTheme) -> Self {
         let shared = Arc::new((
             Mutex::new(Cache {
@@ -363,6 +424,7 @@ impl Service {
         Self { shared, running }
     }
 }
+
 static SERVICE: OnceLock<Service> = OnceLock::new();
 static CATALOG: OnceLock<Catalog> = OnceLock::new();
 
@@ -371,11 +433,13 @@ struct SnippetSource {
     path: Option<PathBuf>,
     id: u64,
 }
+
 struct Snippets {
     service: Service,
     sources: Mutex<VecDeque<SnippetSource>>,
     next_id: AtomicU64,
 }
+
 static SNIPPETS: [OnceLock<Snippets>; 3] = [const { OnceLock::new() }; 3];
 
 /// Bounded, asynchronous hover highlighting with the editor's grammars/colors.
@@ -485,6 +549,7 @@ pub struct Snapshot {
     pub generation: u64,
     pub theme: EditorTheme,
 }
+
 impl Snapshot {
     pub fn spans(&self) -> &[TextStyleSpan] {
         &self.highlight.spans
@@ -523,6 +588,7 @@ pub fn fallback_reason(id: u64, revision: u64, path: Option<&Path>) -> Option<&'
 struct Catalog {
     syntaxes: SyntaxSet,
 }
+
 impl Catalog {
     fn new() -> Self {
         let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
@@ -718,6 +784,7 @@ mod tests {
         static CATALOG: OnceLock<Catalog> = OnceLock::new();
         CATALOG.get_or_init(Catalog::new)
     }
+
     pub(super) fn request(id: u64, revision: u64, name: &str, text: &str) -> Request {
         Request {
             id,
@@ -730,6 +797,7 @@ mod tests {
             theme: EditorTheme::Light,
         }
     }
+
     fn highlight(name: &str, text: &str) -> Highlight {
         let result = catalog().highlight(&request(1, 0, name, text));
         assert!(result.fallback.is_none(), "{}: {:?}", name, result.fallback);
@@ -741,6 +809,7 @@ mod tests {
         }
         result
     }
+
     fn color_at(result: &Highlight, byte: usize) -> Option<Color> {
         result
             .spans
@@ -748,9 +817,11 @@ mod tests {
             .find(|span| span.range.contains(&byte))
             .map(|span| span.color)
     }
+
     fn color_of(result: &Highlight, text: &str, token: &str) -> Option<Color> {
         color_at(result, text.find(token).expect("test token"))
     }
+
     fn assert_same_color(result: &Highlight, text: &str, tokens: &[&str]) {
         let expected = color_of(result, text, tokens[0]);
         assert!(expected.is_some(), "uncolored token: {}", tokens[0]);
@@ -778,6 +849,7 @@ mod tests {
             color_of(&result, text, "raw start")
         );
     }
+
     #[test]
     fn python_triple_strings_do_not_turn_hashes_into_comments() {
         let text = "value = '''triple start\n# string body with 猫\ntriple end'''\n# real comment\ndef greet():\n    return \"hello\"\n";
@@ -796,6 +868,7 @@ mod tests {
             color_of(&result, text, "triple start")
         );
     }
+
     #[test]
     fn javascript_comments_and_template_strings_cross_lines() {
         let text = "/* block start\n block end */\nconst value = `template start\n// string body\ntemplate end`;\nfunction greet() { return true; }\n";
@@ -811,6 +884,7 @@ mod tests {
             color_of(&result, text, "template start")
         );
     }
+
     #[test]
     fn typescript_handles_types_multiline_comments_and_nested_templates() {
         let text = "/* block start\n block end */\ninterface Person { name: string; }\nconst x: Person = {name: `template start\n// string body ${ {nested: `inner ${true}`}.nested } template end`};\n";
@@ -830,6 +904,7 @@ mod tests {
             color_of(&result, text, "template start")
         );
     }
+
     #[test]
     fn toml_multiline_basic_and_literal_strings_contain_hashes() {
         let text = "[package]\nname = \"kureha\"\nfirst = \"\"\"basic start\n# basic body\nbasic end\"\"\"\nsecond = '''literal start\n# literal body\nliteral end'''\n# actual comment\nenabled = true\n";
@@ -846,6 +921,7 @@ mod tests {
         );
         assert!(color_of(&result, text, "true").is_some());
     }
+
     #[test]
     fn json_escapes_markdown_fences_and_common_formats_are_colored() {
         let text = "{\"名前\": \"quote \\\" // string body\", \"n\": 42, \"enabled\": true}";
@@ -865,6 +941,7 @@ mod tests {
         }
         assert!(highlight("notes.txt", "a plain note").spans.is_empty());
     }
+
     #[test]
     fn syntax_detection_uses_snapshot_shebang_case_and_special_names() {
         for (path, first, expected) in [
@@ -877,6 +954,56 @@ mod tests {
             assert_eq!(catalog().syntax(path.map(Path::new), first).name, expected);
         }
     }
+
+    #[test]
+    fn blank_line_edits_keep_semantic_colors_through_each_lexical_completion() {
+        let mut cache = Cache::default();
+        let path = Path::new("insertion.rs");
+        let theme = cache.theme.clone();
+        let source = "struct Example {}\nfn main() {}\n";
+        let color = Color::rgb(1u8, 170u8, 180u8);
+        cache.request(42, 0, Some(path), source);
+        let first = cache.pending.pop_front().unwrap();
+        cache.publish(&first, Highlight::default());
+        cache.publish_semantic(
+            42,
+            0,
+            path,
+            &theme,
+            vec![TextStyleSpan {
+                range: 7..14,
+                color,
+            }],
+        );
+        for revision in 1..=3 {
+            let source = format!(
+                "{}struct Example {{}}\nfn main() {{}}\n",
+                "\n".repeat(revision as usize)
+            );
+            cache.request(42, revision, Some(path), &source);
+            let request = cache.pending.pop_front().unwrap();
+            cache.publish(&request, Highlight::default());
+            let entry = &cache.entries[&42];
+            assert!(
+                entry.semantic.is_none(),
+                "provisional colors must not suppress LSP requests"
+            );
+            let offset = source.find("Example").unwrap();
+            assert!(
+                entry
+                    .highlight
+                    .spans
+                    .iter()
+                    .any(|s| s.range == (offset..offset + 7) && s.color == color)
+            );
+        }
+        assert!(cache.publish_semantic(42, 3, path, &theme, vec![]));
+        assert!(
+            cache.entries[&42].highlight.spans.is_empty(),
+            "fresh server result replaces provisional colors"
+        );
+    }
+
     #[test]
     fn semantic_colors_survive_late_lexical_results_but_not_stale_edits_or_themes() {
         let mut cache = Cache::default();
@@ -965,6 +1092,7 @@ mod tests {
             Some(Path::new("a.py"))
         );
     }
+
     #[test]
     fn provisional_colors_follow_unicode_insert_delete_and_undo_without_blank_frames() {
         let mut cache = Cache::default();
@@ -1033,6 +1161,7 @@ mod tests {
         cache.request(1, 1, None, "original");
         assert!(!cache.publish(&second, Highlight::default()));
     }
+
     #[test]
     fn queue_coalesces_and_memory_is_bounded() {
         let mut cache = Cache::default();
@@ -1050,6 +1179,7 @@ mod tests {
         cache.request(1, 999, None, "small");
         assert_eq!(cache.pending.back().unwrap().id, 1);
     }
+
     #[test]
     fn large_or_pathological_documents_have_explicit_whole_document_fallbacks() {
         let mut cache = Cache::default();
@@ -1071,6 +1201,7 @@ mod tests {
             assert!(result.fallback.is_some());
         }
     }
+
     #[test]
     fn custom_palette_reload_rejects_old_jobs_and_uses_new_token_colors() {
         let mut cache = Cache::default();

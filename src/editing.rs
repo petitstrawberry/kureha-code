@@ -14,7 +14,6 @@ use scarlet_ui::prelude::{EditDelta, TextPosition, TextSelection};
 use std::ops::Range;
 
 pub const INDENT_WIDTH: usize = 4;
-const INDENT: &str = "    ";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditPlan {
@@ -101,11 +100,25 @@ pub fn toggle_line_comment(
 /// Add four spaces to every touched line (or to the current line for a caret).
 /// Existing tabs are preserved; this command never converts the rest of a line.
 pub fn indent(text: &str, selection: TextSelection) -> Option<EditPlan> {
+    indent_with(text, selection, true, INDENT_WIDTH)
+}
+
+pub fn indent_with(
+    text: &str,
+    selection: TextSelection,
+    spaces: bool,
+    width: usize,
+) -> Option<EditPlan> {
+    let unit = if spaces {
+        " ".repeat(width.clamp(1, 8))
+    } else {
+        "\t".into()
+    };
     let block = selected_lines(text, selection)?;
     let changes = line_ranges(text, &block)
         .map(|range| EditDelta {
             replaced_range: range.start..range.start,
-            inserted: INDENT.into(),
+            inserted: unit.clone(),
         })
         .collect();
     line_changes(text, selection, block.start, changes)
@@ -115,18 +128,23 @@ pub fn indent(text: &str, selection: TextSelection) -> Option<EditPlan> {
 /// four-column tab stop, so mixed prefixes such as two spaces plus a tab lose
 /// one level together, without deleting any non-whitespace text.
 pub fn outdent(text: &str, selection: TextSelection) -> Option<EditPlan> {
+    outdent_with(text, selection, INDENT_WIDTH)
+}
+
+pub fn outdent_with(text: &str, selection: TextSelection, width: usize) -> Option<EditPlan> {
+    let width = width.clamp(1, 8);
     let block = selected_lines(text, selection)?;
     let changes = line_ranges(text, &block)
         .filter_map(|range| {
             let mut bytes = 0;
             let mut columns = 0;
             for byte in text[range.clone()].bytes() {
-                if columns >= INDENT_WIDTH {
+                if columns >= width {
                     break;
                 }
                 match byte {
                     b' ' => columns += 1,
-                    b'\t' => columns += INDENT_WIDTH - columns % INDENT_WIDTH,
+                    b'\t' => columns += width - columns % width,
                     _ => break,
                 }
                 bytes += 1;
@@ -232,6 +250,20 @@ pub fn move_lines(text: &str, selection: TextSelection, direction: Direction) ->
 /// brace on its own line. A conservative lexical check avoids that expansion in
 /// comments and common quoted/raw strings; this is not a language parser.
 pub fn newline(text: &str, selection: TextSelection) -> Option<EditPlan> {
+    newline_with(text, selection, true, INDENT_WIDTH)
+}
+
+pub fn newline_with(
+    text: &str,
+    selection: TextSelection,
+    spaces: bool,
+    width: usize,
+) -> Option<EditPlan> {
+    let unit = if spaces {
+        " ".repeat(width.clamp(1, 8))
+    } else {
+        "\t".into()
+    };
     let range = selection_range(text, selection)?;
     let start = line_start(text, range.start);
     let before = &text[start..range.start];
@@ -250,12 +282,10 @@ pub fn newline(text: &str, selection: TextSelection) -> Option<EditPlan> {
             ) && code_at(text, open)
             {
                 let close = range.end + after.len() - right.len();
-                let inserted = format!("\n{indentation}{INDENT}\n{indentation}");
+                let inserted = format!("\n{indentation}{unit}\n{indentation}");
                 return Some(EditPlan {
                     parts: Vec::new(),
-                    selection: TextSelection::collapsed(
-                        open + 2 + indentation.len() + INDENT.len(),
-                    ),
+                    selection: TextSelection::collapsed(open + 2 + indentation.len() + unit.len()),
                     edit: EditDelta {
                         replaced_range: open + 1..close,
                         inserted,
@@ -271,6 +301,48 @@ pub fn newline(text: &str, selection: TextSelection) -> Option<EditPlan> {
         edit: EditDelta {
             replaced_range: range,
             inserted,
+        },
+    })
+}
+
+/// Backspace to the previous indentation stop, without touching code or selections.
+pub fn backspace_indent(text: &str, selection: TextSelection, width: usize) -> Option<EditPlan> {
+    let range = selection_range(text, selection)?;
+    if !range.is_empty() {
+        return None;
+    }
+    let caret = range.start;
+    let start = line_start(text, caret);
+    let prefix = &text[start..caret];
+    if prefix.is_empty() || !prefix.bytes().all(|b| matches!(b, b' ' | b'\t')) {
+        return None;
+    }
+    let width = width.clamp(1, 8);
+    let column = prefix.bytes().fold(0, |col, b| {
+        col + if b == b'\t' { width - col % width } else { 1 }
+    });
+    let stop = (column - 1) / width * width;
+    let mut column = 0;
+    let mut byte = start;
+    for (index, b) in prefix.bytes().enumerate() {
+        let next = column
+            + if b == b'\t' {
+                width - column % width
+            } else {
+                1
+            };
+        if next > stop {
+            break;
+        }
+        column = next;
+        byte = start + index + 1;
+    }
+    Some(EditPlan {
+        parts: Vec::new(),
+        selection: TextSelection::collapsed(byte),
+        edit: EditDelta {
+            replaced_range: byte..caret,
+            inserted: String::new(),
         },
     })
 }
@@ -995,5 +1067,63 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod indentation_preferences_tests {
+    use super::*;
+
+    #[test]
+    fn indentation_commands_use_selected_width_and_input_style() {
+        for width in [2, 4, 8] {
+            let plan = indent_with("猫", TextSelection::default(), true, width).unwrap();
+            assert_eq!(
+                scarlet_ui::prelude::TextDocument::from_str("猫")
+                    .replace(plan.edit.replaced_range, &plan.edit.inserted)
+                    .0
+                    .as_str(),
+                format!("{}猫", " ".repeat(width))
+            );
+            let plan = newline_with("{}", TextSelection::collapsed(1), true, width).unwrap();
+            assert_eq!(plan.edit.inserted, format!("\n{}\n", " ".repeat(width)));
+        }
+        assert_eq!(
+            newline_with("{}", TextSelection::collapsed(1), false, 4)
+                .unwrap()
+                .edit
+                .inserted,
+            "\n\t\n"
+        );
+    }
+
+    #[test]
+    fn backspace_stops_at_indent_boundaries_and_leaves_code_alone() {
+        for (text, caret, expected) in [
+            ("        code", 8, 4..8),
+            ("      code", 6, 4..6),
+            ("  \tcode", 3, 0..3),
+        ] {
+            assert_eq!(
+                backspace_indent(text, TextSelection::collapsed(caret), 4)
+                    .unwrap()
+                    .edit
+                    .replaced_range,
+                expected
+            );
+        }
+        assert!(backspace_indent("x    ", TextSelection::collapsed(5), 4).is_none());
+        assert!(
+            backspace_indent(
+                "    ",
+                TextSelection {
+                    anchor: TextPosition::new(0),
+                    caret: TextPosition::new(4)
+                },
+                4
+            )
+            .is_none()
+        );
+        assert!(backspace_indent("", TextSelection::default(), 4).is_none());
     }
 }

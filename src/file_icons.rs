@@ -11,6 +11,7 @@ pub struct FileIcon {
     pub icon: Icon,
     pub color: Color,
 }
+
 impl FileIcon {
     pub fn view(self) -> IconView {
         IconView::new(self.icon)
@@ -18,6 +19,7 @@ impl FileIcon {
             .style(self.style())
             .color(self.color)
     }
+
     pub fn style(self) -> IconStyle {
         let folder = matches!(self.icon, Icon::Folder | Icon::FolderOpen);
         IconStyle::default()
@@ -108,6 +110,7 @@ pub const APP_ICON_SVG: &str = include_str!("../assets/kureha.svg");
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn file_kinds_use_consistent_shapes_and_language_accents() {
         assert_eq!(for_path(None).icon, Icon::File);

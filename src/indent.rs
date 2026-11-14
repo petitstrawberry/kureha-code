@@ -126,7 +126,11 @@ impl Indents {
 }
 
 #[derive(Clone, Debug)]
-struct BracketPair { open: usize, close: usize, color: Color }
+struct BracketPair {
+    open: usize,
+    close: usize,
+    color: Color,
+}
 
 fn bracket_pairs(source: &str, spans: &[TextStyleSpan]) -> Vec<BracketPair> {
     let mut stack = Vec::new();
@@ -134,15 +138,27 @@ fn bracket_pairs(source: &str, spans: &[TextStyleSpan]) -> Vec<BracketPair> {
     // Semantic punctuation spans are exactly one byte. Strings/comments remain
     // lexical spans, so braces inside them cannot create a guide.
     for span in spans {
-        if span.range.len() != 1 { continue; }
-        let Some(&ch) = source.as_bytes().get(span.range.start) else { continue; };
+        if span.range.len() != 1 {
+            continue;
+        }
+        let Some(&ch) = source.as_bytes().get(span.range.start) else {
+            continue;
+        };
         if matches!(ch, b'{' | b'[' | b'(') {
             stack.push((ch, span.range.start, span.color));
         } else if matches!(ch, b'}' | b']' | b')') {
-            let expected = match ch { b'}' => b'{', b']' => b'[', _ => b'(' };
+            let expected = match ch {
+                b'}' => b'{',
+                b']' => b'[',
+                _ => b'(',
+            };
             while let Some((open, byte, color)) = stack.pop() {
                 if open == expected {
-                    pairs.push(BracketPair { open: byte, close: span.range.start, color });
+                    pairs.push(BracketPair {
+                        open: byte,
+                        close: span.range.start,
+                        color,
+                    });
                     break;
                 }
             }
@@ -154,7 +170,10 @@ fn bracket_pairs(source: &str, spans: &[TextStyleSpan]) -> Vec<BracketPair> {
 // Map source offsets through tab expansion and wrapping using TextView's own
 // measured rows, so guide endpoints land at the actual bracket glyph.
 fn row_x(row: &scarlet_ui::views::text_view::VisualLine, byte: usize) -> f32 {
-    let end = row.display_text().char_indices().map(|(i, _)| i)
+    let end = row
+        .display_text()
+        .char_indices()
+        .map(|(i, _)| i)
         .chain(std::iter::once(row.display_text().len()))
         .find(|i| row.source_byte_at_display_byte(*i) >= byte)
         .unwrap_or(row.display_text().len());
@@ -166,10 +185,12 @@ pub(super) struct DecoratedEditor {
     editor: TextView,
     revision: u64,
     backgrounds: bool,
+    indent_size: usize,
     guide: bool,
     colors: WorkbenchColors,
     brackets: Arc<Vec<BracketPair>>,
     link: Option<Range<usize>>,
+    link_color: Option<Color>,
     observer: Arc<dyn Fn(&Event)>,
 }
 
@@ -185,19 +206,50 @@ impl DecoratedEditor {
             editor,
             revision,
             backgrounds,
+            indent_size: 4,
             guide,
             colors,
             brackets: Arc::new(Vec::new()),
             link: None,
+            link_color: None,
             observer: Arc::new(|_| {}),
         }
     }
 }
 
 impl DecoratedEditor {
-    pub(super) fn observe(mut self, observer: impl Fn(&Event) + 'static) -> Self { self.observer = Arc::new(observer); self }
-    pub(super) fn decorations(mut self, source: &str, spans: &[TextStyleSpan], link: Option<Range<usize>>) -> Self {
-        self.brackets = Arc::new(bracket_pairs(source, spans));
+    pub(super) fn indent_size(mut self, width: usize) -> Self {
+        self.indent_size = width.clamp(1, 8);
+        self
+    }
+
+    pub(super) fn link_style(mut self, spans: &[TextStyleSpan]) -> Self {
+        self.link_color = self.link.as_ref().and_then(|link| {
+            spans
+                .iter()
+                .rev()
+                .find(|span| span.range.contains(&link.start))
+                .map(|span| span.color)
+        });
+        self
+    }
+
+    pub(super) fn observe(mut self, observer: impl Fn(&Event) + 'static) -> Self {
+        self.observer = Arc::new(observer);
+        self
+    }
+
+    pub(super) fn decorations(
+        mut self,
+        source: &str,
+        spans: &[TextStyleSpan],
+        link: Option<Range<usize>>,
+    ) -> Self {
+        self.brackets = Arc::new(if self.guide {
+            bracket_pairs(source, spans)
+        } else {
+            Vec::new()
+        });
         self.link = link;
         self
     }
@@ -222,14 +274,21 @@ impl View for DecoratedEditor {
                 render.update(view);
                 UpdateResult::Updated
             },
-            |view| vec![Box::new(super::editor_events::ObservedEditor { editor: view.editor.clone(), observer: view.observer.clone() })],
+            |view| {
+                vec![Box::new(super::editor_events::ObservedEditor {
+                    editor: view.editor.clone(),
+                    observer: view.observer.clone(),
+                })]
+            },
         ))
     }
+
     fn listenables(&self) -> Vec<&dyn Listenable> {
         // Subscribe locally, so moving the caret does not rebuild syntax spans
         // or workbench chrome. TextView remains the actual editor child.
         self.editor.listenables()
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -268,7 +327,8 @@ impl Decorations {
             .view
             .guide
             .then(|| self.indents.active(caret_line))
-            .flatten().filter(|_| self.view.brackets.is_empty());
+            .flatten()
+            .filter(|_| self.view.brackets.is_empty());
         let colors = self.view.colors;
         // Stable, distinct hues remain distinguishable even in monochrome themes.
         let palette = [
@@ -322,23 +382,25 @@ impl Decorations {
                 continue;
             }
             if self.view.backgrounds || self.view.guide {
-                let bands = columns.div_ceil(INDENT);
+                let bands = columns.div_ceil(self.view.indent_size);
                 let (mut start, mut end) = (0, bands);
                 // Skip horizontally offscreen levels without visiting them.
                 while start < end {
                     let middle = start + (end - start) / 2;
-                    if x_at((middle + 1) * INDENT) <= left {
+                    if x_at((middle + 1) * self.view.indent_size) <= left {
                         start = middle + 1;
                     } else {
                         end = middle;
                     }
                 }
                 for depth in start..bands {
-                    let x = x_at(depth * INDENT).max(left);
+                    let x = x_at(depth * self.view.indent_size).max(left);
                     if x >= whitespace_right.min(right) {
                         break;
                     }
-                    let end = x_at((depth + 1) * INDENT).min(whitespace_right).min(right);
+                    let end = x_at((depth + 1) * self.view.indent_size)
+                        .min(whitespace_right)
+                        .min(right);
                     if end > x {
                         if self.view.backgrounds {
                             self.marks.push((
@@ -347,7 +409,10 @@ impl Decorations {
                             ));
                         }
                         if depth > 0 {
-                            self.marks.push((Rect::from_xywh(x, top, 1.0, bottom - top), colors.foreground.with_opacity(0.12)));
+                            self.marks.push((
+                                Rect::from_xywh(x, top, 1.0, bottom - top),
+                                colors.foreground.with_opacity(0.12),
+                            ));
                         }
                     }
                 }
@@ -362,17 +427,31 @@ impl Decorations {
                 }
             }
         }
-        let pair = self.view.guide.then(|| self.view.brackets.iter()
-            .filter(|p| {
-                let open = document.line_index_at_byte(p.open);
-                let close = document.line_index_at_byte(p.close);
-                open < close && open <= caret_line && caret_line <= close
+        let pair = self
+            .view
+            .guide
+            .then(|| {
+                self.view
+                    .brackets
+                    .iter()
+                    .filter(|p| {
+                        let open = document.line_index_at_byte(p.open);
+                        let close = document.line_index_at_byte(p.close);
+                        open < close && open <= caret_line && caret_line <= close
+                    })
+                    .min_by_key(|p| p.close - p.open)
             })
-            .min_by_key(|p| p.close - p.open)).flatten();
+            .flatten();
         if let Some(pair) = pair {
-            let start = layout.visual_lines.partition_point(|r| r.text_range.end <= pair.open);
-            let end = layout.visual_lines.partition_point(|r| r.text_range.end <= pair.close);
-            if let (Some(open), Some(close)) = (layout.visual_lines.get(start), layout.visual_lines.get(end)) {
+            let start = layout
+                .visual_lines
+                .partition_point(|r| r.text_range.end <= pair.open);
+            let end = layout
+                .visual_lines
+                .partition_point(|r| r.text_range.end <= pair.close);
+            if let (Some(open), Some(close)) =
+                (layout.visual_lines.get(start), layout.visual_lines.get(end))
+            {
                 if start != end {
                     let open_x = row_x(open, pair.open);
                     let close_x = row_x(close, pair.close);
@@ -383,13 +462,17 @@ impl Decorations {
                     let bottom = y2.min(self.size.height - 1.0);
                     let color = pair.color.with_opacity(0.9);
                     if x >= left && x < right && bottom > top {
-                        self.marks.push((Rect::from_xywh(x, top, 1.0, bottom - top), color));
+                        self.marks
+                            .push((Rect::from_xywh(x, top, 1.0, bottom - top), color));
                     }
                     for (y, row, byte) in [(y1, open, pair.open), (y2, close, pair.close)] {
                         if y >= 1.0 && y < self.size.height - 1.0 {
                             let from = x.max(left);
                             let to = row_x(row, byte + 1).min(right);
-                            if to > from { self.marks.push((Rect::from_xywh(from, y, to - from, 1.0), color)); }
+                            if to > from {
+                                self.marks
+                                    .push((Rect::from_xywh(from, y, to - from, 1.0), color));
+                            }
                         }
                     }
                 }
@@ -399,12 +482,17 @@ impl Decorations {
             for row in &layout.visual_lines[layout.visible_lines.clone()] {
                 let start = link.start.max(row.text_range.start);
                 let end = link.end.min(row.text_range.end);
-                if start >= end { continue; }
+                if start >= end {
+                    continue;
+                }
                 let x = row_x(row, start).max(left);
                 let end = row_x(row, end).min(right);
                 let y = row.y + layout.line_height - 2.0;
                 if end > x && y > 0.0 && y < self.size.height {
-                    self.marks.push((Rect::from_xywh(x, y, end - x, 1.5), colors.accent));
+                    self.marks.push((
+                        Rect::from_xywh(x, y, end - x, 1.5),
+                        self.view.link_color.unwrap_or(colors.foreground),
+                    ));
                 }
             }
         }
@@ -417,13 +505,16 @@ impl ElementRenderObject for Decorations {
     fn owns_view_state(&self) -> bool {
         true
     }
+
     fn update_needs_layout(&self) -> bool {
         true
     }
+
     fn layout(&mut self, constraints: LayoutConstraints) -> Size {
         self.size = constraints.constrain(Size::new(400.0, 300.0));
         self.size
     }
+
     fn layout_with_children(
         &mut self,
         constraints: LayoutConstraints,
@@ -441,10 +532,13 @@ impl ElementRenderObject for Decorations {
         }
         self.size
     }
+
     fn size(&self) -> Size {
         self.size
     }
+
     fn render(&mut self) {}
+
     fn paint_overlay(&self, ctx: &mut PaintContext<'_>, origin: Point) -> bool {
         for (rect, color) in &self.marks {
             ctx.fill_rect(
@@ -459,9 +553,11 @@ impl ElementRenderObject for Decorations {
         }
         true
     }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -478,20 +574,44 @@ mod tests {
         let color = Color::rgb(218, 112, 214);
         let open = source.find("ready {").unwrap() + 6;
         let close = source.find("    }").unwrap() + 4;
-        let spans = vec![TextStyleSpan { range: open..open + 1, color }, TextStyleSpan { range: close..close + 1, color }];
+        let spans = vec![
+            TextStyleSpan {
+                range: open..open + 1,
+                color,
+            },
+            TextStyleSpan {
+                range: close..close + 1,
+                color,
+            },
+        ];
         let view = view(source, false, true, WrapMode::None).decorations(source, &spans, None);
-        view.editor.selection_state().set(TextSelection::collapsed(source.find("run").unwrap()));
+        view.editor
+            .selection_state()
+            .set(TextSelection::collapsed(source.find("run").unwrap()));
         let mut element = view.create_element();
         element.layout(LayoutConstraints::tight(600.0, 200.0));
         let render = decorations(element.as_ref());
         let guide: Vec<_> = render.marks.iter().filter(|(_, c)| c.a > 0.8).collect();
         assert_eq!(guide.len(), 3);
         assert!(guide.iter().all(|(_, c)| *c == color.with_opacity(0.9)));
-        let layout = element.children()[0].render_object().unwrap().as_any().downcast_ref::<TextViewRenderObject>().unwrap().text_layout();
+        let layout = element.children()[0]
+            .render_object()
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TextViewRenderObject>()
+            .unwrap()
+            .text_layout();
         let row = &layout.visual_lines[1];
         let endpoint = row_x(row, open + 1);
-        assert!(guide.iter().any(|(r, _)| r.size.height == 1.0 && (r.origin.x + r.size.width - endpoint).abs() < 0.01));
-        assert!(guide.iter().any(|(r, _)| r.size.width == 1.0 && r.size.height > 20.0));
+        assert!(
+            guide.iter().any(|(r, _)| r.size.height == 1.0
+                && (r.origin.x + r.size.width - endpoint).abs() < 0.01)
+        );
+        assert!(
+            guide
+                .iter()
+                .any(|(r, _)| r.size.width == 1.0 && r.size.height > 20.0)
+        );
     }
 
     #[test]
@@ -501,12 +621,14 @@ mod tests {
             event::{KeyEvent, KeyModifiers},
             pipeline::RenderingPipeline,
         };
+
         fn find(element: &dyn Element) -> Option<&Decorations> {
             element
                 .render_object()
                 .and_then(|r| r.as_any().downcast_ref::<Decorations>())
                 .or_else(|| element.children().iter().find_map(|c| find(c.as_ref())))
         }
+
         let mut view = view(
             "root\n    branch\n        leaf\n    other\nend",
             true,
@@ -724,12 +846,7 @@ mod tests {
                 assert!(render.marks.iter().all(|(_, color)| color.a < 0.2));
             } else if guide {
                 assert!(!render.marks.is_empty());
-                assert!(
-                    render
-                        .marks
-                        .iter()
-                        .all(|(rect, _)| rect.size.width == 1.0)
-                );
+                assert!(render.marks.iter().all(|(rect, _)| rect.size.width == 1.0));
             } else {
                 assert!(render.indents.lines.is_empty() && render.marks.is_empty());
             }

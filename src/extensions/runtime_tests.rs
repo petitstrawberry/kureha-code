@@ -21,6 +21,7 @@ pub(crate) struct Guest {
     imports: String,
     exports_call: bool,
 }
+
 impl Guest {
     pub(crate) fn new() -> Self {
         Self {
@@ -32,32 +33,39 @@ impl Guest {
             exports_call: true,
         }
     }
+
     /// Adds static bytes and returns WAT for `(i64 (ptr << 32) | len)`.
     pub(crate) fn data(&mut self, text: &str) -> (u32, u32) {
         let offset = self.data.iter().map(|d| d.len() as u32).sum();
         self.data.push(text.into());
         (offset, text.len() as u32)
     }
+
     pub(crate) fn reply(&mut self, text: &str) -> String {
         let (ptr, len) = self.data(text);
         format!("(i64.const {})", ((ptr as i64) << 32) | len as i64)
     }
+
     pub(crate) fn body(mut self, body: impl Into<String>) -> Self {
         self.body = body.into();
         self
     }
+
     pub(crate) fn replying(mut self, text: &str) -> Self {
         self.body = self.reply(text);
         self
     }
+
     pub(crate) fn imports(mut self, imports: &str) -> Self {
         self.imports = imports.into();
         self
     }
+
     pub(crate) fn without_call(mut self) -> Self {
         self.exports_call = false;
         self
     }
+
     pub(crate) fn wasm(mut self) -> Vec<u8> {
         let activate = self.reply("{}");
         let data = self.data.concat();
@@ -462,6 +470,7 @@ fn text_tools_budget() {
         Err(CallError::Extension(e)) if e.contains("192 KiB")
     ));
 }
+
 /// Pretty-printed JSON just under `limit` bytes.
 fn pretty_json_below(limit: usize) -> String {
     let item = json!({"name": "item", "value": 12, "tags": ["a", "b"], "ok": true});
@@ -498,9 +507,11 @@ fn host_state(programs: &[&str], granted: &[&str], call: Call) -> HostState {
         offered: Vec::new(),
     }
 }
+
 fn host_request(state: &mut HostState, request: Value) -> Value {
     handle_host_request(state, request.to_string().as_bytes()).0
 }
+
 fn host_error(state: &mut HostState, request: Value) -> String {
     let reply = host_request(state, request);
     reply["error"]

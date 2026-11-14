@@ -44,10 +44,12 @@ const DRAIN_GRACE: Duration = Duration::from_millis(500);
 /// Clones share one table, so a change applies to running workers at once.
 #[derive(Clone, Debug, Default)]
 pub struct Grants(Arc<RwLock<BTreeMap<String, BTreeSet<String>>>>);
+
 impl Grants {
     pub fn new(table: BTreeMap<String, BTreeSet<String>>) -> Self {
         Self(Arc::new(RwLock::new(table)))
     }
+
     pub fn allows(&self, extension: &str, program: &str) -> bool {
         self.0
             .read()
@@ -55,6 +57,7 @@ impl Grants {
             .get(extension)
             .is_some_and(|programs| programs.contains(program))
     }
+
     /// Replaces the whole table, as read from the settings file.
     pub fn replace(&self, table: BTreeMap<String, BTreeSet<String>>) {
         *self.0.write().unwrap() = table;
@@ -62,6 +65,7 @@ impl Grants {
 }
 
 static GRANTS: OnceLock<Grants> = OnceLock::new();
+
 /// This editor's grants; the UI keeps them in sync with the settings file.
 pub fn grants() -> &'static Grants {
     GRANTS.get_or_init(Grants::default)
@@ -71,10 +75,12 @@ pub fn grants() -> &'static Grants {
 pub fn allow_command_label(extension: &str, program: &str) -> String {
     format!("Extensions: Allow {extension} to Run {program}")
 }
+
 /// The palette command that withdraws the grant.
 pub fn revoke_command_label(extension: &str, program: &str) -> String {
     format!("Extensions: Stop {extension} Running {program}")
 }
+
 /// What to tell the user when a run is refused for lack of a grant.
 pub fn permission_hint(extension: &str, program: &str) -> String {
     format!(
@@ -96,6 +102,7 @@ pub fn resolve(program: &str, path: Option<&OsStr>) -> Option<PathBuf> {
         .map(|dir| dir.join(program))
         .find(|candidate| is_executable(candidate))
 }
+
 fn is_executable(path: &Path) -> bool {
     let Ok(metadata) = std::fs::metadata(path) else {
         return false;
@@ -188,6 +195,7 @@ fn kill(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
 }
+
 /// After a normal exit: stop descendants that still hold the output pipes.
 fn kill_group(child: &Child) {
     #[cfg(unix)]
@@ -330,6 +338,7 @@ mod tests {
         resolve(name, std::env::var_os("PATH").as_deref())
             .unwrap_or_else(|| panic!("`{name}` is on PATH in the test environment"))
     }
+
     fn start(
         name: &str,
         args: &[&str],

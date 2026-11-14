@@ -40,12 +40,14 @@ fn map_lines(text: &str, f: impl FnOnce(Vec<&str>) -> Vec<&str>) -> String {
     let eol = line_ending(text);
     f(text.split(eol).collect()).join(eol)
 }
+
 pub fn sort_lines(text: &str) -> String {
     map_lines(text, |mut lines| {
         lines.sort_unstable();
         lines
     })
 }
+
 pub fn unique_lines(text: &str) -> String {
     map_lines(text, |lines| {
         let mut seen = std::collections::HashSet::new();
@@ -55,12 +57,14 @@ pub fn unique_lines(text: &str) -> String {
             .collect()
     })
 }
+
 pub fn reverse_lines(text: &str) -> String {
     map_lines(text, |mut lines| {
         lines.reverse();
         lines
     })
 }
+
 pub fn trim_trailing(text: &str) -> String {
     map_lines(text, |lines| {
         lines
@@ -81,6 +85,7 @@ pub fn trimmed(text: &str, range: Range<usize>) -> Range<usize> {
 pub fn json_format(text: &str) -> Result<String, String> {
     json_format_indented(text, "  ")
 }
+
 /// Pretty-prints JSON with `indent` per level (spaces or a tab).
 pub fn json_format_indented(text: &str, indent: &str) -> Result<String, String> {
     use serde::Serialize;
@@ -95,6 +100,7 @@ pub fn json_format_indented(text: &str, indent: &str) -> Result<String, String> 
         .map_err(|e| e.to_string())?;
     String::from_utf8(out).map_err(|e| e.to_string())
 }
+
 pub fn json_minify(text: &str) -> Result<String, String> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("not valid JSON: {e}"))?;
@@ -144,6 +150,7 @@ fn words(chunk: &str) -> Vec<String> {
     }
     words
 }
+
 fn capitalized(word: &str) -> String {
     let mut chars = word.chars();
     chars
@@ -228,6 +235,7 @@ pub fn base64_encode(text: &str) -> String {
     }
     out
 }
+
 pub fn base64_decode(text: &str) -> Result<String, String> {
     let symbols: Vec<u8> = text.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
     let data = symbols
@@ -270,6 +278,7 @@ pub fn url_encode(text: &str) -> String {
     }
     out
 }
+
 pub fn url_decode(text: &str) -> Result<String, String> {
     let input = text.as_bytes();
     let mut bytes = Vec::with_capacity(input.len());

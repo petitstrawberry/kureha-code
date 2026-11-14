@@ -281,6 +281,7 @@ mod tests {
     /// and whether the file is executable.
     fn snapshot(root: &Path) -> BTreeMap<String, (Vec<u8>, bool)> {
         use std::os::unix::fs::PermissionsExt;
+
         fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<String, (Vec<u8>, bool)>) {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let entry = entry.unwrap();
@@ -305,6 +306,7 @@ mod tests {
                 }
             }
         }
+
         let mut out = BTreeMap::new();
         walk(root, root, &mut out);
         out

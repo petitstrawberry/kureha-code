@@ -101,6 +101,15 @@ Theme choices, code font size and minimap visibility are saved automatically.
 Thin separators distinguish indentation levels without competing with the code.
 Both options are off by default and can be enabled independently; their settings
 file keys are `indent_depth_background` and `active_block_guide`.
+Inline type hints show inferred types beside code using the language server.
+Enable **Inline type hints** in Settings → Appearance, or set
+`inline_type_hints = true` in settings.toml (off by default). Hints update after
+edits and never become part of saved or copied code.
+**Insert spaces when pressing Tab** defaults to on, with **Indent size** set to 4
+(`insert_spaces = true`, `tab_size = 4`). Changing these preferences never rewrites
+existing text. Backspace in leading whitespace removes one indentation step.
+Clean open files automatically reload external disk changes in the background;
+unsaved edits are preserved, and saving detects conflicting disk changes.
 Kureha Light (the default) and Kureha Dark use red accents with readable code
 surfaces. Sakura preserves the original pink palette; Classic Light and Classic
 Dark retain the former Light and Dark themes. Existing saved theme names remain

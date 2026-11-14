@@ -26,17 +26,21 @@ pub struct CustomTheme {
     pub font_file: Option<String>,
     revision: u64,
 }
+
 impl PartialEq for CustomTheme {
     fn eq(&self, other: &Self) -> bool {
         self.revision == other.revision
     }
 }
+
 impl Eq for CustomTheme {}
+
 impl Hash for CustomTheme {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.revision.hash(state);
     }
 }
+
 static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
 
 pub fn theme_path() -> Option<PathBuf> {
@@ -72,6 +76,7 @@ fn color(value: &toml::Value, key: &str) -> Result<Color, String> {
         },
     ))
 }
+
 fn table<'a>(
     value: &'a toml::Value,
     key: &str,
@@ -80,6 +85,7 @@ fn table<'a>(
         .as_table()
         .ok_or_else(|| format!("{key}: expected a table"))
 }
+
 fn number(value: &toml::Value, key: &str, max: f64) -> Result<f32, String> {
     let value = value
         .as_float()
@@ -377,6 +383,7 @@ pub fn parse_theme(source: &str) -> Result<Theme, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn editor_palette_and_typography_do_not_change_workbench_colors() {
         let theme = parse_theme("base='light'\n[code]\ntheme='tokyo-night'\nfont_size=18\nfont_family='Menlo'\nforeground='#eeeeee'").unwrap();
@@ -433,6 +440,7 @@ mod tests {
         );
         assert!(parse_theme(THEME_TEMPLATE).is_ok());
     }
+
     #[test]
     fn invalid_settings_are_rejected_instead_of_silently_ignored() {
         for source in [

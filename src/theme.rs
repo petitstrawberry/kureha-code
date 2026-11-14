@@ -6,12 +6,17 @@ use scarlet_ui::prelude::{
 };
 use syntect::highlighting::{Color as SyntaxColor, StyleModifier, Theme as SyntaxTheme, ThemeItem};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Theme {
-    #[default]
     Light,
     Dark,
     Custom(std::sync::Arc<CustomTheme>),
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        preset("kureha-light").expect("bundled default theme")
+    }
 }
 
 /// Colors for editor and workbench chrome, derived from ScarletUI's palette.
@@ -50,13 +55,13 @@ impl Theme {
             Self::Light => Self::Dark,
             Self::Dark => Self::Light,
             Self::Custom(theme) => {
-                if theme.name == "Kureha Light" { return preset("kureha-dark").unwrap(); }
-                if theme.name == "Kureha Dark" { return preset("kureha-light").unwrap(); }
-                if theme.dark {
-                    Self::Light
-                } else {
-                    Self::Dark
+                if theme.name == "Kureha Light" {
+                    return preset("kureha-dark").unwrap();
                 }
+                if theme.name == "Kureha Dark" {
+                    return preset("kureha-light").unwrap();
+                }
+                if theme.dark { Self::Light } else { Self::Dark }
             }
         }
     }
@@ -213,18 +218,21 @@ impl Theme {
             _ => self.colors(),
         }
     }
+
     pub fn editor_font_size(&self) -> f32 {
         match self {
             Self::Custom(t) => t.font_size,
             _ => 14.0,
         }
     }
+
     pub fn editor_font(&self) -> Option<scarlet_ui::FontStack> {
         match self {
             Self::Custom(t) => t.font_stack.clone(),
             _ => None,
         }
     }
+
     /// Resolve the configured font off the UI thread before publishing this revision.
     pub fn prepare_font(mut self, directory: &std::path::Path) -> Result<Self, String> {
         if let Self::Custom(theme) = &mut self {
@@ -237,6 +245,7 @@ impl Theme {
         }
         Ok(self)
     }
+
     pub fn with_code_theme(&self, editor: &Theme) -> Theme {
         let mut combined = custom::definition(self);
         combined.editor_colors = editor.editor_colors();
@@ -359,6 +368,7 @@ fn over(top: Color, below: Color) -> Color {
         a: 1.0,
     }
 }
+
 /// WCAG contrast ratio of two opaque colors.
 pub fn contrast(a: Color, b: Color) -> f32 {
     let luminance = |c: Color| {
@@ -378,14 +388,23 @@ pub fn contrast(a: Color, b: Color) -> f32 {
 impl WorkbenchColors {
     /// A preset's UI selection color, or a faint accent for custom themes.
     pub fn highlight(&self) -> Color {
-        self.selected_background.unwrap_or_else(|| self.accent.with_opacity(0.16))
+        self.selected_background
+            .unwrap_or_else(|| self.accent.with_opacity(0.16))
     }
+
     /// Selected UI text, adjusted toward the foreground when needed to keep
     /// the theme's normal text contrast (4.5:1 at most).
     pub fn emphasis(&self, under: Color) -> Color {
         let selected = self.selected_foreground.unwrap_or(self.accent);
         let behind = over(self.highlight(), Color { a: 1.0, ..under });
-        let target = contrast(Color { a: 1.0, ..self.foreground }, behind).min(4.5);
+        let target = contrast(
+            Color {
+                a: 1.0,
+                ..self.foreground
+            },
+            behind,
+        )
+        .min(4.5);
         (0..=20)
             .map(|step| {
                 let t = step as f32 / 20.0;
@@ -443,11 +462,19 @@ pub fn ensure_visible_selection(colors: &mut WorkbenchColors) {
     if selection_visible(colors.selection, &under) {
         return;
     }
-    if let Some(alpha) = [0.35, 0.5, 0.65]
-        .into_iter()
-        .find(|alpha| selection_visible(Color { a: *alpha, ..colors.accent }, &under))
-    {
-        colors.selection = Color { a: alpha, ..colors.accent };
+    if let Some(alpha) = [0.35, 0.5, 0.65].into_iter().find(|alpha| {
+        selection_visible(
+            Color {
+                a: *alpha,
+                ..colors.accent
+            },
+            &under,
+        )
+    }) {
+        colors.selection = Color {
+            a: alpha,
+            ..colors.accent
+        };
     }
 }
 
@@ -459,16 +486,26 @@ mod tests {
     /// preserve the preset's selected text color when it already reads.
     #[test]
     fn emphasis_reads_on_the_highlight_in_every_theme() {
-        let themes = Theme::ALL.into_iter().chain(
-            PRESETS
-                .iter()
-                .map(|(name, _)| preset(name).unwrap()),
-        );
+        let themes = Theme::ALL
+            .into_iter()
+            .chain(PRESETS.iter().map(|(name, _)| preset(name).unwrap()));
         for theme in themes {
             let colors = theme.colors();
-            let behind = over(colors.highlight(), Color { a: 1.0, ..colors.elevated });
+            let behind = over(
+                colors.highlight(),
+                Color {
+                    a: 1.0,
+                    ..colors.elevated
+                },
+            );
             let text = colors.emphasis(colors.elevated);
-            let plain = contrast(Color { a: 1.0, ..colors.foreground }, behind);
+            let plain = contrast(
+                Color {
+                    a: 1.0,
+                    ..colors.foreground
+                },
+                behind,
+            );
             assert!(
                 contrast(text, behind) >= plain.min(4.5) - 0.01,
                 "{}: as readable as plain text",
@@ -507,7 +544,10 @@ mod tests {
         )
         .unwrap();
         let colors = theme.colors();
-        assert_eq!((colors.selection.r, colors.selection.a < 1.0), (colors.accent.r, true));
+        assert_eq!(
+            (colors.selection.r, colors.selection.a < 1.0),
+            (colors.accent.r, true)
+        );
         assert!(selection_visible(
             colors.selection,
             &[colors.background, colors.surface, colors.current_line]
@@ -522,6 +562,7 @@ mod tests {
                 ((v + 0.055) / 1.055).powf(2.4)
             }
         }
+
         0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
     }
 
@@ -550,7 +591,7 @@ mod tests {
 }
 
 mod custom;
-pub use custom::{parse_theme, theme_path, CustomTheme, THEME_TEMPLATE};
+pub use custom::{CustomTheme, THEME_TEMPLATE, parse_theme, theme_path};
 
 mod presets;
-pub use presets::{preset, PRESETS};
+pub use presets::{PRESETS, preset};

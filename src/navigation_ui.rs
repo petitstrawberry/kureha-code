@@ -26,6 +26,7 @@ enum Mode {
     Branches,
     Messages,
 }
+
 #[derive(Clone, Debug)]
 enum Action {
     File(PathBuf),
@@ -46,6 +47,7 @@ enum Action {
     /// A row to read, such as a past message.
     Nothing,
 }
+
 #[derive(Clone, Debug)]
 struct Row {
     label: String,
@@ -53,26 +55,31 @@ struct Row {
     key: String,
     action: Action,
 }
+
 enum WorkerResult {
     Index(Result<Index, String>),
     Matches(Vec<FileMatch>),
 }
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WorkerKind {
     Index,
     Matches,
 }
+
 struct Worker {
     receiver: mpsc::Receiver<WorkerResult>,
     cancel: Arc<AtomicBool>,
     generation: u64,
     kind: WorkerKind,
 }
+
 impl Drop for Worker {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
 }
+
 #[derive(Default)]
 struct Service {
     root: Option<PathBuf>,
@@ -86,6 +93,7 @@ struct Service {
     requested: bool,
     error: Option<String>,
 }
+
 #[derive(Clone)]
 pub(crate) struct Navigation {
     mode: State<Mode>,
@@ -98,16 +106,20 @@ pub(crate) struct Navigation {
     shortcut_text: Arc<AtomicBool>,
     pub(super) row_inputs: super::ui::RowInputs,
 }
+
 impl Navigation {
     /// Marks the current key press as a shortcut so its Alt text is dropped.
     pub(super) fn swallow_shortcut_text(&self) {
         self.shortcut_text.store(true, Ordering::Relaxed);
     }
+
     /// Some backends emit printable text after an Alt shortcut key press.
     /// Consume only that press's text, never the next ordinary key press.
     pub(super) fn capture_shortcut_text(&self, event: &Event) -> bool {
         match event {
-            Event::Keyboard(KeyEvent::Char { .. }) => self.shortcut_text.swap(false, Ordering::Relaxed),
+            Event::Keyboard(KeyEvent::Char { .. }) => {
+                self.shortcut_text.swap(false, Ordering::Relaxed)
+            }
             Event::Keyboard(KeyEvent::Pressed { .. } | KeyEvent::Released { .. }) => {
                 self.shortcut_text.store(false, Ordering::Relaxed);
                 false
@@ -115,6 +127,7 @@ impl Navigation {
             _ => false,
         }
     }
+
     /// The old editor can receive another queued event before the overlay is
     /// mounted. Route text to the query instead of modifying source code.
     pub(super) fn capture_editor_input(&self, event: &Event) -> bool {
@@ -148,6 +161,7 @@ impl Navigation {
             _ => false,
         }
     }
+
     pub(crate) fn new() -> Self {
         Self {
             mode: State::new(generate_state_id(), Mode::Closed),
@@ -161,9 +175,11 @@ impl Navigation {
             row_inputs: Default::default(),
         }
     }
+
     pub(crate) fn is_open(&self) -> bool {
         self.mode.get() != Mode::Closed
     }
+
     pub(crate) fn listenables(&self) -> Vec<&dyn Listenable> {
         vec![
             &self.mode,
@@ -173,6 +189,7 @@ impl Navigation {
             &self.hint,
         ]
     }
+
     fn effective_mode(&self) -> Mode {
         let mode = self.mode.get();
         if mode == Mode::Files {
@@ -185,6 +202,7 @@ impl Navigation {
             mode
         }
     }
+
     pub(crate) fn close(&self) {
         self.mode.set(Mode::Closed);
         let mut service = self.service.lock().unwrap();
@@ -196,11 +214,13 @@ impl Navigation {
             worker.cancel.store(true, Ordering::Relaxed);
         }
     }
+
     fn set_hint(&self, hint: String) {
         if self.hint.get() != hint {
             self.hint.set(hint);
         }
     }
+
     fn show_rows(&self, rows: Vec<Row>) {
         self.row_inputs.retain("palette:", std::iter::empty());
         self.selected
@@ -444,7 +464,12 @@ pub(super) const COMMANDS: &[CommandDescriptor] = &[
         "entire editor area layout",
         ""
     ),
-    command!("word-wrap", "View: Toggle Word Wrap", "code wrapping lines", "Alt+Z"),
+    command!(
+        "word-wrap",
+        "View: Toggle Word Wrap",
+        "code wrapping lines",
+        "Alt+Z"
+    ),
     command!("minimap", "View: Toggle Minimap", "overview", ""),
     command!(
         "restart-terminal",
@@ -551,9 +576,11 @@ impl App {
             }
         }
     }
+
     pub(super) fn show_theme_picker(&self, code_only: bool) {
         self.show_navigation(Mode::Themes { code_only });
     }
+
     pub(super) fn show_branch_picker(&self) {
         if !self.git_can_operate() {
             self.show_git();
@@ -561,11 +588,13 @@ impl App {
         }
         self.show_navigation(Mode::Branches);
     }
+
     pub(super) fn show_message_history(&self) {
         // Reading the history is the click that dismisses an error.
         self.messages.shown.set(None);
         self.show_navigation(Mode::Messages);
     }
+
     /// Local branches matching `query`, and a row to create `query` when it
     /// names no branch yet.
     fn branch_rows(&self, query: &str) -> Vec<Row> {
@@ -604,6 +633,7 @@ impl App {
         }
         rows
     }
+
     fn preview_selected_theme(&self) {
         if !matches!(self.nav.mode.get(), Mode::Themes { .. }) {
             return;
@@ -627,8 +657,9 @@ impl App {
             }
         }
     }
+
     fn theme_rows(&self, code_only: bool, query: &str) -> Vec<Row> {
-        use kureha_code::theme::{preset, Theme, PRESETS};
+        use kureha_code::theme::{PRESETS, Theme, preset};
         let original = self
             .nav
             .preview_original
@@ -636,7 +667,12 @@ impl App {
             .unwrap()
             .clone()
             .unwrap_or_else(|| self.theme.get());
-        let mut choices = vec![preset("kureha-light").unwrap(), preset("kureha-dark").unwrap(), Theme::Light, Theme::Dark];
+        let mut choices = vec![
+            preset("kureha-light").unwrap(),
+            preset("kureha-dark").unwrap(),
+            Theme::Light,
+            Theme::Dark,
+        ];
         choices.extend(
             PRESETS
                 .iter()
@@ -697,15 +733,19 @@ impl App {
         rows.retain(|row| row.label.to_lowercase().contains(&query));
         rows
     }
+
     pub(crate) fn show_quick_open(&self) {
         self.show_navigation(Mode::Files);
     }
+
     pub(crate) fn show_commands(&self) {
         self.show_navigation(Mode::Commands);
     }
+
     pub(crate) fn show_go_to_line(&self) {
         self.show_navigation(Mode::Line);
     }
+
     fn show_navigation(&self, mode: Mode) {
         if self.blocked() {
             return;
@@ -726,10 +766,17 @@ impl App {
         self.nav.mode.set(mode);
         self.poll_navigation();
     }
+
     /// Call before workbench shortcuts. While open, other shortcut handlers
     /// should stop dispatching and return false to the focused TextField.
     pub(crate) fn navigation_key(&self, key: KeyCode, modifiers: KeyModifiers) -> bool {
-        if !self.nav.is_open() && modifiers.alt && !modifiers.primary() && !modifiers.control && !modifiers.shift && matches!(key, KeyCode::Char('z' | 'Z')) {
+        if !self.nav.is_open()
+            && modifiers.alt
+            && !modifiers.primary()
+            && !modifiers.control
+            && !modifiers.shift
+            && matches!(key, KeyCode::Char('z' | 'Z'))
+        {
             self.nav.shortcut_text.store(true, Ordering::Relaxed);
             self.toggle_word_wrap();
             return true;
@@ -814,6 +861,7 @@ impl App {
         }
         true
     }
+
     pub(crate) fn poll_navigation(&self) {
         let mode = self.nav.effective_mode();
         let query = self.nav.query.get();
@@ -1092,7 +1140,14 @@ impl App {
                     .collect();
                 let empty = rows.is_empty();
                 self.nav.show_rows(rows);
-                self.nav.set_hint(if empty { "No messages yet" } else { "Newest first · Esc to close" }.into());
+                self.nav.set_hint(
+                    if empty {
+                        "No messages yet"
+                    } else {
+                        "Newest first · Esc to close"
+                    }
+                    .into(),
+                );
                 service.requested = false;
                 service.displayed_query = Some(request);
             }
@@ -1215,6 +1270,7 @@ impl App {
         drop(service);
         self.preview_selected_theme();
     }
+
     fn accept_navigation(&self) {
         if self.blocked() {
             return;
@@ -1292,6 +1348,7 @@ impl App {
             Action::Nothing => {}
         }
     }
+
     fn execute_navigation_command(&self, id: &str) {
         match id {
             "go-back" => self.go_back(),
@@ -1382,6 +1439,7 @@ impl App {
             _ => {}
         }
     }
+
     pub(crate) fn navigation_overlay(&self) -> impl View + Clone + use<> {
         let colors = self.theme.get().colors();
         let submit = self.clone();
@@ -1453,6 +1511,7 @@ impl App {
         )
     }
 }
+
 fn shortcut(shortcut: &str) -> String {
     let shortcut = match shortcut {
         "GoBack" => {
@@ -1480,6 +1539,7 @@ fn shortcut(shortcut: &str) -> String {
         },
     )
 }
+
 fn index_hint(index: &Index, matches: usize) -> String {
     let prefix = if matches == 0 {
         "No matching files".into()
@@ -1500,6 +1560,7 @@ fn index_hint(index: &Index, matches: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn app_with_text(text: &str) -> App {
         let app = App::with_document();
         app.runtime.lock().unwrap().workspace.documents[0].editor =
@@ -1507,6 +1568,7 @@ mod tests {
         app.sync_editor(app.document_id());
         app
     }
+
     fn primary() -> KeyModifiers {
         let mut modifiers = KeyModifiers::empty();
         if cfg!(target_os = "macos") {
@@ -1516,6 +1578,7 @@ mod tests {
         }
         modifiers
     }
+
     #[test]
     fn shortcuts_preserve_textfield_editing_and_goto_uses_control_on_macos() {
         let app = app_with_text("猫🍁x\nnext line");
@@ -1549,6 +1612,7 @@ mod tests {
             3
         );
     }
+
     #[test]
     fn goto_affects_only_the_active_editor_group_and_invalid_input_stays_open() {
         let app = app_with_text("猫🍁x\nnext line");
@@ -1566,19 +1630,21 @@ mod tests {
         assert_eq!(app.bindings(id).unwrap().selection.get().caret.byte, 12);
         assert_eq!(left.selection.get().caret.byte, 3);
     }
+
     #[test]
     fn theme_picker_is_nested_previews_and_restores_or_commits() {
-        use kureha_code::theme::{preset, Theme};
+        use kureha_code::theme::{Theme, preset};
         let app = app_with_text("let value = 1;");
         let original = app.theme.get();
         assert_eq!(original.name(), "Kureha Light");
         app.show_commands();
-        assert!(!app
-            .nav
-            .rows
-            .get()
-            .iter()
-            .any(|row| row.key == "theme-monokai"));
+        assert!(
+            !app.nav
+                .rows
+                .get()
+                .iter()
+                .any(|row| row.key == "theme-monokai")
+        );
         app.nav.query.set("Select Color Theme".into());
         app.poll_navigation();
         let entry = app
@@ -1592,7 +1658,13 @@ mod tests {
         app.accept_navigation();
         assert_eq!(app.nav.mode.get(), Mode::Themes { code_only: false });
         assert_eq!(app.theme.get(), original);
-        assert!(app.nav.rows.get().iter().any(|row| row.label == "Classic Light"));
+        assert!(
+            app.nav
+                .rows
+                .get()
+                .iter()
+                .any(|row| row.label == "Classic Light")
+        );
         app.nav.query.set("monokai".into());
         app.poll_navigation();
         assert_eq!(app.theme.get(), preset("monokai").unwrap());
@@ -1685,6 +1757,7 @@ mod tests {
         app.accept_navigation();
         assert_eq!(app.preferences.get().code_theme.as_deref(), Some("Nord"));
     }
+
     #[test]
     fn mounted_theme_hover_previews_without_losing_query_focus() {
         use scarlet_ui::{
@@ -1704,6 +1777,7 @@ mod tests {
         pipeline.set_root(window().create_element());
         pipeline.layout_initial();
         pipeline.render();
+
         fn rows(e: &dyn Element, parent: Point, found: &mut Vec<Rect>) {
             let origin = Point::new(parent.x + e.position().x, parent.y + e.position().y);
             if e.bounds().size.height == 34.0
@@ -1717,6 +1791,7 @@ mod tests {
                 rows(child.as_ref(), origin, found);
             }
         }
+
         let mut bounds = Vec::new();
         rows(
             pipeline.element_tree().root().unwrap(),
@@ -1803,12 +1878,14 @@ mod tests {
         pipeline.set_root(window().create_element());
         pipeline.layout_initial();
         pipeline.render();
+
         fn panel(e: &dyn Element) -> Option<(scarlet_ui::element::ElementId, Rect)> {
             if e.type_name_debug().contains("TextFieldRenderObject") {
                 return Some((e.id(), e.bounds()));
             }
             e.children().iter().find_map(|c| panel(c.as_ref()))
         }
+
         let original_field = panel(pipeline.element_tree().root().unwrap()).unwrap();
         for query in ["n", "ne", "new"] {
             app.nav.query.set(query.into());
@@ -1902,6 +1979,7 @@ mod tests {
         assert_eq!(app.nav.rows.get()[0].label, "new.rs");
         app.nav.close();
     }
+
     #[test]
     fn navigation_overlay_preserves_editor_bounds_and_returns_keyboard_focus() {
         use scarlet_ui::pipeline::RenderingPipeline;
@@ -1916,6 +1994,7 @@ mod tests {
         pipeline.set_root(window().create_element());
         pipeline.layout_initial();
         pipeline.render();
+
         fn document(
             e: &dyn Element,
             origin: Point,
@@ -1928,6 +2007,7 @@ mod tests {
                 .iter()
                 .find_map(|child| document(child.as_ref(), point))
         }
+
         let original = document(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
         let bindings = app.bindings(app.document_id()).unwrap();
         for mode in [Mode::Commands, Mode::Line, Mode::Files] {
@@ -2126,6 +2206,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn navigation_modes_accept_prefixes_and_close_cancels_inflight_work() {
         let nav = Navigation::new();
@@ -2148,6 +2229,7 @@ mod tests {
         assert!(!nav.is_open());
         assert!(cancel.load(Ordering::Relaxed));
     }
+
     #[test]
     fn palette_descriptors_are_unique_and_include_core_workbench_actions() {
         let ids: BTreeSet<_> = COMMANDS.iter().map(|c| c.id).collect();
@@ -2164,6 +2246,7 @@ mod tests {
         }
         assert!(navigation::filter_commands(COMMANDS, "split", 10).len() >= 2);
     }
+
     /// Drives the real palette, worker and an installed extension. Build the
     /// example with `scripts/build-extension.py --out <folder>`, point
     /// `KUREHA_EXTENSIONS_DIR` at that folder, and run
@@ -2232,6 +2315,7 @@ mod tests {
         app.undo(false);
         assert_eq!(document(), text);
     }
+
     /// With KUREHA_WORKBENCH_PREVIEW set, saves what the window shows as PNG.
     fn render_preview(app: &App, name: &str) {
         use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
@@ -2258,6 +2342,7 @@ mod tests {
             .unwrap();
         pipeline.teardown();
     }
+
     /// Runs one palette command by its label and waits for the document to change.
     fn run_palette_command(app: &App, query: &str, label: &str, preview: Option<&str>) {
         let mut palette = primary();
@@ -2299,6 +2384,7 @@ mod tests {
             app.poll_extensions();
         }
     }
+
     /// Text Tools through the real palette. Needs the built example under
     /// `KUREHA_EXTENSIONS_DIR`; see `examples/extensions/text-tools`.
     #[test]
@@ -2371,6 +2457,7 @@ mod tests {
         app.undo(false);
         assert_eq!(document(), source);
     }
+
     /// Format Document, format-on-save and a keybinding, all served by the
     /// built Text Tools example. Needs it under `KUREHA_EXTENSIONS_DIR`.
     #[test]
@@ -2592,7 +2679,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let git = |args: &[&str]| {
             let output = Command::new("git")
-                .args(["-c", "user.name=Test", "-c", "user.email=test@example.invalid"])
+                .args([
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                ])
                 .args(args)
                 .current_dir(&dir)
                 .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -2625,9 +2717,26 @@ mod tests {
 
         app.show_branch_picker();
         app.poll_navigation();
-        let labels = || app.nav.rows.get().into_iter().map(|row| (row.label, row.detail)).collect::<Vec<_>>();
-        assert_eq!(labels(), [("main".into(), "Current".into()), ("side".into(), String::new())]);
-        assert_eq!(app.nav.selected.get(), Some(1), "starts on a branch to switch to");
+        let labels = || {
+            app.nav
+                .rows
+                .get()
+                .into_iter()
+                .map(|row| (row.label, row.detail))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            labels(),
+            [
+                ("main".into(), "Current".into()),
+                ("side".into(), String::new())
+            ]
+        );
+        assert_eq!(
+            app.nav.selected.get(),
+            Some(1),
+            "starts on a branch to switch to"
+        );
         app.nav.query.set("feature/new".into());
         app.poll_navigation();
         assert_eq!(labels()[0].0, "Create branch feature/new");
@@ -2637,10 +2746,17 @@ mod tests {
         app.nav.query.set("feature/new".into());
         app.poll_navigation();
         assert!(app.navigation_key(KeyCode::Enter, KeyModifiers::empty()));
-        wait("the branch is created", &|| app.git_status.get() == "feature/new");
+        wait("the branch is created", &|| {
+            app.git_status.get() == "feature/new"
+        });
         assert_eq!(git(&["symbolic-ref", "HEAD"]), "refs/heads/feature/new\n");
         assert!(app.messages.progress.get().is_empty());
-        assert!(!app.messages.history().iter().any(|m| m.text.starts_with("Created and switched to ")));
+        assert!(
+            !app.messages
+                .history()
+                .iter()
+                .any(|m| m.text.starts_with("Created and switched to "))
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

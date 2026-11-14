@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 #[test]
 fn word_wrap_toggle_preserves_document_and_expands_under_minimap() {
     use scarlet_ui::{pipeline::RenderingPipeline, views::TextViewRenderObject};
+
     fn editor(element: &dyn Element) -> Option<(ElementId, f32, usize)> {
         if let Some(text) = element
             .render_object()
@@ -23,6 +24,7 @@ fn word_wrap_toggle_preserves_document_and_expands_under_minimap() {
             .iter()
             .find_map(|child| editor(child.as_ref()))
     }
+
     let source = format!(
         "    let value = \"{}\";\nend",
         "折り返し表示 long_source_code ".repeat(12)
@@ -1012,6 +1014,7 @@ fn workbench_lays_out_without_a_window_at_normal_and_minimum_sizes() {
                 element.layout(LayoutConstraints::tight(size.width, size.height)),
                 size
             );
+
             fn inspect(element: &dyn Element, editors: &mut usize) {
                 let bounds = element.bounds();
                 assert!(
@@ -1027,6 +1030,7 @@ fn workbench_lays_out_without_a_window_at_normal_and_minimum_sizes() {
                     inspect(child.as_ref(), editors);
                 }
             }
+
             let mut editors = 0;
             inspect(element.as_ref(), &mut editors);
             assert!(editors > 0, "workbench must contain an editor");
@@ -1064,6 +1068,7 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
     pipeline.layout_initial();
     pipeline.resize(Size::new(1100.0, 1000.0));
     pipeline.render();
+
     fn sidebar(
         e: &dyn Element,
         origin: Point,
@@ -1084,9 +1089,11 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
             .iter()
             .find_map(|child| sidebar(child.as_ref(), p))
     }
+
     let state = |p: &RenderingPipeline| {
         sidebar(p.element_tree().root().unwrap(), Point::ZERO).expect("explorer scroll view")
     };
+
     // Locate the divider from the laid-out SplitView, including workspace insets.
     fn divider(e: &dyn Element, origin: Point) -> Option<Point> {
         let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
@@ -1102,6 +1109,7 @@ fn explorer_keeps_scroll_and_user_width_when_workbench_updates() {
             .iter()
             .find_map(|child| divider(child.as_ref(), p))
     }
+
     let grip = divider(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
     for event in [
         MouseEvent::ButtonPressed {
@@ -1256,6 +1264,7 @@ fn selection_and_find_overlay_preserve_document_viewport_and_scroll() {
     pipeline.set_root(window().create_element());
     pipeline.layout_initial();
     pipeline.render();
+
     fn document(e: &dyn Element, origin: Point) -> Option<(scarlet_ui::element::ElementId, Rect)> {
         let p = Point::new(origin.x + e.position().x, origin.y + e.position().y);
         if e.type_name_debug().contains("TextViewRenderObject") {
@@ -1263,6 +1272,7 @@ fn selection_and_find_overlay_preserve_document_viewport_and_scroll() {
         }
         e.children().iter().find_map(|c| document(c.as_ref(), p))
     }
+
     let original = document(pipeline.element_tree().root().unwrap(), Point::ZERO).unwrap();
     let x = (original.1.origin.x + 110.0) as i32;
     let y = (original.1.origin.y + 80.0) as i32;
@@ -1372,6 +1382,7 @@ fn changing_theme_updates_existing_button_text_and_editor_surfaces() {
     app.set_theme(kureha_code::theme::Theme::Dark);
     root.update(&app.content());
     root.layout(LayoutConstraints::tight(1100.0, 760.0));
+
     fn inspect(e: &dyn Element, expected: Color, found: &mut bool) {
         if let Some(render) = e.render_object() {
             let mut ctx = PaintContext::new();
@@ -1389,6 +1400,7 @@ fn changing_theme_updates_existing_button_text_and_editor_surfaces() {
             inspect(child.as_ref(), expected, found);
         }
     }
+
     let mut found = false;
     inspect(
         root.as_ref(),
@@ -1756,6 +1768,7 @@ fn context_pipeline(app: &App) -> scarlet_ui::pipeline::RenderingPipeline {
     pipeline.render();
     pipeline
 }
+
 fn widget_rects(element: &dyn Element, parent: Point, kind: &str, result: &mut Vec<Rect>) {
     let origin = Point::new(
         parent.x + element.position().x,
@@ -1768,6 +1781,7 @@ fn widget_rects(element: &dyn Element, parent: Point, kind: &str, result: &mut V
         widget_rects(child.as_ref(), origin, kind, result);
     }
 }
+
 fn choose_context_row(
     pipeline: &mut scarlet_ui::pipeline::RenderingPipeline,
     point: Point,
@@ -2075,4 +2089,120 @@ fn code_selection_drag_keeps_its_split_outside_the_view_and_autoscrolls() {
     assert_eq!(left.selection.get(), released);
     assert_eq!(left.document.get().as_str().as_ref(), text);
     pipeline.teardown();
+}
+
+#[test]
+fn tab_input_and_backspace_follow_preferences_without_rewriting_existing_tabs() {
+    use scarlet_ui::{event::KeyModifiers, pipeline::RenderingPipeline};
+    for (spaces, width) in [(true, 4), (true, 2), (true, 8), (false, 4)] {
+        let app = test_app("\tkeep", None, false);
+        app.change_preferences(preferences::Change::InsertSpaces(spaces));
+        app.change_preferences(preferences::Change::TabSize(width));
+        let id = app.document_id();
+        let bindings = app.bindings(id).unwrap();
+        assert_eq!(bindings.document.get().as_str(), "\tkeep");
+        bindings.selection.set(TextSelection::collapsed(0));
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new("Input", app.content())
+                .size(Size::new(1000.0, 700.0))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        let key = |pipeline: &mut RenderingPipeline, code| {
+            pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+                keycode: code,
+                modifiers: KeyModifiers::empty(),
+            }));
+            pipeline.handle_event(&Event::Keyboard(KeyEvent::Released {
+                keycode: code,
+                modifiers: KeyModifiers::empty(),
+            }));
+            pipeline.render_for_present().unwrap();
+        };
+        key(&mut pipeline, KeyCode::Tab);
+        let unit = if spaces {
+            " ".repeat(width)
+        } else {
+            "\t".into()
+        };
+        assert_eq!(bindings.document.get().as_str(), format!("{unit}\tkeep"));
+        key(&mut pipeline, KeyCode::Backspace);
+        assert_eq!(bindings.document.get().as_str(), "\tkeep");
+        app.undo(false);
+        assert_eq!(bindings.document.get().as_str(), format!("{unit}\tkeep"));
+        pipeline.teardown();
+    }
+}
+
+#[test]
+#[ignore = "manual release-mode workbench input/scroll measurement"]
+fn workbench_input_scroll_performance() {
+    use scarlet_ui::pipeline::RenderingPipeline;
+    for decorations in [false, true] {
+        let app = App::new();
+        app.complete_open(0, "/tmp/performance.rs".into(), (0..200).map(|i|
+            format!("fn example_{i}() {{\n    let value = 42;\n    println!(\"{{value}}\");\n}}\n\n")).collect(), None);
+        app.change_preferences(preferences::Change::Minimap(decorations));
+        app.change_preferences(preferences::Change::IndentDepthBackground(decorations));
+        app.change_preferences(preferences::Change::ActiveBlockGuide(decorations));
+        let id = app.document_id();
+        app.edit(
+            id,
+            &EditDelta {
+                replaced_range: 0..0,
+                inserted: "// ".into(),
+            },
+        );
+        let bindings = app.bindings(id).unwrap();
+        bindings.selection.set(TextSelection::collapsed(3));
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new("Performance", app.content())
+                .decorated(false)
+                .size(Size::new(1200.0, 800.0))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        pipeline.render_for_present().unwrap();
+        let chrome = app.chrome.get();
+        let initial_len = bindings.document.get().len();
+        let mut input = Vec::new();
+        let mut typing = Vec::new();
+        let mut scrolling = Vec::new();
+        for i in 0..30 {
+            let start = Instant::now();
+            pipeline.handle_event(&Event::TextInputCommit {
+                text: "x".into(),
+                context_id: 1,
+                serial: i,
+            });
+            input.push(start.elapsed().as_micros());
+            pipeline.render_for_present().unwrap();
+            typing.push(start.elapsed().as_micros());
+        }
+        assert_eq!(bindings.document.get().len(), initial_len + 30);
+        for i in 0..30 {
+            let start = Instant::now();
+            bindings.scroll.set(TextViewScroll {
+                x: 0.0,
+                y: i as f32 * 70.0,
+            });
+            pipeline.render_for_present().unwrap();
+            scrolling.push(start.elapsed().as_micros());
+        }
+        assert_eq!(
+            app.chrome.get(),
+            chrome,
+            "typing/scroll rebuilt the entire workbench"
+        );
+        for (name, mut times) in [("input", input), ("typing", typing), ("scroll", scrolling)] {
+            times.sort();
+            eprintln!(
+                "PERF decorations={decorations} {name} median={}us p95={}us max={}us",
+                times[15], times[28], times[29]
+            );
+        }
+        pipeline.teardown();
+    }
 }
