@@ -755,19 +755,6 @@ fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
         );
         thread::sleep(Duration::from_millis(30));
     };
-    let expected = {
-        let rt = app.runtime.lock().unwrap();
-        let Panel::Completion(_, items) = &rt.language.panel else {
-            panic!("missing completion panel")
-        };
-        let item = &items[selected].item;
-        eprintln!("APP_COMPLETION_ITEM {item}");
-        item.pointer("/textEdit/newText")
-            .or_else(|| item.get("insertText"))
-            .and_then(Value::as_str)
-            .unwrap_or("greet")
-            .to_string()
-    };
     app.accept_completion(selected);
     let text = app
         .runtime
@@ -780,10 +767,7 @@ fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
         .document
         .as_str()
         .to_string();
-    assert!(
-        text.contains(&format!("{expected} }}\n")),
-        "completion result: {text:?}"
-    );
+    assert!(text.contains("greet() }\n"), "completion result: {text:?}");
     eprintln!("APP_COMPLETION_APPLY_OK");
     loop {
         app.poll_language();
@@ -799,6 +783,68 @@ fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
     }
     assert!(!app.language_diagnostics(id).is_empty());
     eprintln!("APP_DIAGNOSTICS_OK {}", app.language_status.get());
+    let source = "fn main() { let plan = 0; let text = 1; printl }\n";
+    let length = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .get(id)
+        .unwrap()
+        .editor
+        .document
+        .len();
+    app.edit(
+        id,
+        &EditDelta {
+            replaced_range: 0..length,
+            inserted: source.into(),
+        },
+    );
+    let caret = source.find("printl").unwrap() + 6;
+    {
+        let mut rt = app.runtime.lock().unwrap();
+        let doc = rt.workspace.get_mut(id).unwrap();
+        let selection = TextSelection::collapsed(caret);
+        doc.bindings.selection.set(selection);
+        doc.editor.moved(selection);
+    }
+    app.poll_language();
+    app.language_request("textDocument/completion");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let selected = loop {
+        app.poll_language();
+        let rt = app.runtime.lock().unwrap();
+        if let Panel::Completion(_, items) = &rt.language.panel {
+            assert!(
+                !items
+                    .iter()
+                    .any(|item| matches!(item.label.as_str(), "plan" | "text"))
+            );
+            if let Some(index) = items
+                .iter()
+                .position(|item| item.label.starts_with("println!"))
+            {
+                break index;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "println macro missing: {}",
+            app.status.get()
+        );
+        drop(rt);
+        thread::sleep(Duration::from_millis(30));
+    };
+    app.accept_completion(selected);
+    let rt = app.runtime.lock().unwrap();
+    let text = rt.workspace.get(id).unwrap().editor.document.as_str();
+    assert!(text.contains("println!"), "{text}");
+    assert!(
+        !text.contains("$0") && !text.contains("${"),
+        "snippet syntax inserted: {text}"
+    );
+    eprintln!("APP_PRINTLN_COMPLETION_OK");
 }
 
 #[test]
@@ -2020,4 +2066,125 @@ fn real_rust_analyzer_inline_types_update_after_edits_and_toggle() {
         "old revision must disappear immediately"
     );
     wait("bool");
+}
+
+#[test]
+#[ignore = "manual headless completion visual review"]
+fn completion_popup_preview() {
+    use scarlet_ui::pipeline::RenderingPipeline;
+    let directory =
+        PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
+    std::fs::create_dir_all(&directory).unwrap();
+    for theme in ["kureha-light", "kureha-dark"] {
+        let app = App::with_document();
+        app.set_theme(kureha_code::theme::preset(theme).unwrap());
+        let id = app.document_id();
+        app.edit(
+            id,
+            &EditDelta {
+                replaced_range: 0..0,
+                inserted: "fn main() {\n    prin\n}\n".into(),
+            },
+        );
+        {
+            let mut rt = app.runtime.lock().unwrap();
+            let doc = rt.workspace.get(id).unwrap();
+            let guard = Guard {
+                id,
+                revision: doc.editor.revision(),
+                caret: 20,
+                navigation: app.navigation.load(Ordering::Relaxed),
+            };
+            rt.language.panel = Panel::Completion(
+                guard,
+                completion::choices(
+                    &json!([
+                        {"label":"print!(…)","kind":3,"detail":"macro_rules! print"},
+                        {"label":"println!(…)","kind":3,"detail":"macro_rules! println"},
+                        {"label":"parse_int","kind":3,"detail":"fn(&str) -> Result<i32>"}
+                    ]),
+                    "prin",
+                    4,
+                ),
+            );
+        }
+        app.language_anchor.set(Point::new(80.0, 70.0));
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new(
+                "Completion",
+                app.language_popup()
+                    .background(app.theme.get().colors().background),
+            )
+            .decorated(false)
+            .size(Size::new(760.0, 300.0))
+            .create_element(),
+        );
+        pipeline.layout_initial();
+        let buffer = pipeline.render().expect("completion paints");
+        let rgb: Vec<_> = buffer
+            .data()
+            .chunks_exact(4)
+            .flat_map(|p| [p[2], p[1], p[0]])
+            .collect();
+        image::save_buffer(
+            directory.join(format!("completion-{theme}.png")),
+            &rgb,
+            buffer.width(),
+            buffer.height(),
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn callable_completion_places_caret_in_arguments_and_undoes_atomically() {
+    for (source, inserted, kind, expected, caret) in [
+        ("fo", "foo", 3, "foo()", 4),
+        ("fo", "foo()", 2, "foo()", 4),
+        ("fo(42)", "foo", 3, "foo(42)", 4),
+        ("fo ()", "foo()", 3, "foo ()", 5),
+        ("fo", "foo", 6, "foo", 3),
+    ] {
+        let app = App::with_document();
+        let id = app.document_id();
+        {
+            let mut rt = app.runtime.lock().unwrap();
+            let doc = rt.workspace.get_mut(id).unwrap();
+            doc.editor.edit_transaction(&EditDelta {
+                replaced_range: 0..0,
+                inserted: source.into(),
+            });
+            doc.editor.moved(TextSelection::collapsed(2));
+            doc.bindings.selection.set(TextSelection::collapsed(2));
+            let guard = Guard {
+                id,
+                revision: doc.editor.revision(),
+                caret: 2,
+                navigation: app.navigation.load(Ordering::Relaxed),
+            };
+            rt.language.panel = Panel::Completion(
+                guard,
+                vec![Choice {
+                    label: "foo".into(),
+                    detail: String::new(),
+                    item: json!({"label":"foo", "kind":kind, "insertText":inserted}),
+                }],
+            );
+        }
+        app.accept_completion(0);
+        assert_eq!(
+            app.bindings(id).unwrap().document.get().as_str(),
+            expected,
+            "{source}"
+        );
+        assert_eq!(
+            app.bindings(id).unwrap().selection.get().caret.byte,
+            caret,
+            "{source}"
+        );
+        app.undo(false);
+        assert_eq!(app.bindings(id).unwrap().document.get().as_str(), source);
+    }
 }

@@ -441,3 +441,63 @@ fn selection_preview() {
         }
     }
 }
+
+/// Reproducible UI-thread typing workload; no timing assertions in CI.
+#[test]
+#[ignore = "manual release typing benchmark"]
+fn typing_benchmark() {
+    for minimap in [false, true] {
+        let app = App::with_document();
+        app.minimap_visible.set(minimap);
+        let source = include_str!("main.rs");
+        let id = app
+            .runtime
+            .lock()
+            .unwrap()
+            .workspace
+            .open(PathBuf::from("/benchmark/main.rs"), source);
+        app.activate(id);
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new("Typing", app.content())
+                .decorated(false)
+                .size(Size::new(1280.0, 800.0))
+                .create_element(),
+        );
+        pipeline.layout_initial();
+        pipeline.render();
+        thread::sleep(Duration::from_millis(300));
+        if syntax::poll() {
+            app.syntax_revision.update(|r| *r += 1);
+        }
+        pipeline.render();
+        let mut edits = Vec::new();
+        let mut frames = Vec::new();
+        for index in 0..24 {
+            let start = Instant::now();
+            let delta = EditDelta {
+                replaced_range: 3..3 + usize::from(index % 2 == 1),
+                inserted: if index % 2 == 0 {
+                    "x".into()
+                } else {
+                    String::new()
+                },
+            };
+            app.edit(id, &delta);
+            app.schedule_completion(id, &delta);
+            edits.push(start.elapsed().as_secs_f64() * 1000.0);
+            let start = Instant::now();
+            pipeline.render();
+            frames.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        edits.sort_by(f64::total_cmp);
+        frames.sort_by(f64::total_cmp);
+        eprintln!(
+            "TYPING minimap={minimap} lines={} edit_median_ms={:.3} frame_median_ms={:.3} frame_p95_ms={:.3}",
+            source.lines().count(),
+            edits[12],
+            frames[12],
+            frames[22]
+        );
+    }
+}
