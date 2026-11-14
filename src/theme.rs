@@ -318,6 +318,60 @@ fn syntax_color(c: Color) -> SyntaxColor {
     }
 }
 
+/// `top` drawn over the opaque `below`.
+fn over(top: Color, below: Color) -> Color {
+    let channel = |t: f32, b: f32| t * top.a + b * (1.0 - top.a);
+    Color {
+        r: channel(top.r, below.r),
+        g: channel(top.g, below.g),
+        b: channel(top.b, below.b),
+        a: 1.0,
+    }
+}
+/// WCAG contrast ratio of two opaque colors.
+pub fn contrast(a: Color, b: Color) -> f32 {
+    let luminance = |c: Color| {
+        let channel = |v: f32| {
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
+    };
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+impl WorkbenchColors {
+    /// Behind a selected row or the active tab: the accent, faintly, so it
+    /// marks the row without washing out what is on it.
+    pub fn highlight(&self) -> Color {
+        self.accent.with_opacity(0.16)
+    }
+    /// Text of a selected row or the active tab, over the highlight on
+    /// `under`: the accent, moved toward the foreground only as far as it
+    /// takes to read as well as plain text does there (4.5:1 at most).
+    pub fn emphasis(&self, under: Color) -> Color {
+        let behind = over(self.highlight(), Color { a: 1.0, ..under });
+        let target = contrast(Color { a: 1.0, ..self.foreground }, behind).min(4.5);
+        (0..=20)
+            .map(|step| {
+                let t = step as f32 / 20.0;
+                let mix = |a: f32, b: f32| a + (b - a) * t;
+                Color {
+                    r: mix(self.accent.r, self.foreground.r),
+                    g: mix(self.accent.g, self.foreground.g),
+                    b: mix(self.accent.b, self.foreground.b),
+                    a: 1.0,
+                }
+            })
+            .find(|color| contrast(*color, behind) >= target - 0.01)
+            .unwrap_or(self.foreground)
+    }
+}
+
 /// Whether `selection`, drawn over each of `under`, can be told apart from
 /// it: far enough in color and in lightness. A selection the same as the
 /// current line or a list's surface would vanish there.
@@ -370,6 +424,31 @@ pub fn ensure_visible_selection(colors: &mut WorkbenchColors) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Selected rows and the active tab read in every bundled theme, and
+    /// keep the accent's hue where the theme's accent already reads.
+    #[test]
+    fn emphasis_reads_on_the_highlight_in_every_theme() {
+        let themes = Theme::ALL.into_iter().chain(
+            PRESETS
+                .iter()
+                .map(|(name, _)| preset(name).unwrap()),
+        );
+        for theme in themes {
+            let colors = theme.colors();
+            let behind = over(colors.highlight(), Color { a: 1.0, ..colors.elevated });
+            let text = colors.emphasis(colors.elevated);
+            let plain = contrast(Color { a: 1.0, ..colors.foreground }, behind);
+            assert!(
+                contrast(text, behind) >= plain.min(4.5) - 0.01,
+                "{}: as readable as plain text",
+                theme.name()
+            );
+            if contrast(Color { a: 1.0, ..colors.accent }, behind) >= plain.min(4.5) {
+                assert_eq!(text, Color { a: 1.0, ..colors.accent }, "{}", theme.name());
+            }
+        }
+    }
 
     #[test]
     fn every_bundled_theme_has_a_selection_that_shows() {
