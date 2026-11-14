@@ -88,8 +88,10 @@ impl<V: View + Clone> View for ListRow<V> {
 }
 
 fn build_list_row<V: View + Clone>(row: &ListRow<V>) -> Box<dyn View> {
+    // Selected rows are marked by the accent, faintly, and their label in
+    // the accent (see `WorkbenchColors::emphasis`), not by a bright fill.
     let background = if row.selected {
-        row.colors.selection
+        row.colors.highlight()
     } else if row.enabled && row.input.focused.get() {
         row.colors.current_line
     } else {
@@ -100,7 +102,7 @@ fn build_list_row<V: View + Clone>(row: &ListRow<V>) -> Box<dyn View> {
             .clone()
             .background(Color::TRANSPARENT)
             .hover_color(if row.selected {
-                row.colors.selection
+                row.colors.highlight()
             } else if row.enabled {
                 row.colors.current_line
             } else {
@@ -520,17 +522,23 @@ impl App {
             left += width + 4.0;
             let select = self.clone();
             let close = self.clone();
-            let icon = if self.is_settings_tab(id) { file_icons::FileIcon { icon: Icon::Settings, color: theme.colors().foreground } } else if terminal { file_icons::FileIcon { icon: Icon::Terminal, color: theme.colors().foreground } } else { file_icons::for_path(path.as_deref()).themed(&theme, Some(id) == active) };
+            let icon = if self.is_settings_tab(id) { file_icons::FileIcon { icon: Icon::Settings, color: theme.colors().foreground } } else if terminal { file_icons::FileIcon { icon: Icon::Terminal, color: theme.colors().foreground } } else { file_icons::for_path(path.as_deref()) };
+            // The active tab: a faint accent fill and its label in the accent.
+            // Its icon keeps its own colour.
+            let chosen = Some(id) == active;
+            let colors = theme.colors();
+            let label_color = if chosen { colors.emphasis(colors.elevated) } else { colors.foreground };
             let content = hstack! {
-                Button::new(label).header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).font_size(13.0).padding(7.0)
+                Button::new(label).header_style().text_color(label_color).background_color(Color::TRANSPARENT).font_size(13.0).padding(7.0)
                     .icon(icon.icon).icon_color(icon.color).icon_size(IconSize::Pixels(18)).icon_style(icon.style())
                     .on_click(move || {select.focus_group(group); select.activate(id);}).frame(width - 28.0, 32.0),
-                Button::new("×").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).padding(4.0)
+                Button::new("×").header_style().text_color(colors.foreground).background_color(Color::TRANSPARENT).padding(4.0)
                     .on_click(move || {close.focus_group(group); close.request_close(Some(id));}).frame(28.0, 32.0),
             }.spacing(0.0).frame(width, 32.0);
-            let surface = Surface::section(content).corner_radius(10.0).clip_content(true);
-            self.tab_region(if Some(id) == active { surface.surface_style(theme.tab_style()) }
-                else { surface.fill(Color::TRANSPARENT) }, tab_drag::RegionId::Tab(group, id)).key(id)
+            let surface = Surface::section(content)
+                .corner_radius(10.0).clip_content(true)
+                .fill(if chosen { colors.highlight() } else { Color::TRANSPARENT });
+            self.tab_region(surface, tab_drag::RegionId::Tab(group, id)).key(id)
         }).collect::<Vec<_>>();
         let back = self.clone();
         let forward = self.clone();
@@ -759,7 +767,7 @@ impl App {
                     let input = app.nav.row_inputs.get(format!("tree:{}", row.key));
                     let icon = if row.directory { file_icons::folder(row.expanded) }
                         else { file_icons::for_path(row.path.as_deref()) };
-                    let icon = icon.themed(&theme, selected == Some(index));
+                    let chosen = selected == Some(index);
                     // Git: tint changed entries; a letter for files, a dot for folders.
                     let change_color = row.git.map(|change| match change {
                         Change::Conflicted => theme.colors().error,
@@ -776,11 +784,11 @@ impl App {
                         Spacer::new().frame(row.depth as f32 * 14.0 + 4.0, 1.0),
                         icon.view(),
                         Spacer::new().frame(6.0, 1.0),
-                        Text::new(row.label.clone()).font_size(13.0).color(if !enabled { theme.colors().muted } else { change_color.unwrap_or(theme.colors().foreground) }),
+                        Text::new(row.label.clone()).font_size(13.0).color(if !enabled { theme.colors().muted } else if chosen { theme.colors().emphasis(theme.colors().elevated) } else { change_color.unwrap_or(theme.colors().foreground) }),
                         Spacer::new(),
                         Text::new(mark).font_size(11.0).color(change_color.unwrap_or(theme.colors().muted)).padding_insets(EdgeInsets::new(0.0, 0.0, 8.0, 0.0)),
                     }.spacing(0.0).frame(f32::INFINITY, 27.0)
-                        .clip(), input, selected == Some(index), enabled, theme.colors(),
+                        .clip(), input, chosen, enabled, theme.colors(),
                         move || app.open_tree_row(row.clone(), index))
                 }).item_key(|row| row.key.clone().into())
                   .frame(f32::INFINITY, f32::INFINITY),
@@ -811,14 +819,14 @@ impl App {
         let options = self.find_options.get();
         vstack! {
             hstack! {
-                TextField::new(self.query.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).material(theme.input_material()).placeholder("Find").autofocus(true)
+                TextField::new(self.query.clone()).selection_color(theme.colors().selection).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).material(theme.input_material()).placeholder("Find").autofocus(true)
                     .on_submit(move || submit.find(false)).frame_width(f32::INFINITY),
                 Button::new("Previous").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || previous.find(true)),
                 Button::new("Next").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || next.find(false)),
                 Button::new("×").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || close.find_open.set(false)),
             }.spacing(6.0),
             hstack! {
-                TextField::new(self.replacement.clone()).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).material(theme.input_material()).placeholder("Replace with").frame_width(f32::INFINITY),
+                TextField::new(self.replacement.clone()).selection_color(theme.colors().selection).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).material(theme.input_material()).placeholder("Replace with").frame_width(f32::INFINITY),
                 Button::new("Replace").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || replace.replace_match()),
                 Button::new("Replace All").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || all.replace_all()),
             }.spacing(6.0),

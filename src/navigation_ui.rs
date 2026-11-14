@@ -1414,7 +1414,7 @@ impl App {
                         Spacer::new(),
                     }.frame(f32::INFINITY, 24.0),
                     VStack::new(())),
-                TextField::new(self.nav.query.clone()).placeholder(placeholder).placeholder_color(colors.muted).font_size(13.0)
+                TextField::new(self.nav.query.clone()).selection_color(colors.selection).placeholder(placeholder).placeholder_color(colors.muted).font_size(13.0)
                     .text_color(colors.foreground).background_color(colors.elevated)
                     .border_color(colors.border).focused_border_color(colors.accent).material(self.theme.get().input_material())
                     .autofocus(true).on_submit(move || submit.accept_navigation())
@@ -1425,12 +1425,14 @@ impl App {
                     let hover_query = query.clone();
                     let hover = app.clone();
                     let input = app.nav.row_inputs.get(format!("palette:{}", row.key));
+                    let chosen = selected == Some(index);
                     super::ui::list_row(hstack! {
-                        Text::new(row.label).font_size(13.0).color(colors.foreground).padding(6.0)
-                            .frame_width(260.0).clip(),
+                        Text::new(row.label).font_size(13.0)
+                            .color(if chosen { colors.emphasis(colors.elevated) } else { colors.foreground })
+                            .padding(6.0).frame_width(260.0).clip(),
                         Text::new(row.detail).font_size(11.0).color(colors.muted).frame_width(300.0).clip(),
                         Spacer::new(),
-                    }.spacing(8.0).frame(f32::INFINITY, 34.0), input, selected == Some(index), true, colors,
+                    }.spacing(8.0).frame(f32::INFINITY, 34.0), input, chosen, true, colors,
                         move || {
                             if app.nav.query.get() == query {
                                 app.nav.selected.set(Some(index)); app.accept_navigation();

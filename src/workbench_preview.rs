@@ -296,3 +296,113 @@ fn selection_highlight_preview() {
         pipeline.teardown();
     }
 }
+
+/// Selected explorer rows, the active tab and the palette's selected row in
+/// a few themes, as PNGs: `KUREHA_WORKBENCH_PREVIEW=<folder>
+/// cargo test --bin kureha-code selection_preview -- --ignored`.
+#[test]
+#[ignore = "manual visual review; writes PNG files to KUREHA_WORKBENCH_PREVIEW"]
+fn selection_preview() {
+    let directory =
+        PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let themes = [Theme::Light, Theme::Dark].into_iter().chain(
+        ["kureha", "nord", "solarized-dark", "solarized-light"]
+            .into_iter()
+            .map(|id| kureha_code::theme::preset(id).unwrap()),
+    );
+    for theme in themes {
+        for scene in ["workbench", "palette"] {
+            let app = App::new();
+            app.set_theme(theme.clone());
+            app.runtime.lock().unwrap().explorer.root = Some("/project/kureha-code".into());
+            app.tree_rows.set(
+                [
+                    ("kureha-code", true, 0),
+                    ("src", true, 1),
+                    ("explorer.rs", false, 2),
+                    ("main.rs", false, 2),
+                    ("theme.rs", false, 2),
+                    ("ui.rs", false, 2),
+                    ("flake.nix", false, 1),
+                    ("README.md", false, 1),
+                ]
+                .into_iter()
+                .map(|(name, directory, depth)| Row {
+                    key: name.into(),
+                    label: name.into(),
+                    path: Some(PathBuf::from("/project/kureha-code").join(name)),
+                    directory,
+                    depth,
+                    expanded: directory,
+                    git: None,
+                })
+                .collect(),
+            );
+            app.tree_selected.set(Some(4));
+            for (name, text) in [
+                ("main.rs", "fn main() {}\n"),
+                ("flake.nix", "{ }\n"),
+                ("theme.rs", "pub struct Theme;\n"),
+            ] {
+                let id = app
+                    .runtime
+                    .lock()
+                    .unwrap()
+                    .workspace
+                    .open(PathBuf::from("/project/kureha-code/src").join(name), text);
+                app.activate(id);
+            }
+            if scene == "palette" {
+                app.show_commands();
+                app.poll_navigation();
+            }
+            let mut pipeline = RenderingPipeline::new();
+            pipeline.set_root(
+                Window::new("Kureha Code", app.content())
+                    .decorated(false)
+                    .size(Size::new(1100.0, 560.0))
+                    .create_element(),
+            );
+            pipeline.layout_initial();
+            if scene == "palette" {
+                // Type into the palette's field and select what was typed.
+                use scarlet_ui::{
+                    Event, KeyEvent,
+                    event::{KeyCode, KeyModifiers},
+                };
+                pipeline.render();
+                for c in "theme".chars() {
+                    pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c }));
+                }
+                let shift = KeyModifiers {
+                    shift: true,
+                    ..Default::default()
+                };
+                pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+                    keycode: KeyCode::Home,
+                    modifiers: shift,
+                }));
+                pipeline.handle_event(&Event::Keyboard(KeyEvent::Released {
+                    keycode: KeyCode::Home,
+                    modifiers: shift,
+                }));
+                app.poll_navigation();
+            }
+            let buffer = pipeline.render().expect("workbench paints");
+            let pixels = buffer
+                .data()
+                .chunks_exact(4)
+                .flat_map(|p| [p[2], p[1], p[0]])
+                .collect();
+            image::RgbImage::from_raw(buffer.width(), buffer.height(), pixels)
+                .unwrap()
+                .save(directory.join(format!(
+                    "{scene}-{}.png",
+                    theme.name().to_lowercase().replace(' ', "-")
+                )))
+                .unwrap();
+            pipeline.teardown();
+        }
+    }
+}

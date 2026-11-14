@@ -24,11 +24,11 @@ wasmi = { version = "2.0.0", default-features = false, features = ["std", "valid
 scarlet_os = { package = "scarlet-os", git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3ac8c97289a28599bac22fca4ac26a5f9ca", default-features = false, features = ["std"] }
 scarlet_sys = { package = "scarlet-sys", git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3ac8c97289a28599bac22fca4ac26a5f9ca" }
 scarlet-fs = { git = "https://github.com/petitstrawberry/Scarlet", rev = "5d0fe3ac8c97289a28599bac22fca4ac26a5f9ca" }
-scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "eea9900e9974a3054214ac8189d1f0bb05520d04", default-features = false, features = ["std", "platform-sws"] }
+scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "0e2cff8a9ef63278204d4554db92daa735f91a45", default-features = false, features = ["std", "platform-sws"] }
 
 [target.'cfg(not(target_os = "scarlet"))'.dependencies]
 ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
-scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "eea9900e9974a3054214ac8189d1f0bb05520d04", default-features = false, features = ["std", "platform-winit"] }
+scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "0e2cff8a9ef63278204d4554db92daa735f91a45", default-features = false, features = ["std", "platform-winit"] }
 
 [target.'cfg(all(unix, not(target_os = "scarlet")))'.dependencies]
 libc = "0.2"
