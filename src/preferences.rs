@@ -10,6 +10,8 @@ pub(super) struct Preferences {
     pub hide_minimap: bool,
     pub word_wrap: bool,
     pub wrap_at_words: bool,
+    pub indent_depth_background: bool,
+    pub active_block_guide: bool,
     /// Format with the chosen formatter before each save (extension formatters).
     pub format_on_save: bool,
     /// Formatter per language id: `"lsp"` or an extension id.
@@ -30,6 +32,8 @@ pub(super) enum Change {
     Minimap(bool),
     WordWrap(bool),
     WrapAtWords(bool),
+    IndentDepthBackground(bool),
+    ActiveBlockGuide(bool),
     FormatOnSave(bool),
     /// Grants or withdraws one program for one extension.
     AllowProcess {
@@ -54,6 +58,8 @@ impl Default for Preferences {
             hide_minimap: false,
             word_wrap: true,
             wrap_at_words: true,
+            indent_depth_background: false,
+            active_block_guide: false,
             format_on_save: false,
             formatter: BTreeMap::new(),
             allow_process: BTreeMap::new(),
@@ -110,6 +116,14 @@ impl Preferences {
                     result.hide_minimap = value
                         .as_bool()
                         .ok_or("hide_minimap must be true or false")?
+                }
+                "indent_depth_background" => {
+                    result.indent_depth_background = value.as_bool()
+                        .ok_or("indent_depth_background must be true or false")?;
+                }
+                "active_block_guide" => {
+                    result.active_block_guide = value.as_bool()
+                        .ok_or("active_block_guide must be true or false")?;
                 }
                 "format_on_save" => {
                     result.format_on_save = value
@@ -203,6 +217,8 @@ impl Preferences {
             Change::Minimap(visible) => self.hide_minimap = !visible,
             Change::WordWrap(enabled) => self.word_wrap = *enabled,
             Change::WrapAtWords(enabled) => self.wrap_at_words = *enabled,
+            Change::IndentDepthBackground(enabled) => self.indent_depth_background = *enabled,
+            Change::ActiveBlockGuide(enabled) => self.active_block_guide = *enabled,
             Change::FormatOnSave(enabled) => self.format_on_save = *enabled,
             Change::AllowProcess {
                 extension,
@@ -284,6 +300,23 @@ mod tests {
         assert!(!preferences.word_wrap);
         preferences.change(&Change::Color(Some("Nord".into())));
         assert!(!preferences.word_wrap);
+    }
+    #[test]
+    fn indent_decorations_are_opt_in_independent_and_validate_types() {
+        let mut p = Preferences::parse("").unwrap();
+        assert!(!p.indent_depth_background && !p.active_block_guide);
+        p.change(&Change::IndentDepthBackground(true));
+        assert!(p.indent_depth_background && !p.active_block_guide);
+        p.change(&Change::ActiveBlockGuide(true));
+        p.change(&Change::IndentDepthBackground(false));
+        assert!(!p.indent_depth_background && p.active_block_guide);
+        let p = Preferences::parse("indent_depth_background=true\nactive_block_guide=true").unwrap();
+        assert!(p.indent_depth_background && p.active_block_guide);
+        for key in ["indent_depth_background", "active_block_guide"] {
+            for bad in ["1", "'true'", "[]"] {
+                assert!(Preferences::parse(&format!("{key}={bad}")).is_err());
+            }
+        }
     }
     #[test]
     fn formatter_choices_are_validated() {

@@ -14,6 +14,7 @@ pub mod workspace;
 pub mod file_icons;
 pub mod lsp;
 pub mod syntax;
+pub mod semantic;
 
 pub mod media;
 pub mod minimap;

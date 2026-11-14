@@ -34,7 +34,21 @@ struct Block {
 fn blocks(text: &str) -> Vec<Block> {
     let mut result = Vec::new();
     let mut paragraph = Vec::new();
+    let mut fenced = false;
+    let mut code_lines = Vec::new();
     for line in text.lines().chain(std::iter::once("")) {
+        if line.trim_start().starts_with("```") {
+            if fenced {
+                result.push(Block { text: code_lines.join("\n"), kind: Kind::Code, spans: Vec::new() });
+                code_lines.clear();
+            } else if !paragraph.is_empty() {
+                result.push(Block { text: paragraph.join("\n"), kind: Kind::Prose, spans: Vec::new() });
+                paragraph.clear();
+            }
+            fenced = !fenced;
+            continue;
+        }
+        if fenced { code_lines.push(line); continue; }
         if line.trim().is_empty() {
             if paragraph.is_empty() {
                 continue;
@@ -43,6 +57,7 @@ fn blocks(text: &str) -> Vec<Block> {
             let code = [
                 "fn ",
                 "pub ",
+                "pub(",
                 "extern ",
                 "unsafe ",
                 "struct ",
@@ -69,6 +84,9 @@ fn blocks(text: &str) -> Vec<Block> {
         } else {
             paragraph.push(line);
         }
+    }
+    if !code_lines.is_empty() {
+        result.push(Block { text: code_lines.join("\n"), kind: Kind::Code, spans: Vec::new() });
     }
     // Plaintext rust-analyzer hovers put the qualified module above the signature.
     if result.len() > 1
@@ -521,6 +539,19 @@ mod tests {
         generate_state_id,
         pipeline::RenderingPipeline,
     };
+
+    #[test]
+    fn restricted_visibility_and_inferred_types_are_highlighted_as_code() {
+        for text in ["pub(crate) fn start(&self)", "pub(super) struct State", "let value: Option<String>"] {
+            let card = highlighted(text, Theme::Dark);
+            assert_eq!(card.blocks[0].kind, Kind::Code);
+            assert!(!card.blocks[0].spans.is_empty());
+        }
+        let parsed = blocks("```rust\nlet x: u64\n```\n\nInferred type");
+        assert_eq!(parsed[0].kind, Kind::Code);
+        assert_eq!(parsed[0].text, "let x: u64");
+        assert_eq!(parsed[1].kind, Kind::Prose);
+    }
 
     const EXAMPLE: &str = "scarlet\n\n\n\npub extern \"C\" fn start_kernel(boot_info: &BootInfo) -> !\n\n\nMain kernel entry point for the boot processor\n\nThis function is called by architecture-specific boot code and performs the complete kernel initialization sequence using information in the BootInfo structure.";
 

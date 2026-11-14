@@ -73,6 +73,7 @@ pub(super) struct Panel {
     /// An operation failure or the reason Git is unavailable.
     notice: Ui<String>,
     busy: Ui<bool>,
+    discard: Ui<Option<(PathBuf, Entry)>>,
 }
 impl Panel {
     pub(super) fn new() -> Self {
@@ -85,6 +86,7 @@ impl Panel {
             message_selection: Ui::new(generate_state_id(), Default::default()),
             notice: Ui::new(generate_state_id(), String::new()),
             busy: Ui::new(generate_state_id(), false),
+            discard: Ui::new(generate_state_id(), None),
         }
     }
     pub(super) fn listenables(&self) -> Vec<&dyn Listenable> {
@@ -94,6 +96,7 @@ impl Panel {
             &self.rows,
             &self.notice,
             &self.busy,
+            &self.discard,
         ]
     }
     /// The sidebar was clicked last, so the editor must not take focus.
@@ -332,6 +335,7 @@ impl App {
                 let doing = match &operation {
                     Operation::Stage(_) => "Staging…".to_string(),
                     Operation::Unstage(_) => "Unstaging…".to_string(),
+                    Operation::Discard(_) => "Discarding changes…".to_string(),
                     Operation::Commit(_) => "Committing…".to_string(),
                     Operation::CreateBranch { name, .. } => format!("Creating {name}…"),
                     Operation::Switch { name, .. } => format!("Switching to {name}…"),
@@ -374,7 +378,7 @@ impl App {
                     if matches!(operation, Operation::Commit(_)) {
                         self.git_panel.message.set(String::new());
                     }
-                    if matches!(operation, Operation::Switch { .. } | Operation::CreateBranch { switch: true, .. }) {
+                    if matches!(operation, Operation::Discard(_) | Operation::Switch { .. } | Operation::CreateBranch { switch: true, .. }) {
                         self.reload_switched(&done.changed);
                     }
                     self.git_panel.notice.set(String::new());
@@ -402,6 +406,26 @@ impl App {
                 entries.into_iter().map(|e| e.path).collect(),
             ));
         }
+    }
+    fn request_git_discard(&self, entry: Entry) {
+        let rt = self.runtime.lock().unwrap();
+        if rt.git.pending != 0 || entry.folder || !matches!(entry.change, Change::Modified | Change::Deleted) { return; }
+        let Some(snapshot) = &rt.git.snapshot else { return; };
+        self.git_panel.discard.set(Some((snapshot.workdir.clone(), entry)));
+    }
+    fn confirm_git_discard(&self) {
+        let Some((workdir, entry)) = self.git_panel.discard.get() else { return; };
+        self.git_panel.discard.set(None);
+        let rt = self.runtime.lock().unwrap();
+        if rt.git.pending != 0 || rt.git.snapshot.as_ref().is_none_or(|s| s.workdir != workdir) { return; }
+        let target = kureha_code::git::branch::resolved(&workdir.join(&entry.path));
+        if rt.workspace.documents.iter().any(|doc| doc.editor.dirty() && doc.path.as_ref().is_some_and(|p| kureha_code::git::branch::resolved(p) == target)) {
+            drop(rt);
+            self.git_panel.notice.set("Save or undo unsaved editor changes before discarding this file.".into());
+            return;
+        }
+        drop(rt);
+        self.git_write(Operation::Discard(vec![entry.path]));
     }
     pub(super) fn git_can_operate(&self) -> bool {
         self.runtime.lock().unwrap().git.snapshot.is_some()
@@ -764,6 +788,10 @@ impl App {
                 .on_click(move || refresh.refresh_git()),
         }
         .spacing(2.0);
+        let discard = self.clone();
+        let cancel_discard = self.git_panel.discard.clone();
+        let discard_target = self.git_panel.discard.get().filter(|(root, _)| snapshot.as_ref().is_some_and(|s| &s.workdir == root));
+        let discard_label = discard_target.as_ref().map_or(String::new(), |(_, entry)| format!("Discard changes to {}? Staged changes are kept.", entry.path.display()));
         let row_theme = theme.clone();
         let body = if_view!(snapshot.is_some(),
             vstack! {
@@ -803,6 +831,15 @@ impl App {
                     VStack::new(())),
                 if_view!(!notice.is_empty(),
                     Text::new(notice).font_size(11.0).color(colors.error).line_limit(None),
+                    VStack::new(())),
+                if_view!(discard_target.is_some(),
+                    vstack! {
+                        Text::new(discard_label).font_size(12.0).color(colors.foreground).line_limit(None),
+                        hstack! {
+                            Button::new("Cancel").font_size(12.0).on_click(move || cancel_discard.set(None)),
+                            Button::new("Discard Changes").font_size(12.0).text_color(colors.error).enabled(pending == 0).on_click(move || discard.confirm_git_discard()),
+                        }.spacing(8.0),
+                    }.spacing(8.0).padding(10.0).background(colors.elevated),
                     VStack::new(())),
                 ListView::new(self.git_panel.rows.clone(), self.git_panel.selected.clone(), 27.0, move |index, row: GitRow, selected| {
                     rows.git_row(row, selected == Some(index), &row_theme)
@@ -913,6 +950,9 @@ impl App {
                 };
                 let target = entry.clone();
                 let stage = entry.clone();
+                let discard = self.clone();
+                let discardable = !staged && !entry.folder && matches!(entry.change, Change::Modified | Change::Deleted);
+                let discard_entry = entry.clone();
                 Either::B(
                     hstack! {
                         // One flat row, so the name and folder shorten before the letter.
@@ -930,6 +970,13 @@ impl App {
                         }.spacing(0.0).frame(f32::INFINITY, 27.0).clip(),
                         input, selected, !entry.folder, colors,
                         move || open.open_git_diff(&target, staged)),
+                        if_view!(discardable,
+                            Button::new("↶").header_style().font_size(15.0).padding(4.0)
+                                .text_color(colors.foreground).background_color(Color::TRANSPARENT)
+                                .enabled(!self.git_panel.busy.get())
+                                .on_click(move || discard.request_git_discard(discard_entry.clone()))
+                                .frame(26.0, 27.0),
+                            VStack::new(())),
                         Button::new(if staged { "−" } else { "+" }).header_style()
                             .font_size(13.0).padding(4.0).text_color(colors.foreground)
                             .background_color(Color::TRANSPARENT)
@@ -1162,6 +1209,40 @@ mod tests {
         render_preview(&app, "git-explorer.png");
         render_preview_sized(&app, "git-explorer-narrow.png", 760.0);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn discard_requires_confirmation_preserves_dirty_buffers_and_reloads_clean_documents() {
+        let dir = std::env::temp_dir().join(format!("kureha-git-discard-ui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("file.txt"), "original\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-qm", "initial"]);
+        std::fs::write(dir.join("file.txt"), "changed\n").unwrap();
+        let app = App::with_document();
+        app.open_folder(dir.clone());
+        wait(&app, "status", |app| app.runtime.lock().unwrap().git.snapshot.as_ref().is_some_and(|s| s.unstaged.len() == 1));
+        let entry = app.runtime.lock().unwrap().git.snapshot.as_ref().unwrap().unstaged[0].clone();
+        app.request_git_discard(entry.clone());
+        assert_eq!(std::fs::read_to_string(dir.join("file.txt")).unwrap(), "changed\n");
+        app.git_panel.discard.set(None);
+        app.confirm_git_discard();
+        assert_eq!(std::fs::read_to_string(dir.join("file.txt")).unwrap(), "changed\n");
+        app.open(dir.join("file.txt"));
+        wait(&app, "file opens", |app| app.active_id().is_some_and(|id| app.runtime.lock().unwrap().workspace.get(id).unwrap().path.as_ref().is_some_and(|p| p.ends_with("file.txt"))));
+        let id = app.active_id().unwrap();
+        app.edit(id, &EditDelta { replaced_range: 0..0, inserted: "unsaved".into() });
+        app.request_git_discard(entry.clone());
+        app.confirm_git_discard();
+        assert!(app.git_panel.notice.get().contains("unsaved"));
+        assert_eq!(std::fs::read_to_string(dir.join("file.txt")).unwrap(), "changed\n");
+        app.undo(false);
+        app.request_git_discard(entry);
+        app.confirm_git_discard();
+        wait(&app, "discard reloads editor", |app| app.runtime.lock().unwrap().workspace.get(id).unwrap().editor.document.as_str().as_ref() == "original\n");
+        assert_eq!(std::fs::read_to_string(dir.join("file.txt")).unwrap(), "original\n");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

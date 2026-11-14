@@ -355,6 +355,53 @@ fn coalesced_progress_preserves_order_boundaries_and_byte_limits() {
 }
 
 #[test]
+fn semantic_refresh_requests_reply_and_notify_the_language_service() {
+    for id in [json!(42), json!("semantic-refresh")] {
+        let shared = Shared::default();
+        let (tx, rx) = mpsc::sync_channel(4);
+        dispatch(
+            json!({"jsonrpc":"2.0","id":id,"method":"workspace/semanticTokens/refresh"}),
+            100,
+            &shared,
+            &tx,
+        )
+        .unwrap();
+        let reply: Value = serde_json::from_slice(&rx.try_recv().unwrap()).unwrap();
+        assert_eq!(reply, json!({"jsonrpc":"2.0","id":id,"result":null}));
+        assert!(rx.try_recv().is_err(), "exactly one reply per request");
+        let inbox = shared.inbox.lock().unwrap();
+        assert_eq!(inbox.events.len(), 1);
+        assert_eq!(
+            inbox.events[0],
+            Event::Notification {
+                method: "workspace/semanticTokens/refresh".into(),
+                params: Value::Null,
+            }
+        );
+    }
+    let shared = Shared::default();
+    let (tx, rx) = mpsc::sync_channel(4);
+    dispatch(
+        json!({"jsonrpc":"2.0","method":"workspace/semanticTokens/refresh","params":{}}),
+        100,
+        &shared,
+        &tx,
+    )
+    .unwrap();
+    assert!(
+        rx.try_recv().is_err(),
+        "notifications must not receive replies"
+    );
+    assert_eq!(
+        shared.inbox.lock().unwrap().events[0],
+        Event::Notification {
+            method: "workspace/semanticTokens/refresh".into(),
+            params: json!({}),
+        }
+    );
+}
+
+#[test]
 fn configuration_defaults_and_terminal_failure_order_are_explicit() {
     assert_eq!(
         server_reply(

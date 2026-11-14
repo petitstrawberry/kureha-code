@@ -1,4 +1,9 @@
 //! The workbench uses ScarletUI controls; the window menu is the app menu.
+#[path = "indent.rs"]
+mod indent;
+#[path = "editor_events.rs"]
+mod editor_events;
+
 use super::*;
 use kureha_code::{file_icons, git::Change, syntax};
 use scarlet_ui::views::containers::ViewTuple;
@@ -357,6 +362,7 @@ impl App {
         .frame(f32::INFINITY,f32::INFINITY)
         .focusable(self.workbench_focus.clone())
         .on_event_capture(move |event| {
+            keys.definition_modifiers(event);
             if keys.tab_drag_event(event) { return true; }
             if keys.nav.capture_shortcut_text(event) { return true; }
             let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event else {
@@ -612,7 +618,7 @@ impl App {
                     TextEditAction::SelectAll => edit_actions.select_all(),
                 }
             })
-            .text_spans(styles)
+            .text_spans(styles.clone())
             .diagnostic_spans(self.language_diagnostics(id))
             .caret_rect_state(if self.focused_group.get() == group {
                 self.caret_rect.clone()
@@ -662,6 +668,15 @@ impl App {
         } else {
             editor
         };
+        let preferences = self.preferences.get();
+        let modifiers = self.clone();
+        let editor = indent::DecoratedEditor::new(
+            editor,
+            minimap.2,
+            preferences.indent_depth_background,
+            preferences.active_block_guide && self.focused_group.get() == group,
+            theme.editor_colors(),
+        ).decorations(&minimap.0.as_str(), &syntax::bracket_spans(id, minimap.2, minimap.1.as_deref()), self.definition_link(id)).observe(move |event| modifiers.definition_modifiers(event));
         let editor = editor
             .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {
@@ -796,7 +811,8 @@ impl App {
                     Text::new("No folder open").font_size(13.0).color(theme.colors().foreground),
                     Text::new("Explore your project files").font_size(11.0).color(theme.colors().muted),
                     Button::new("Open Folder").icon(Icon::Plus).icon_size(IconSize::Small)
-                        .font_size(12.0).text_color(theme.colors().foreground).material(theme.input_material())
+                        .font_size(13.0).padding(12.0)
+                        .text_color(theme.colors().foreground).material(theme.input_material())
                         .on_click(move || empty_open.show_folder()),
                     Spacer::new(),
                 }.spacing(12.0).padding_insets(EdgeInsets::new(12.0, 28.0, 12.0, 12.0))

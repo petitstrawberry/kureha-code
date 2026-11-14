@@ -96,11 +96,25 @@ operations and configuration behavior.
 
 Open the Settings tab with **Kureha Code → Settings…** (`⌘,` on macOS, `Ctrl+,` elsewhere).
 Theme choices, code font size and minimap visibility are saved automatically.
-Settings also includes the bundled dependency, font and theme acknowledgements.
+**Indent depth backgrounds** adds subtle bands to leading whitespace, and
+**Active block guide** connects the enclosing brackets using their syntax color.
+Thin separators distinguish indentation levels without competing with the code.
+Both options are off by default and can be enabled independently; their settings
+file keys are `indent_depth_background` and `active_block_guide`.
+Kureha Light (the default) and Kureha Dark use red accents with readable code
+surfaces. Sakura preserves the original pink palette; Classic Light and Classic
+Dark retain the former Light and Dark themes. Existing saved theme names remain
+valid. Settings also includes the bundled dependency, font and
+theme acknowledgements.
 
 **Open Settings File…** opens `~/.config/kureha-code/settings.toml`.
 **Edit Custom Theme…** opens `~/.config/kureha-code/theme.toml`;
 see the [configuration example](assets/theme.toml) for available overrides.
+
+Syntax colors appear immediately and are refined with type, parameter and other
+semantic colors when a language server supports full semantic tokens. Rust also
+uses matching colors for nested brackets. The editor and minimap share these
+colors, including custom theme overrides.
 
 Language servers must be installed separately. Override their commands in
 `~/.config/kureha-code/lsp.toml`:

@@ -74,6 +74,12 @@ struct OpenDocument {
     text: String,
     saved: bool,
 }
+#[derive(Default)]
+struct SemanticRequests {
+    requested: BTreeMap<PathBuf, (u64, kureha_code::theme::Theme, Instant, bool)>,
+    pending: BTreeMap<u64, (Snapshot, kureha_code::theme::Theme, Instant)>,
+}
+
 struct Session {
     client: Option<Client>,
     starting: Option<mpsc::Receiver<Result<Client, String>>>,
@@ -88,6 +94,7 @@ struct Session {
     failure: Option<String>,
     started: Instant,
     diagnostic_requests: BTreeMap<PathBuf, (u64, Instant)>,
+    semantic: SemanticRequests,
     /// Active work, most recently updated last.
     progress: Vec<WorkProgress>,
 }
@@ -105,6 +112,7 @@ pub(super) struct Service {
     hover_target: Option<(DocumentId, usize, Point, Instant)>,
     completion_due: Option<(DocumentId, u64, usize, Instant)>,
     hover_sent: bool,
+    primary_hover: bool,
     hover_hide: Option<Instant>,
     chord: Option<Instant>,
 }
@@ -598,6 +606,7 @@ impl Service {
                     failure,
                     started: Instant::now(),
                     diagnostic_requests: BTreeMap::new(),
+                    semantic: SemanticRequests::default(),
                     progress: Vec::new(),
                 },
             );
@@ -700,9 +709,10 @@ impl App {
                                 if options.is_null() {
                                     options = json!({});
                                 }
+                                options["semanticHighlighting"] = json!({"punctuation":{"enable":true,"specialization":{"enable":true}}});
                                 options["files"] = json!({"excludeDirs":[".git", ".direnv", "target"]});
                             }
-                            let params = json!({"processId":std::process::id(),"clientInfo":{"name":"Kureha Code","version":env!("CARGO_PKG_VERSION")},"rootUri":root_uri,"initializationOptions":options,"workspaceFolders":[{"uri":root_uri,"name":session.root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false},"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"publishDiagnostics":{"versionSupport":true},"hover":{"contentFormat":["plaintext"]},"rename":{"prepareSupport":true,"honorsChangeAnnotations":false}},"workspace":{"configuration":true,"workspaceFolders":true},"window":{"workDoneProgress":true}}});
+                            let params = json!({"processId":std::process::id(),"clientInfo":{"name":"Kureha Code","version":env!("CARGO_PKG_VERSION")},"rootUri":root_uri,"initializationOptions":options,"workspaceFolders":[{"uri":root_uri,"name":session.root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"semanticTokens":kureha_code::semantic::capabilities(),"diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false},"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"publishDiagnostics":{"versionSupport":true},"hover":{"contentFormat":["plaintext"]},"rename":{"prepareSupport":true,"honorsChangeAnnotations":false}},"workspace":{"configuration":true,"workspaceFolders":true,"semanticTokens":{"refreshSupport":true}},"window":{"workDoneProgress":true}}});
                             match client.request("initialize", params) {
                                 Ok(id) => session.initialize = Some(id),
                                 Err(e) => session.failure = Some(e),
@@ -817,6 +827,23 @@ impl App {
                         }
                         old.saved = doc.saved;
                     }
+                    let theme = self.theme.get();
+                    if doc.text.len() <= kureha_code::syntax::MAX_BYTES
+                        && kureha_code::syntax::cached(doc.id, doc.revision, Some(&doc.path)).is_some()
+                        && session.capabilities.pointer("/semanticTokensProvider/full")
+                            .is_some_and(|v| v == &Value::Bool(true) || v.is_object())
+                        && !session.semantic.pending.values().any(|(old, _, _)| old.id == doc.id)
+                        && session.semantic.requested.get(&doc.path).is_none_or(|(revision, previous_theme, time, complete)| {
+                            *revision != doc.revision || previous_theme != &theme
+                                || ((!complete || !kureha_code::syntax::has_semantic_spans(doc.id, doc.revision, &doc.path))
+                                    && time.elapsed() > Duration::from_secs(2))
+                        })
+                    {
+                        if let Ok(id) = client.request("textDocument/semanticTokens/full", json!({"textDocument":{"uri":uri(&doc.path)}})) {
+                            session.semantic.requested.insert(doc.path.clone(), (doc.revision, theme.clone(), Instant::now(), false));
+                            session.semantic.pending.insert(id, ((*doc).clone(), theme, Instant::now()));
+                        }
+                    }
                     if session
                         .capabilities
                         .get("diagnosticProvider")
@@ -867,6 +894,15 @@ impl App {
                         session.failure = failure;
                         changed = true;
                     }
+                }
+                session.semantic.requested.retain(|path, _| session.documents.contains_key(path));
+                let expired_semantic: Vec<_> = session.semantic.pending.iter()
+                    .filter(|(_, (doc, _, time))| time.elapsed() > Duration::from_secs(15)
+                        || !session.documents.get(&doc.path).is_some_and(|d| d.id == doc.id && d.revision == doc.revision))
+                    .map(|(id, _)| *id).collect();
+                for id in expired_semantic {
+                    session.semantic.pending.remove(&id);
+                    let _ = client.notify("$/cancelRequest", json!({"id":id}));
                 }
                 let expired: Vec<_> = session
                     .pending
@@ -953,6 +989,17 @@ impl App {
     fn language_event(&self, key: &str, event: LspEvent, snapshots: &[Snapshot]) -> bool {
         let mut rt = self.runtime.lock().unwrap();
         match event {
+            LspEvent::Notification { method, .. } if method == "workspace/semanticTokens/refresh" => {
+                if let Some(session) = rt.language.sessions.get_mut(key) {
+                    session.semantic.requested.clear();
+                    for (id, _) in std::mem::take(&mut session.semantic.pending) {
+                        if let Some(client) = &mut session.client {
+                            let _ = client.notify("$/cancelRequest", json!({"id":id}));
+                        }
+                    }
+                }
+                false
+            }
             LspEvent::Failed(error) => {
                 if let Some(session) = rt.language.sessions.get_mut(key) {
                     session.failure = Some(error);
@@ -1074,6 +1121,23 @@ impl App {
                 let Some(session) = rt.language.sessions.get_mut(key) else {
                     return false;
                 };
+                if let Some((doc, theme, _)) = session.semantic.pending.remove(&id) {
+                    if error.is_some() || !snapshots.iter().any(|s| s.id == doc.id && s.revision == doc.revision && s.path == doc.path) {
+                        return false;
+                    }
+                    let legend = &session.capabilities["semanticTokensProvider"]["legend"];
+                    // Invalid or oversized batches fall back to lexical colors
+                    // until an edit/theme change/refresh, avoiding endless full
+                    // transfers of the same response. Transport errors retry.
+                    let spans = kureha_code::semantic::decode(&doc.text, &result, legend, &theme).unwrap_or_default();
+                    let published = kureha_code::syntax::set_semantic_spans(doc.id, doc.revision, &doc.path, &theme, spans);
+                    if published {
+                        if let Some((revision, requested_theme, _, complete)) = session.semantic.requested.get_mut(&doc.path) {
+                            if *revision == doc.revision && requested_theme == &theme { *complete = true; }
+                        }
+                    }
+                    return published;
+                }
                 if session.initialize == Some(id) {
                     session.initialize = None;
                     if let Some(error) = error {
@@ -1668,6 +1732,28 @@ impl App {
             })
             .map(|(rev, caret)| (id, rev, caret, Instant::now()));
     }
+    pub(super) fn definition_modifiers(&self, event: &Event) {
+        let primary = match event {
+            Event::Focus(scarlet_ui::event::FocusEvent::Lost) => false,
+            Event::ModifiersChanged(modifiers) => modifiers.primary(),
+            Event::Keyboard(KeyEvent::Pressed { modifiers, .. } | KeyEvent::Released { modifiers, .. }) => modifiers.primary(),
+            _ => return,
+        };
+        let mut rt = self.runtime.lock().unwrap();
+        if rt.language.primary_hover == primary { return; }
+        rt.language.primary_hover = primary;
+        drop(rt);
+        self.syntax_revision.update(|v| *v = v.wrapping_add(1));
+    }
+    pub(super) fn definition_link(&self, id: DocumentId) -> Option<std::ops::Range<usize>> {
+        let rt = self.runtime.lock().unwrap();
+        if !rt.language.primary_hover { return None; }
+        let (doc, start, _, _) = rt.language.hover_target?;
+        if doc != id { return None; }
+        let text = rt.workspace.get(id)?.editor.document.as_str();
+        let len: usize = text.get(start..)?.chars().take_while(|c| c.is_alphanumeric() || *c == '_').map(char::len_utf8).sum();
+        (len > 0).then_some(start..start + len)
+    }
     pub(super) fn pointer_hover(&self, id: DocumentId, hit: Option<(usize, Point)>) {
         let mut rt = self.runtime.lock().unwrap();
         let hit = hit.and_then(|(byte, point)| {
@@ -1702,6 +1788,9 @@ impl App {
         } else {
             None
         };
+        if rt.language.primary_hover {
+            self.syntax_revision.update(|v| *v = v.wrapping_add(1));
+        }
         if hit.is_some() && matches!(rt.language.panel, Panel::Hover(_)) {
             rt.language.panel = Panel::Closed;
             drop(rt);

@@ -39,8 +39,8 @@ impl Theme {
 
     pub fn name(&self) -> &str {
         match self {
-            Self::Light => "Light",
-            Self::Dark => "Dark",
+            Self::Light => "Classic Light",
+            Self::Dark => "Classic Dark",
             Self::Custom(theme) => &theme.name,
         }
     }
@@ -50,6 +50,8 @@ impl Theme {
             Self::Light => Self::Dark,
             Self::Dark => Self::Light,
             Self::Custom(theme) => {
+                if theme.name == "Kureha Light" { return preset("kureha-dark").unwrap(); }
+                if theme.name == "Kureha Dark" { return preset("kureha-light").unwrap(); }
                 if theme.dark {
                     Self::Light
                 } else {
@@ -297,9 +299,12 @@ impl Theme {
             ("string", 1),
             ("constant, support.constant", 2),
             ("constant.numeric", 3),
-            ("keyword, storage", 4),
+            ("keyword, storage, punctuation.separator.namespace", 4),
             ("entity.name.function, support.function", 5),
-            ("entity.name.type, support.type, entity.name.class", 6),
+            (
+                "entity.name.type, support.type, entity.name.class, entity.name.struct, entity.name.enum, entity.name.trait, entity.name.namespace, entity.name.module",
+                6,
+            ),
             ("entity.name.tag, entity.name.section", 7),
             ("markup.heading, markup.bold", 4),
             ("markup.inline.raw, markup.raw", 1),
@@ -307,6 +312,24 @@ impl Theme {
             let [r, g, b] = colors[index];
             theme.scopes.push(ThemeItem {
                 scope: scopes.parse().expect("built-in syntax scope selector"),
+                style: StyleModifier {
+                    foreground: Some(SyntaxColor { r, g, b, a: 255 }),
+                    ..StyleModifier::default()
+                },
+            });
+        }
+        // Match the familiar editor bracket-depth palette; scopes keep these
+        // overridable by custom themes independently of syntax accents.
+        let brackets = if self == &Self::Light {
+            [[4, 49, 250], [49, 147, 49], [123, 56, 20]]
+        } else {
+            [[255, 215, 0], [218, 112, 214], [23, 159, 255]]
+        };
+        for (level, [r, g, b]) in brackets.into_iter().enumerate() {
+            theme.scopes.push(ThemeItem {
+                scope: format!("punctuation.section.brackets.level{}", level + 1)
+                    .parse()
+                    .unwrap(),
                 style: StyleModifier {
                     foreground: Some(SyntaxColor { r, g, b, a: 255 }),
                     ..StyleModifier::default()

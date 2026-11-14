@@ -24,3 +24,7 @@ Named presets define UI selection backgrounds and text separately from syntax
 accents. Monokai's neutral selection, focus ring and cursor follow the
 [VS Code Monokai mapping](https://github.com/microsoft/vscode/blob/main/extensions/theme-monokai/themes/monokai-color-theme.json);
 its green remains a syntax/terminal color.
+
+Kureha Light uses deep red accents with a neutral white code surface; Kureha Dark
+pairs red accents with charcoal surfaces. Sakura preserves the original soft pink
+Kureha palette. Classic Light and Classic Dark retain the former Light/Dark colors.

@@ -342,7 +342,7 @@ pub fn parse_theme(source: &str) -> Result<Theme, String> {
             if rule.keys().any(|k| k != "scope" && k != "color") {
                 return Err("syntax_rules supports scope and color".into());
             }
-            let scope = rule
+            let scope: syntect::highlighting::ScopeSelectors = rule
                 .get("scope")
                 .and_then(toml::Value::as_str)
                 .ok_or("syntax rule needs scope")?
@@ -352,6 +352,14 @@ pub fn parse_theme(source: &str) -> Result<Theme, String> {
                 rule.get("color").ok_or("syntax rule needs color")?,
                 "syntax rule color",
             )?);
+            // Syntect resolves equally specific selectors in first-match order.
+            // Replace inherited copies while retaining the fixed base slots used
+            // by [syntax], so explicit rules can override preset bracket colors.
+            for item in &mut theme.syntax.scopes {
+                item.scope
+                    .selectors
+                    .retain(|selector| !scope.selectors.contains(selector));
+            }
             theme.syntax.scopes.push(ThemeItem {
                 scope,
                 style: StyleModifier {
