@@ -110,6 +110,7 @@ enum ClipboardJob {
     Copy {
         handle: ClipboardHandle<()>,
         cut: bool,
+        range: std::ops::Range<usize>,
         target: ClipboardTarget,
     },
     Paste {
@@ -1184,22 +1185,40 @@ impl App {
         let Some(target) = self.clipboard_target() else {
             return;
         };
-        let Some(range) = target.selection.normalized_range() else {
-            return;
-        };
         let Some(service) = self.clipboard_service() else {
             return;
         };
         let bindings = self.bindings(target.id).unwrap();
         let document = bindings.document.get();
         let text = document.as_str();
-        let Some(selected) = text.get(range) else {
-            return;
+        let (range, copied) = if let Some(range) = target.selection.normalized_range() {
+            let Some(selected) = text.get(range.clone()) else {
+                return;
+            };
+            (range, selected.to_owned())
+        } else {
+            let caret = target.selection.caret.byte;
+            if text.is_empty() || !text.is_char_boundary(caret) {
+                return;
+            }
+            let start = text[..caret].rfind('\n').map_or(0, |byte| byte + 1);
+            if let Some(newline) = text[caret..].find('\n') {
+                let end = caret + newline + 1;
+                (start..end, text[start..end].to_owned())
+            } else {
+                // Copy a whole line even without a trailing newline. Cutting the
+                // last line also removes its preceding separator, not a blank row.
+                (
+                    start.saturating_sub(1)..text.len(),
+                    format!("{}\n", &text[start..]),
+                )
+            }
         };
-        let handle = service.write_text(selected.into());
+        let handle = service.write_text(copied);
         self.runtime.lock().unwrap().clipboard_job = Some(ClipboardJob::Copy {
             handle,
             cut,
+            range,
             target,
         });
         self.status.set("Copying to desktop clipboard…".into());
@@ -1234,6 +1253,16 @@ impl App {
     }
 
     fn apply_clipboard(&self, target: ClipboardTarget, text: &str) -> bool {
+        let range = target.selection.start().byte..target.selection.end().byte;
+        self.apply_clipboard_range(target, range, text)
+    }
+
+    fn apply_clipboard_range(
+        &self,
+        target: ClipboardTarget,
+        range: std::ops::Range<usize>,
+        text: &str,
+    ) -> bool {
         if self.active_id() != Some(target.id)
             || !self.editable(target.id)
             || self.navigation.load(Ordering::Relaxed) != target.navigation
@@ -1252,7 +1281,6 @@ impl App {
         {
             return false;
         }
-        let range = target.selection.start().byte..target.selection.end().byte;
         if doc.editor.document.as_str().get(range.clone()).is_none() {
             return false;
         }
@@ -1290,8 +1318,8 @@ impl App {
             (ClipboardJob::TextCopy { .. }, Ok(_)) => "Copied to desktop clipboard",
             (ClipboardJob::TerminalCopy { .. }, Ok(_)) => "Copied terminal output",
             (ClipboardJob::Copy { cut: false, .. }, Ok(_)) => "Copied to desktop clipboard",
-            (ClipboardJob::Copy { target, .. }, Ok(_)) => {
-                if self.apply_clipboard(target, "") {
+            (ClipboardJob::Copy { target, range, .. }, Ok(_)) => {
+                if self.apply_clipboard_range(target, range, "") {
                     "Cut to desktop clipboard"
                 } else {
                     "Copied; Cut cancelled because the tab, document, selection, or file operation changed"

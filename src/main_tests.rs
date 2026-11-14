@@ -294,6 +294,122 @@ fn finish_clipboard(app: &App) {
     }
 }
 
+fn clipboard_contents(app: &App) -> Option<String> {
+    let handle = app
+        .runtime
+        .lock()
+        .unwrap()
+        .clipboard
+        .as_ref()
+        .unwrap()
+        .read_text();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Some(result) = handle.try_take() {
+            return result.unwrap();
+        }
+        assert!(Instant::now() < deadline, "clipboard read did not complete");
+        thread::yield_now();
+    }
+}
+
+#[test]
+fn unselected_copy_and_cut_operate_on_complete_logical_lines() {
+    for (source, caret, copied, remaining) in [
+        ("first\nsecond\nlast", 2, "first\n", "second\nlast"),
+        ("first\n  猫🍁\nlast", 11, "  猫🍁\n", "first\nlast"),
+        ("first\n\nlast", 6, "\n", "first\nlast"),
+        ("first\nlast", 8, "last\n", "first"),
+        ("first\n", 6, "\n", "first"),
+        ("only", 4, "only\n", ""),
+        ("\n", 0, "\n", ""),
+        ("first\nlast", 5, "first\n", "last"),
+    ] {
+        let app = test_app(source, None, false);
+        let bindings = app.bindings(app.document_id()).unwrap();
+        let selection = TextSelection::collapsed(caret);
+        bindings.selection.set(selection);
+        app.copy(false);
+        finish_clipboard(&app);
+        assert_eq!(clipboard_contents(&app).as_deref(), Some(copied));
+        assert_eq!(bindings.document.get().as_str(), source);
+        assert_eq!(bindings.selection.get(), selection);
+        assert!(
+            !app.runtime.lock().unwrap().workspace.documents[0]
+                .editor
+                .dirty()
+        );
+        app.copy(true);
+        assert_eq!(
+            bindings.document.get().as_str(),
+            source,
+            "wait for clipboard success"
+        );
+        finish_clipboard(&app);
+        assert_eq!(clipboard_contents(&app).as_deref(), Some(copied));
+        assert_eq!(bindings.document.get().as_str(), remaining);
+        app.undo(false);
+        assert_eq!(bindings.document.get().as_str(), source);
+        assert_eq!(bindings.selection.get(), selection);
+        app.undo(true);
+        assert_eq!(bindings.document.get().as_str(), remaining);
+    }
+}
+
+#[test]
+fn unselected_cut_preserves_text_on_write_failure_or_caret_change() {
+    for fail_write in [false, true] {
+        let app = test_app("first\nsecond", Some("old"), fail_write);
+        let bindings = app.bindings(app.document_id()).unwrap();
+        bindings.selection.set(TextSelection::collapsed(8));
+        app.copy(true);
+        if !fail_write {
+            bindings.selection.set(TextSelection::collapsed(0));
+        }
+        finish_clipboard(&app);
+        assert_eq!(bindings.document.get().as_str(), "first\nsecond");
+        assert!(
+            !app.runtime.lock().unwrap().workspace.documents[0]
+                .editor
+                .dirty()
+        );
+        assert_eq!(
+            clipboard_contents(&app).as_deref(),
+            Some(if fail_write { "old" } else { "second\n" })
+        );
+    }
+    let app = test_app("", Some("old"), false);
+    for cut in [false, true] {
+        app.copy(cut);
+        assert!(app.runtime.lock().unwrap().clipboard_job.is_none());
+        assert_eq!(clipboard_contents(&app).as_deref(), Some("old"));
+    }
+}
+
+#[test]
+fn primary_copy_and_cut_shortcuts_work_without_selection() {
+    let app = test_app("first\nsecond", None, false);
+    let mut pipeline = context_pipeline(&app);
+    let bindings = app.bindings(app.document_id()).unwrap();
+    bindings.selection.set(TextSelection::collapsed(2));
+    let mut modifiers = scarlet_ui::event::KeyModifiers::empty();
+    if cfg!(target_os = "macos") {
+        modifiers.super_key = true;
+    } else {
+        modifiers.control = true;
+    }
+    for (key, remaining) in [('c', "first\nsecond"), ('x', "second")] {
+        assert!(pipeline.handle_event(&Event::Keyboard(KeyEvent::Pressed {
+            keycode: KeyCode::Char(key),
+            modifiers,
+        })));
+        finish_clipboard(&app);
+        assert_eq!(clipboard_contents(&app).as_deref(), Some("first\n"));
+        assert_eq!(bindings.document.get().as_str(), remaining);
+    }
+    pipeline.teardown();
+}
+
 #[test]
 fn copy_and_cut_preserve_unicode_and_cut_is_undoable() {
     let app = test_app("a猫🍁z", None, false);
@@ -514,11 +630,9 @@ fn clipboard_paste_undo_is_separate_from_adjacent_typing() {
 }
 
 #[test]
-fn empty_clipboard_and_empty_copy_leave_selection_and_history_alone() {
+fn empty_clipboard_leaves_selection_and_history_alone() {
     for text in [None, Some("")] {
         let app = test_app("keep", text, false);
-        app.copy(true);
-        assert!(app.runtime.lock().unwrap().clipboard_job.is_none());
         app.select_all();
         let selection = app.bindings(app.document_id()).unwrap().selection.get();
         app.paste();

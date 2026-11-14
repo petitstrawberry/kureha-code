@@ -981,3 +981,19 @@ and packaging tests passed. Linux and Scarlet runtimes were not exercised.
 The final shortcut regression also sends the separate printable `Char` event
 after Alt+Z and verifies that source text is unchanged. This covers backends that
 emit both events; the following key press clears shortcut-text suppression.
+
+## Copy and cut without a selection — 2026-11-14
+
+In the code editor, Cmd+C / Cmd+X on macOS (Ctrl+C / Ctrl+X elsewhere)
+copy or cut the current logical line when the selection is empty. Copied lines
+include a newline, including the final line. Cutting the final line removes its
+preceding separator; an empty document leaves the clipboard unchanged. Selected
+text retains its existing behavior.
+
+- 244 library and 184 application tests passed; 31 optional/manual tests ignored.
+- Mounted shortcut dispatch covers both copy and cut without a selection.
+- Line cases cover first/middle/final lines, blank lines, EOF, Unicode, clipboard
+  contents, and Undo/Redo restoring the original caret.
+- Failed clipboard writes and caret movement during a pending cut preserve text.
+- Clipboard tests use an in-memory provider; native OS clipboard behavior was not
+  revalidated interactively.
