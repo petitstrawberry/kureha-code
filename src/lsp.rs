@@ -78,6 +78,24 @@ struct Inbox {
     failure: Option<String>,
 }
 
+/// The value of a `$/progress` report (not a begin or an end).
+fn progress_report(event: &Event) -> Option<&Value> {
+    match event {
+        Event::Notification { method, params } if method == "$/progress" => params
+            .get("value")
+            .filter(|value| value.get("kind").and_then(Value::as_str) == Some("report")),
+        _ => None,
+    }
+}
+fn event_token(event: &Event) -> Option<&Value> {
+    match event {
+        Event::Notification { params, .. } => params.get("token").filter(|token| {
+            token.is_string() || token.as_i64().is_some_and(|n| i32::try_from(n).is_ok())
+        }),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 struct Shared {
     inbox: Mutex<Inbox>,
@@ -97,6 +115,42 @@ impl Shared {
         let mut inbox = self.inbox.lock().unwrap();
         if self.stopped.load(Ordering::Acquire) {
             return Err("LSP transport has stopped".into());
+        }
+        // Only coalesce adjacent updates. Moving a report before an intervening
+        // response would change the progress visible when handling that response.
+        if let Some(value) = progress_report(&event)
+            && let Some(token) = event_token(&event)
+            && let Some(Event::Notification { method, params }) = inbox.events.back()
+            && method == "$/progress"
+            && params.get("token") == Some(token)
+            && matches!(
+                params.pointer("/value/kind").and_then(Value::as_str),
+                Some("begin" | "report")
+            )
+        {
+            let mut merged = params.clone();
+            for field in ["message", "percentage", "cancellable"] {
+                if let Some(v) = value.get(field) {
+                    merged["value"][field] = v.clone();
+                }
+            }
+            // The original wire envelope remains accounted for; only its
+            // params change. Replaced reports must not bypass the byte limit.
+            let old_size = serde_json::to_vec(params).unwrap().len();
+            let new_size = serde_json::to_vec(&merged).unwrap().len();
+            let total = if new_size >= old_size {
+                inbox.bytes.saturating_add(new_size - old_size)
+            } else {
+                inbox.bytes.saturating_sub(old_size - new_size)
+            };
+            if total > MAX_QUEUED_BYTES {
+                return Err("LSP incoming event queue is full; poll more frequently".into());
+            }
+            if let Some(Event::Notification { params, .. }) = inbox.events.back_mut() {
+                *params = merged;
+            }
+            inbox.bytes = total;
+            return Ok(());
         }
         if inbox.events.len() >= MAX_EVENTS || inbox.bytes + bytes > MAX_QUEUED_BYTES {
             return Err("LSP incoming event queue is full; poll more frequently".into());

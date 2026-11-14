@@ -212,6 +212,148 @@ fn queues_fail_explicitly_at_count_byte_and_frame_limits() {
     assert!(shared.event(notice(), 1).is_err());
 }
 
+/// rust-analyzer reports every crate it indexes; the reports of one piece
+/// of work share a queue slot instead of filling the queue.
+#[test]
+fn progress_reports_of_one_piece_of_work_share_a_queue_slot() {
+    let shared = Shared::default();
+    let progress = |token: &str, value: Value| Event::Notification {
+        method: "$/progress".into(),
+        params: json!({"token": token, "value": value}),
+    };
+    shared
+        .event(
+            progress("index", json!({"kind": "begin", "title": "Indexing"})),
+            1,
+        )
+        .unwrap();
+    for done in 0..10 * MAX_EVENTS {
+        shared
+            .event(
+                progress("index", json!({"kind": "report", "message": format!("{done}"), "percentage": done % 100})),
+                1,
+            )
+            .unwrap();
+    }
+    shared
+        .event(
+            progress("other", json!({"kind": "report", "message": "kept apart"})),
+            1,
+        )
+        .unwrap();
+    shared
+        .event(progress("index", json!({"kind": "end"})), 1)
+        .unwrap();
+    let events: Vec<Value> = shared
+        .inbox
+        .lock()
+        .unwrap()
+        .events
+        .iter()
+        .map(|event| match event {
+            Event::Notification { params, .. } => params.clone(),
+            _ => Value::Null,
+        })
+        .collect();
+    let last = 10 * MAX_EVENTS - 1;
+    assert_eq!(
+        events,
+        [
+            json!({"token": "index", "value": {"kind": "begin", "title": "Indexing", "message": format!("{last}"), "percentage": last % 100}}),
+            json!({"token": "other", "value": {"kind": "report", "message": "kept apart"}}),
+            json!({"token": "index", "value": {"kind": "end"}}),
+        ]
+    );
+}
+
+#[test]
+fn coalesced_progress_preserves_order_boundaries_and_byte_limits() {
+    let progress = |token: Value, value: Value| Event::Notification {
+        method: "$/progress".into(),
+        params: json!({"token": token, "value": value}),
+    };
+    let shared = Shared::default();
+    let begin = progress(json!(1), json!({"kind":"begin", "title":"Indexing"}));
+    let report = progress(
+        json!(1),
+        json!({"kind":"report", "message":"crates", "percentage":20}),
+    );
+    shared.event(begin, 100).unwrap();
+    shared.event(report.clone(), 100).unwrap();
+    let bytes = shared.inbox.lock().unwrap().bytes;
+    assert!(bytes > 100);
+    shared.event(report.clone(), 100).unwrap();
+    assert_eq!(shared.inbox.lock().unwrap().bytes, bytes);
+    // Omitted fields survive coalescing.
+    shared
+        .event(
+            progress(json!(1), json!({"kind":"report", "percentage":30})),
+            100,
+        )
+        .unwrap();
+    let Event::Notification { params, .. } = shared.inbox.lock().unwrap().events[0].clone() else {
+        panic!()
+    };
+    assert_eq!(params["value"]["message"], "crates");
+    assert_eq!(params["value"]["percentage"], 30);
+    // Updating a full queue cannot grow it past the byte limit or mutate it on error.
+    shared.inbox.lock().unwrap().bytes = MAX_QUEUED_BYTES;
+    assert!(
+        shared
+            .event(
+                progress(
+                    json!(1),
+                    json!({"kind":"report", "message":"a longer message"})
+                ),
+                100
+            )
+            .is_err()
+    );
+    assert_eq!(shared.inbox.lock().unwrap().bytes, MAX_QUEUED_BYTES);
+    let Event::Notification { params: after, .. } = shared.inbox.lock().unwrap().events[0].clone()
+    else {
+        panic!()
+    };
+    assert_eq!(after, params);
+
+    let shared = Shared::default();
+    let response = Event::Response {
+        id: 1,
+        result: Value::Null,
+        error: None,
+    };
+    let end = progress(json!(1), json!({"kind":"end"}));
+    let string_token = progress(json!("1"), json!({"kind":"report", "percentage":50}));
+    let missing_token = Event::Notification {
+        method: "$/progress".into(),
+        params: json!({"value":{"kind":"report"}}),
+    };
+    let events = [
+        report.clone(),
+        response,
+        report.clone(),
+        end,
+        report,
+        string_token,
+        missing_token.clone(),
+        missing_token,
+    ];
+    for event in &events {
+        shared.event(event.clone(), 100).unwrap();
+    }
+    assert_eq!(
+        shared
+            .inbox
+            .lock()
+            .unwrap()
+            .events
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        events
+    );
+}
+
 #[test]
 fn configuration_defaults_and_terminal_failure_order_are_explicit() {
     assert_eq!(
