@@ -807,7 +807,8 @@ impl App {
                     Text::new("No folder open").font_size(13.0).color(theme.colors().foreground),
                     Text::new("Explore your project files").font_size(11.0).color(theme.colors().muted),
                     Button::new("Open Folder").icon(Icon::Plus).icon_size(IconSize::Small)
-                        .font_size(12.0).text_color(theme.colors().foreground).material(theme.input_material())
+                        .font_size(13.0).padding(12.0)
+                        .text_color(theme.colors().foreground).material(theme.input_material())
                         .on_click(move || empty_open.show_folder()),
                     Spacer::new(),
                 }.spacing(12.0).padding_insets(EdgeInsets::new(12.0, 28.0, 12.0, 12.0))

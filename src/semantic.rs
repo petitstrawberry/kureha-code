@@ -71,12 +71,12 @@ pub fn decode(
                 "enumMember" | "constParameter" | "const" | "static" | "boolean" => {
                     "constant.other"
                 }
-                "keyword" | "modifier" | "selfKeyword" => "keyword",
+                "keyword" | "modifier" | "selfKeyword" | "builtinAttribute" => "keyword",
                 "operator" | "colon" | "dot" => "keyword.operator",
                 "parameter" => "variable.parameter",
                 "variable" => "variable.other",
                 "property" | "event" => "variable.other.member",
-                "decorator" | "attribute" | "builtinAttribute" | "derive" | "deriveHelper" => {
+                "decorator" | "attribute" | "derive" | "deriveHelper" => {
                     "entity.name.function"
                 }
                 "lifetime" | "label" => "storage.modifier",

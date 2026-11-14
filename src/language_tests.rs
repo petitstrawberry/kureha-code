@@ -1538,7 +1538,13 @@ fn real_rust_analyzer_indexes_kureha_and_navigates_with_progress() {
     let parameter_usage2 =
         nested + source[nested..].find("self.bindings(id)").unwrap() + "self.bindings(".len();
     let type_ref = method + source[method..].find("DocumentId").unwrap();
+    let cfg_attribute = source.find("#[cfg(test)]").unwrap() + 2;
     let checks = [
+        (
+            "builtin cfg attribute",
+            cfg_attribute..cfg_attribute + 3,
+            Color::rgb(249, 38, 114),
+        ),
         ("fn keyword", method..method + 2, Color::rgb(249, 38, 114)),
         (
             "let keyword",
