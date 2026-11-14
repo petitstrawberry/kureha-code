@@ -98,7 +98,7 @@ impl Theme {
         let accent = if self == &Self::Light {
             Color::rgb(51, 114, 187)
         } else {
-            p.primary()
+            Color::rgb(138, 180, 230)
         };
         let mut colors = WorkbenchColors {
             background: p.background(),

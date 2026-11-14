@@ -759,8 +759,8 @@ impl App {
                 Button::new("×").header_style().font_size(13.0).padding(4.0)
                     .text_color(colors.foreground).background_color(Color::TRANSPARENT).on_click(move || close.close()),
             }.spacing(4.0),
-            TextField::new(self.project.query.clone()).font_size(13.0).padding(5.0)
-                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border).material(self.theme.get().input_material())
+            TextField::new(self.project.query.clone()).selection_color(colors.selection).font_size(13.0).padding(5.0)
+                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border).focused_border_color(colors.accent).material(self.theme.get().input_material())
                 .placeholder("Search in files").autofocus(self.project.focus_query.get()).on_submit(move || submit.search_project()).frame(f32::INFINITY, 28.0),
             hstack! {
                 option("Aa", self.project.match_case.clone()),
@@ -771,8 +771,8 @@ impl App {
                     .text_color(colors.foreground).background_color(Color::TRANSPARENT)
                     .on_click(move || if busy { cancel.cancel() } else { run.search_project() }),
             }.spacing(3.0),
-            TextField::new(self.project.replacement.clone()).font_size(13.0).padding(5.0)
-                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border).material(self.theme.get().input_material())
+            TextField::new(self.project.replacement.clone()).selection_color(colors.selection).font_size(13.0).padding(5.0)
+                .background_color(colors.elevated).text_color(colors.foreground).placeholder_color(colors.muted).border_color(colors.border).focused_border_color(colors.accent).material(self.theme.get().input_material())
                 .placeholder("Replace with").frame(f32::INFINITY, 28.0).on_event_capture(move |event| {
                     if matches!(event, Event::Mouse(scarlet_ui::event::MouseEvent::ButtonPressed { .. })) {
                         replacement_focus.focus_query.set(false);

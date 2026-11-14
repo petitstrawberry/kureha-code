@@ -819,14 +819,14 @@ impl App {
         let options = self.find_options.get();
         vstack! {
             hstack! {
-                TextField::new(self.query.clone()).selection_color(theme.colors().selection).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).material(theme.input_material()).placeholder("Find").autofocus(true)
+                TextField::new(self.query.clone()).selection_color(theme.colors().selection).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).focused_border_color(theme.colors().accent).material(theme.input_material()).placeholder("Find").autofocus(true)
                     .on_submit(move || submit.find(false)).frame_width(f32::INFINITY),
                 Button::new("Previous").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || previous.find(true)),
                 Button::new("Next").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || next.find(false)),
                 Button::new("×").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || close.find_open.set(false)),
             }.spacing(6.0),
             hstack! {
-                TextField::new(self.replacement.clone()).selection_color(theme.colors().selection).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).material(theme.input_material()).placeholder("Replace with").frame_width(f32::INFINITY),
+                TextField::new(self.replacement.clone()).selection_color(theme.colors().selection).background_color(theme.colors().elevated).text_color(theme.colors().foreground).placeholder_color(theme.colors().muted).border_color(theme.colors().border).focused_border_color(theme.colors().accent).material(theme.input_material()).placeholder("Replace with").frame_width(f32::INFINITY),
                 Button::new("Replace").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || replace.replace_match()),
                 Button::new("Replace All").header_style().text_color(theme.colors().foreground).background_color(Color::TRANSPARENT).on_click(move || all.replace_all()),
             }.spacing(6.0),

@@ -298,7 +298,7 @@ fn selection_highlight_preview() {
 }
 
 /// Selected explorer rows, the active tab and the palette's selected row in
-/// a few themes, as PNGs: `KUREHA_WORKBENCH_PREVIEW=<folder>
+/// every bundled theme, as PNGs: `KUREHA_WORKBENCH_PREVIEW=<folder>
 /// cargo test --bin kureha-code selection_preview -- --ignored`.
 #[test]
 #[ignore = "manual visual review; writes PNG files to KUREHA_WORKBENCH_PREVIEW"]
@@ -307,9 +307,8 @@ fn selection_preview() {
         PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
     std::fs::create_dir_all(&directory).unwrap();
     let themes = [Theme::Light, Theme::Dark].into_iter().chain(
-        ["kureha", "nord", "solarized-dark", "solarized-light"]
-            .into_iter()
-            .map(|id| kureha_code::theme::preset(id).unwrap()),
+        kureha_code::theme::PRESETS.iter()
+            .map(|(id, _)| kureha_code::theme::preset(id).unwrap()),
     );
     for theme in themes {
         for scene in ["workbench", "palette"] {

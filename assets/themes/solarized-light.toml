@@ -15,6 +15,9 @@ current_line = "#eee8d5"
 minimap_viewport = "#268bd225"
 minimap_border = "#268bd280"
 
+error = "#dc322f"
+warning = "#b58900"
+
 [syntax]
 comment = "#93a1a1"
 string = "#2aa198"
