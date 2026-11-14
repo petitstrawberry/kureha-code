@@ -799,6 +799,68 @@ fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
     }
     assert!(!app.language_diagnostics(id).is_empty());
     eprintln!("APP_DIAGNOSTICS_OK {}", app.language_status.get());
+    let source = "fn main() { let plan = 0; let text = 1; printl }\n";
+    let length = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .get(id)
+        .unwrap()
+        .editor
+        .document
+        .len();
+    app.edit(
+        id,
+        &EditDelta {
+            replaced_range: 0..length,
+            inserted: source.into(),
+        },
+    );
+    let caret = source.find("printl").unwrap() + 6;
+    {
+        let mut rt = app.runtime.lock().unwrap();
+        let doc = rt.workspace.get_mut(id).unwrap();
+        let selection = TextSelection::collapsed(caret);
+        doc.bindings.selection.set(selection);
+        doc.editor.moved(selection);
+    }
+    app.poll_language();
+    app.language_request("textDocument/completion");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let selected = loop {
+        app.poll_language();
+        let rt = app.runtime.lock().unwrap();
+        if let Panel::Completion(_, items) = &rt.language.panel {
+            assert!(
+                !items
+                    .iter()
+                    .any(|item| matches!(item.label.as_str(), "plan" | "text"))
+            );
+            if let Some(index) = items
+                .iter()
+                .position(|item| item.label.starts_with("println!"))
+            {
+                break index;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "println macro missing: {}",
+            app.status.get()
+        );
+        drop(rt);
+        thread::sleep(Duration::from_millis(30));
+    };
+    app.accept_completion(selected);
+    let rt = app.runtime.lock().unwrap();
+    let text = rt.workspace.get(id).unwrap().editor.document.as_str();
+    assert!(text.contains("println!"), "{text}");
+    assert!(
+        !text.contains("$0") && !text.contains("${"),
+        "snippet syntax inserted: {text}"
+    );
+    eprintln!("APP_PRINTLN_COMPLETION_OK");
 }
 
 #[test]
@@ -2020,4 +2082,74 @@ fn real_rust_analyzer_inline_types_update_after_edits_and_toggle() {
         "old revision must disappear immediately"
     );
     wait("bool");
+}
+
+#[test]
+#[ignore = "manual headless completion visual review"]
+fn completion_popup_preview() {
+    use scarlet_ui::pipeline::RenderingPipeline;
+    let directory =
+        PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("preview directory"));
+    std::fs::create_dir_all(&directory).unwrap();
+    for theme in ["kureha-light", "kureha-dark"] {
+        let app = App::with_document();
+        app.set_theme(kureha_code::theme::preset(theme).unwrap());
+        let id = app.document_id();
+        app.edit(
+            id,
+            &EditDelta {
+                replaced_range: 0..0,
+                inserted: "fn main() {\n    prin\n}\n".into(),
+            },
+        );
+        {
+            let mut rt = app.runtime.lock().unwrap();
+            let doc = rt.workspace.get(id).unwrap();
+            let guard = Guard {
+                id,
+                revision: doc.editor.revision(),
+                caret: 20,
+                navigation: app.navigation.load(Ordering::Relaxed),
+            };
+            rt.language.panel = Panel::Completion(
+                guard,
+                completion::choices(
+                    &json!([
+                        {"label":"print!(…)","kind":3,"detail":"macro_rules! print"},
+                        {"label":"println!(…)","kind":3,"detail":"macro_rules! println"},
+                        {"label":"parse_int","kind":3,"detail":"fn(&str) -> Result<i32>"}
+                    ]),
+                    "prin",
+                    4,
+                ),
+            );
+        }
+        app.language_anchor.set(Point::new(80.0, 70.0));
+        let mut pipeline = RenderingPipeline::new();
+        pipeline.set_root(
+            Window::new(
+                "Completion",
+                app.language_popup()
+                    .background(app.theme.get().colors().background),
+            )
+            .decorated(false)
+            .size(Size::new(540.0, 220.0))
+            .create_element(),
+        );
+        pipeline.layout_initial();
+        let buffer = pipeline.render().expect("completion paints");
+        let rgb: Vec<_> = buffer
+            .data()
+            .chunks_exact(4)
+            .flat_map(|p| [p[2], p[1], p[0]])
+            .collect();
+        image::save_buffer(
+            directory.join(format!("completion-{theme}.png")),
+            &rgb,
+            buffer.width(),
+            buffer.height(),
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+    }
 }

@@ -1,5 +1,7 @@
 //! LSP workbench integration. All process I/O belongs to the transport workers.
 use super::*;
+#[path = "completion.rs"]
+mod completion;
 #[path = "inlay.rs"]
 mod inlay;
 use kureha_code::extensions::process;
@@ -1436,39 +1438,10 @@ impl App {
                         }
                     }
                     "textDocument/completion" => {
-                        let values = result
-                            .as_array()
-                            .or_else(|| result.get("items").and_then(Value::as_array));
-                        let mut items = values
-                            .into_iter()
-                            .flatten()
-                            .filter(|v| {
-                                v.get("insertTextFormat").and_then(Value::as_u64) != Some(2)
-                            })
-                            .take(100)
-                            .map(|item| Choice {
-                                label: item
-                                    .get("label")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("Completion")
-                                    .into(),
-                                detail: item
-                                    .get("detail")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .chars()
-                                    .take(120)
-                                    .collect(),
-                                item: item.clone(),
-                            })
-                            .collect::<Vec<_>>();
-                        items.sort_by_key(|item| {
-                            item.item
-                                .get("sortText")
-                                .and_then(Value::as_str)
-                                .unwrap_or(&item.label)
-                                .to_string()
-                        });
+                        let Some(doc) = snapshots.iter().find(|doc| doc.id == guard.id) else {
+                            return false;
+                        };
+                        let items = completion::choices(&result, &doc.text, guard.caret);
                         rt.language.selected_completion = 0;
                         rt.language.panel = if items.is_empty() {
                             Panel::Closed
@@ -2438,6 +2411,13 @@ impl App {
                     .on_cancel(move || { cancel.dismiss_language_panel(); }).frame(320.0, 30.0),
                 Text::new("Current file only · Enter apply · Esc cancel").font_size(11.0).color(colors.muted),
             }.spacing(6.0).padding(10.0)).surface_style(self.theme.get().popup_style()).corner_radius(10.0), self.language_anchor.clone()), VStack::new(()));
+        let count = match &panel {
+            Panel::Completion(_, items) => items.len(),
+            _ => 0,
+        };
+        self.nav
+            .row_inputs
+            .retain("completion:", (0..count).map(|i| i.to_string()));
         let (rows, height) = match panel {
             Panel::Completion(_, items) => {
                 let len = items.len();
@@ -2447,18 +2427,27 @@ impl App {
                         .enumerate()
                         .map(|(index, choice)| {
                             let app = self.clone();
-                            Button::new(format!("{}   {}", choice.label, choice.detail))
-                                .header_style()
-                                .font_size(13.0)
-                                .text_color(colors.foreground)
-                                .background_color(if selected == index {
-                                    colors.selection
-                                } else {
-                                    Color::TRANSPARENT
-                                })
-                                .on_click(move || app.accept_completion(index))
-                                .padding(5.0)
-                                .frame(420.0, 26.0)
+                            let input = self.nav.row_inputs.get(format!("completion:{index}"));
+                            let icon = match choice.item.get("kind").and_then(Value::as_u64) {
+                                Some(2..=4) => Icon::Code,
+                                Some(7 | 8 | 13 | 22) => Icon::Package,
+                                Some(9) => Icon::Folder,
+                                Some(17) => Icon::File,
+                                _ => Icon::Tag,
+                            };
+                            super::ui::list_row(
+                                hstack! {
+                                    IconView::new(icon).size(IconSize::Pixels(16)).color(colors.muted),
+                                    Text::new(choice.label).font_size(13.0).color(colors.foreground)
+                                        .alignment(Alignment::Leading).frame_width(216.0).clip(),
+                                    Text::new(choice.detail).font_size(11.0).color(colors.muted)
+                                        .alignment(Alignment::Leading).frame_width(148.0).clip(),
+                                }.spacing(8.0)
+                                    .padding_insets(EdgeInsets::new(8.0, 4.0, 8.0, 4.0))
+                                    .frame(412.0, 26.0).clip(),
+                                input, selected == index, true, colors,
+                                move || app.accept_completion(index),
+                            )
                         })
                         .collect::<Vec<_>>(),
                     (len.min(8) as f32 * 26.0).max(26.0),
@@ -2482,9 +2471,9 @@ impl App {
                         self.document_font(),
                         path.as_deref()
                     ),
-                    Surface::floating(scroll)
+                    Surface::floating(scroll.padding_insets(EdgeInsets::new(0.0, 4.0, 0.0, 4.0)))
                         .surface_style(self.theme.get().popup_style())
-                        .corner_radius(10.0)
+                        .corner_radius(8.0)
                 )
                 // Keep this handler inside the anchored panel. An event wrapper
                 // around Anchored would hit-test the entire editor viewport.
