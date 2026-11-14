@@ -1,7 +1,7 @@
 //! Filter the server's completion set before imposing the visible-item limit.
 use super::{Choice, Value, range};
 
-fn prefix(text: &str, caret: usize) -> &str {
+pub(super) fn prefix(text: &str, caret: usize) -> &str {
     let Some(before) = text.get(..caret) else {
         return "";
     };
@@ -93,6 +93,34 @@ pub(super) fn choices(result: &Value, text: &str, caret: usize) -> Vec<Choice> {
             item: item.clone(),
         })
         .collect()
+}
+
+/// Plain-text completions still need a useful call-site caret. Preserve server
+/// edits containing arguments, and reuse an opening parenthesis already in the file.
+pub(super) fn call_insertion(item: &Value, inserted: &mut String, suffix: &str) -> usize {
+    if !matches!(item.get("kind").and_then(Value::as_u64), Some(2..=4)) {
+        return inserted.len();
+    }
+    if inserted.ends_with("()") {
+        if suffix.trim_start_matches([' ', '\t']).starts_with('(') {
+            inserted.truncate(inserted.len() - 2);
+        } else {
+            return inserted.len() - 1;
+        }
+    }
+    if inserted.is_empty()
+        || !inserted
+            .chars()
+            .all(|c| c.is_alphanumeric() || "_:!".contains(c))
+    {
+        return inserted.len();
+    }
+    let rest = suffix.trim_start_matches([' ', '\t']);
+    if rest.starts_with('(') {
+        return inserted.len() + suffix.len() - rest.len() + 1;
+    }
+    inserted.push_str("()");
+    inserted.len() - 1
 }
 
 #[cfg(test)]

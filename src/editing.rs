@@ -245,9 +245,9 @@ pub fn move_lines(text: &str, selection: TextSelection, direction: Direction) ->
 }
 
 /// Replace the selection with a newline and the leading whitespace retained
-/// before its start. With a caret between a same-line `{ ... }` pair containing
-/// only horizontal whitespace, insert an indented inner line and put the closing
-/// brace on its own line. A conservative lexical check avoids that expansion in
+/// before its start. After an opening brace, bracket or parenthesis, indent one
+/// level. If its closing delimiter follows on the same line, put it on its own
+/// line. A conservative lexical check avoids that expansion in
 /// comments and common quoted/raw strings; this is not a language parser.
 pub fn newline(text: &str, selection: TextSelection) -> Option<EditPlan> {
     newline_with(text, selection, true, INDENT_WIDTH)
@@ -272,7 +272,7 @@ pub fn newline_with(
         let left = before.trim_end_matches([' ', '\t']);
         let after = &text[range.end..line_end(text, range.end)];
         let right = after.trim_start_matches([' ', '\t']);
-        if left.ends_with('{') && right.starts_with('}') {
+        if matches!(left.chars().last(), Some('{' | '(' | '[')) {
             let open = start + left.len() - 1;
             // `${}` and escaped braces need language-specific handling. Keep
             // plain newline behavior for those ambiguous cases.
@@ -281,8 +281,18 @@ pub fn newline_with(
                 Some(b'$' | b'\\')
             ) && code_at(text, open)
             {
+                let matching = match left.chars().last().unwrap() {
+                    '{' => '}',
+                    '(' => ')',
+                    _ => ']',
+                };
+                let paired = right.starts_with(matching);
                 let close = range.end + after.len() - right.len();
-                let inserted = format!("\n{indentation}{unit}\n{indentation}");
+                let inserted = if paired {
+                    format!("\n{indentation}{unit}\n{indentation}")
+                } else {
+                    format!("\n{indentation}{unit}")
+                };
                 return Some(EditPlan {
                     parts: Vec::new(),
                     selection: TextSelection::collapsed(open + 2 + indentation.len() + unit.len()),
@@ -899,7 +909,7 @@ mod tests {
                 newline("{abc}", TextSelection::collapsed(1)).unwrap()
             )
             .0,
-            "{\nabc}"
+            "{\n    abc}"
         );
     }
 
@@ -1095,6 +1105,26 @@ mod indentation_preferences_tests {
                 .inserted,
             "\n\t\n"
         );
+    }
+
+    #[test]
+    fn newline_indents_unclosed_blocks_with_configured_unit() {
+        for (text, spaces, width, expected) in [
+            ("    if ready {", true, 4, "\n        "),
+            ("  call(", true, 2, "\n    "),
+            ("\tlet xs = [", false, 4, "\n\t\t"),
+            ("    // {", true, 4, "\n    "),
+            ("    let s = \"{", true, 4, "\n    "),
+            ("    value", true, 4, "\n    "),
+        ] {
+            let plan =
+                newline_with(text, TextSelection::collapsed(text.len()), spaces, width).unwrap();
+            assert_eq!(plan.edit.inserted, expected, "{text}");
+            assert_eq!(plan.selection.caret.byte, text.len() + expected.len());
+        }
+        let plan = newline_with("call()", TextSelection::collapsed(5), true, 4).unwrap();
+        assert_eq!(plan.edit.inserted, "\n    \n");
+        assert_eq!(plan.selection.caret.byte, 10);
     }
 
     #[test]

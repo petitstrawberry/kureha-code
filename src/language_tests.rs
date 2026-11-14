@@ -755,19 +755,6 @@ fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
         );
         thread::sleep(Duration::from_millis(30));
     };
-    let expected = {
-        let rt = app.runtime.lock().unwrap();
-        let Panel::Completion(_, items) = &rt.language.panel else {
-            panic!("missing completion panel")
-        };
-        let item = &items[selected].item;
-        eprintln!("APP_COMPLETION_ITEM {item}");
-        item.pointer("/textEdit/newText")
-            .or_else(|| item.get("insertText"))
-            .and_then(Value::as_str)
-            .unwrap_or("greet")
-            .to_string()
-    };
     app.accept_completion(selected);
     let text = app
         .runtime
@@ -780,10 +767,7 @@ fn real_rust_analyzer_reaches_app_definition_completion_and_diagnostics() {
         .document
         .as_str()
         .to_string();
-    assert!(
-        text.contains(&format!("{expected} }}\n")),
-        "completion result: {text:?}"
-    );
+    assert!(text.contains("greet() }\n"), "completion result: {text:?}");
     eprintln!("APP_COMPLETION_APPLY_OK");
     loop {
         app.poll_language();
@@ -2133,7 +2117,7 @@ fn completion_popup_preview() {
                     .background(app.theme.get().colors().background),
             )
             .decorated(false)
-            .size(Size::new(540.0, 220.0))
+            .size(Size::new(760.0, 300.0))
             .create_element(),
         );
         pipeline.layout_initial();
@@ -2151,5 +2135,56 @@ fn completion_popup_preview() {
             image::ColorType::Rgb8,
         )
         .unwrap();
+    }
+}
+
+#[test]
+fn callable_completion_places_caret_in_arguments_and_undoes_atomically() {
+    for (source, inserted, kind, expected, caret) in [
+        ("fo", "foo", 3, "foo()", 4),
+        ("fo", "foo()", 2, "foo()", 4),
+        ("fo(42)", "foo", 3, "foo(42)", 4),
+        ("fo ()", "foo()", 3, "foo ()", 5),
+        ("fo", "foo", 6, "foo", 3),
+    ] {
+        let app = App::with_document();
+        let id = app.document_id();
+        {
+            let mut rt = app.runtime.lock().unwrap();
+            let doc = rt.workspace.get_mut(id).unwrap();
+            doc.editor.edit_transaction(&EditDelta {
+                replaced_range: 0..0,
+                inserted: source.into(),
+            });
+            doc.editor.moved(TextSelection::collapsed(2));
+            doc.bindings.selection.set(TextSelection::collapsed(2));
+            let guard = Guard {
+                id,
+                revision: doc.editor.revision(),
+                caret: 2,
+                navigation: app.navigation.load(Ordering::Relaxed),
+            };
+            rt.language.panel = Panel::Completion(
+                guard,
+                vec![Choice {
+                    label: "foo".into(),
+                    detail: String::new(),
+                    item: json!({"label":"foo", "kind":kind, "insertText":inserted}),
+                }],
+            );
+        }
+        app.accept_completion(0);
+        assert_eq!(
+            app.bindings(id).unwrap().document.get().as_str(),
+            expected,
+            "{source}"
+        );
+        assert_eq!(
+            app.bindings(id).unwrap().selection.get().caret.byte,
+            caret,
+            "{source}"
+        );
+        app.undo(false);
+        assert_eq!(app.bindings(id).unwrap().document.get().as_str(), source);
     }
 }

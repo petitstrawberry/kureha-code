@@ -2,6 +2,8 @@
 use super::*;
 #[path = "completion.rs"]
 mod completion;
+#[path = "completion_view.rs"]
+mod completion_view;
 #[path = "inlay.rs"]
 mod inlay;
 use kureha_code::extensions::process;
@@ -2307,6 +2309,9 @@ impl App {
                 .unwrap_or(&choice.label);
             edits.push((prefix..guard.caret, text.into()));
         }
+        let (primary_range, primary_text) = &mut edits[0];
+        let caret_insertion =
+            completion::call_insertion(&choice.item, primary_text, &original[primary_range.end..]);
         let primary = edits[0].clone();
         for edit in choice
             .item
@@ -2332,7 +2337,7 @@ impl App {
             .filter(|(range, _)| range.end <= primary.0.start && range != &primary.0)
             .map(|(range, text)| text.len() as isize - range.len() as isize)
             .sum();
-        let end = (primary.0.start as isize + shift).max(0) as usize + primary.1.len();
+        let end = (primary.0.start as isize + shift).max(0) as usize + caret_insertion;
         let parts: Vec<_> = edits
             .into_iter()
             .map(|(replaced_range, inserted)| EditDelta {
@@ -2378,7 +2383,7 @@ impl App {
 
     pub(super) fn language_popup(&self) -> impl View + Clone + use<> {
         let active = self.active_id();
-        let (panel, selected, path) = {
+        let (panel, selected, path, query) = {
             let rt = self.runtime.lock().unwrap();
             (
                 rt.language.panel.clone(),
@@ -2386,9 +2391,23 @@ impl App {
                 active
                     .and_then(|id| rt.workspace.get(id))
                     .and_then(|doc| doc.path.clone()),
+                match &rt.language.panel {
+                    Panel::Completion(guard, _) => rt
+                        .workspace
+                        .get(guard.id)
+                        .map(|doc| {
+                            completion::prefix(&doc.editor.document.as_str(), guard.caret)
+                                .to_owned()
+                        })
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                },
             )
         };
         let colors = self.theme.get().colors();
+        let completion_font_size = self.theme.get().editor_font_size().clamp(14.0, 22.0);
+        let row_height = completion_font_size + 12.0;
+        let completion_font = self.document_font().map(Arc::new);
         let hover_text = match &panel {
             Panel::Hover(text) => Some(text.clone()),
             _ => None,
@@ -2437,20 +2456,25 @@ impl App {
                             };
                             super::ui::list_row(
                                 hstack! {
-                                    IconView::new(icon).size(IconSize::Pixels(16)).color(colors.muted),
-                                    Text::new(choice.label).font_size(13.0).color(colors.foreground)
-                                        .alignment(Alignment::Leading).frame_width(216.0).clip(),
-                                    Text::new(choice.detail).font_size(11.0).color(colors.muted)
-                                        .alignment(Alignment::Leading).frame_width(148.0).clip(),
+                                    IconView::new(icon).size(IconSize::Pixels(18)).color(
+                                        if matches!(choice.item.get("kind").and_then(Value::as_u64), Some(2..=4)) {
+                                            colors.warning
+                                        } else { colors.accent }
+                                    ),
+                                    completion_view::Label {
+                                        text: choice.label, detail: choice.detail, query: query.clone(),
+                                        font: completion_font.clone(), font_size: completion_font_size,
+                                        foreground: colors.foreground, accent: colors.accent,
+                                    },
                                 }.spacing(8.0)
-                                    .padding_insets(EdgeInsets::new(8.0, 4.0, 8.0, 4.0))
-                                    .frame(412.0, 26.0).clip(),
+                                    .padding_insets(EdgeInsets::new(6.0, 0.0, 6.0, 0.0))
+                                    .frame(552.0, row_height).clip(),
                                 input, selected == index, true, colors,
                                 move || app.accept_completion(index),
                             )
                         })
                         .collect::<Vec<_>>(),
-                    (len.min(8) as f32 * 26.0).max(26.0),
+                    (len.min(12) as f32 * row_height).max(row_height),
                 )
             }
             _ => (Vec::new(), 0.0),
@@ -2458,8 +2482,11 @@ impl App {
         let shown = hover_text.is_some() || !rows.is_empty();
         let hovered = self.clone();
         let scroll = ScrollView::new(VStack::new(super::ui::ViewCollection(rows)).spacing(0.0))
-            .scroll_to_vertical_range(selected as f32 * 26.0, (selected + 1) as f32 * 26.0)
-            .frame(420.0, height);
+            .scroll_to_vertical_range(
+                selected as f32 * row_height,
+                (selected + 1) as f32 * row_height,
+            )
+            .frame(560.0, height);
         let information = if_view!(
             shown,
             super::popup::Anchored::new(
@@ -2472,8 +2499,13 @@ impl App {
                         path.as_deref()
                     ),
                     Surface::floating(scroll.padding_insets(EdgeInsets::new(0.0, 4.0, 0.0, 4.0)))
-                        .surface_style(self.theme.get().popup_style())
-                        .corner_radius(8.0)
+                        .surface_style(
+                            self.theme
+                                .get()
+                                .popup_style()
+                                .material(GlassMaterial::new(0.0, colors.elevated))
+                        )
+                        .corner_radius(6.0)
                 )
                 // Keep this handler inside the anchored panel. An event wrapper
                 // around Anchored would hit-test the entire editor viewport.
@@ -2494,7 +2526,7 @@ impl App {
             .max_size(if hover_text.is_some() {
                 Size::new(520.0, 340.0)
             } else {
-                Size::new(440.0, 260.0)
+                Size::new(580.0, row_height * 12.0 + 12.0)
             }),
             VStack::new(())
         );
