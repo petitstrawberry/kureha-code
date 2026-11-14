@@ -231,6 +231,7 @@ fn document_scroll_discards_late_manual_hover_without_cancelling_diagnostics() {
             failure: None,
             started: Instant::now(),
             diagnostic_requests: BTreeMap::new(),
+            progress: Vec::new(),
         },
     );
     app.dismiss_hover_for_scroll();
@@ -414,6 +415,146 @@ fn stale_completion_does_not_replace_newer_text() {
     );
 }
 
+/// rust-analyzer answers definitions with nothing until it has indexed the
+/// project; the status says it is still working instead of "No definition
+/// found".
+#[test]
+fn server_progress_shows_and_explains_an_empty_definition() {
+    let app = App::with_document();
+    let root = PathBuf::from("/tmp/kureha-progress");
+    let path = root.join("main.rs");
+    let id = app
+        .runtime
+        .lock()
+        .unwrap()
+        .workspace
+        .open(path.clone(), "fn main() {}\n");
+    app.activate(id);
+    let snapshot = Snapshot {
+        id,
+        path: path.clone(),
+        revision: 0,
+        text: Arc::new("fn main() {}\n".into()),
+        caret: 0,
+        saved: true,
+    };
+    let definition = || Pending {
+        guard: Guard {
+            id,
+            revision: 0,
+            caret: 0,
+            navigation: app.navigation.load(Ordering::Relaxed),
+        },
+        method: "textDocument/definition".into(),
+        params: Value::Null,
+        hover_generation: None,
+        document_version: None,
+        attempts: 0,
+        started: Instant::now(),
+    };
+    let key = session_key("rust", &root);
+    app.runtime.lock().unwrap().language.sessions.insert(
+        key.clone(),
+        Session {
+            client: None,
+            starting: None,
+            initialize: None,
+            ready: true,
+            capabilities: Value::Null,
+            pending: BTreeMap::from([(1, definition()), (2, definition())]),
+            documents: BTreeMap::new(),
+            root: root.clone(),
+            language: "rust".into(),
+            label: "rust-analyzer".into(),
+            failure: None,
+            started: Instant::now(),
+            diagnostic_requests: BTreeMap::new(),
+            progress: Vec::new(),
+        },
+    );
+    let progress = |value: Value| LspEvent::Notification {
+        method: "$/progress".into(),
+        params: json!({"token": "rustAnalyzer/Indexing", "value": value}),
+    };
+    let status = || {
+        app.runtime.lock().unwrap().language.last_poll = None;
+        app.poll_language();
+        app.language_status.get()
+    };
+    let event = |event| app.language_event(&key, event, &[snapshot.clone()]);
+    assert!(event(progress(
+        json!({"kind": "begin", "title": "Indexing", "percentage": 0})
+    )));
+    assert_eq!(status(), "rust: Indexing 0%");
+    assert!(event(progress(
+        json!({"kind": "report", "message": "12/40 (core)", "percentage": 30})
+    )));
+    assert_eq!(status(), "rust: Indexing 12/40 (core) 30%");
+    assert!(event(progress(json!({"kind":"report", "percentage":40}))));
+    assert_eq!(status(), "rust: Indexing 12/40 (core) 40%");
+    assert!(event(progress(
+        json!({"kind":"report", "message":"16/40 (std)"})
+    )));
+    assert_eq!(status(), "rust: Indexing 16/40 (std) 40%");
+    assert!(event(LspEvent::Notification {
+        method: "$/progress".into(),
+        params: json!({"token":7,"value":{"kind":"begin","title":"Checking"}}),
+    }));
+    assert_eq!(status(), "rust: Checking");
+    assert!(event(LspEvent::Notification {
+        method: "$/progress".into(),
+        params: json!({"token":7,"value":{"kind":"end"}}),
+    }));
+    assert_eq!(status(), "rust: Indexing 16/40 (std) 40%");
+    for token in [Value::Null, json!({}), json!(false), json!(0.5)] {
+        assert!(!event(LspEvent::Notification {
+            method: "$/progress".into(),
+            params: json!({"token":token,"value":{"kind":"begin","title":"Invalid"}}),
+        }));
+    }
+    assert!(event(LspEvent::Response {
+        id: 1,
+        result: Value::Null,
+        error: None
+    }));
+    assert_eq!(
+        app.status.get(),
+        "No definition found; rust-analyzer is busy (Indexing)"
+    );
+    assert!(event(progress(json!({"kind": "end"}))));
+    assert_eq!(status(), "rust · 0 diagnostics");
+    assert!(event(LspEvent::Response {
+        id: 2,
+        result: Value::Null,
+        error: None
+    }));
+    assert_eq!(app.status.get(), "No definition found");
+    // A stopped ready server reports failure rather than unwrapping its client.
+    app.runtime
+        .lock()
+        .unwrap()
+        .language
+        .sessions
+        .get_mut(&key)
+        .unwrap()
+        .capabilities = json!({"definitionProvider":true});
+    assert!(event(progress(json!({"kind":"begin", "title":"Checking"}))));
+    assert!(event(LspEvent::Failed("server exited".into())));
+    assert_eq!(status(), "rust: server exited");
+    app.language_request("textDocument/definition");
+    assert_eq!(
+        app.status.get(),
+        "rust-analyzer has stopped; see its status"
+    );
+    // Reports for work that never began change nothing.
+    assert!(!event(progress(json!({"kind": "report", "percentage": 5}))));
+    assert!(
+        app.runtime.lock().unwrap().language.sessions[&key]
+            .progress
+            .is_empty()
+    );
+}
+
 #[test]
 fn cancelled_background_diagnostics_keep_the_user_status() {
     let app = App::with_document();
@@ -460,6 +601,7 @@ fn cancelled_background_diagnostics_keep_the_user_status() {
             failure: None,
             started: Instant::now(),
             diagnostic_requests: BTreeMap::new(),
+            progress: Vec::new(),
         },
     );
     assert!(!app.language_event(
@@ -1088,7 +1230,7 @@ fn unavailable_capabilities_do_not_dispatch_commands_and_escape_cancels_pending_
         capabilities: json!({"referencesProvider":false,"documentFormattingProvider":false,"renameProvider":false}),
         pending:BTreeMap::new(), documents:BTreeMap::new(), root,
         language:"rust".into(), label:"fixture".into(), failure:None,
-        started:Instant::now(), diagnostic_requests:BTreeMap::new(),
+        started:Instant::now(), diagnostic_requests:BTreeMap::new(), progress:Vec::new(),
     });
     for method in [
         "textDocument/formatting",
@@ -1267,3 +1409,77 @@ fn an_ungranted_extension_server_explains_itself_and_starts_after_the_grant() {
     app.restart_language_server(); // Stops the server.
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Exercise progress bursts from the real project, not just a tiny fixture.
+#[test]
+#[ignore = "requires installed rust-analyzer and Kureha dependencies; run explicitly"]
+fn real_rust_analyzer_indexes_kureha_and_navigates_with_progress() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = root.join("src/main.rs");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let call = source.find("let mut app = App::new();").unwrap() + "let mut app = App::".len();
+    let app = App::with_document();
+    let id = {
+        let mut rt = app.runtime.lock().unwrap();
+        rt.explorer.root = Some(root.clone());
+        rt.workspace.open(path.clone(), &source)
+    };
+    app.activate(id);
+    let selection = TextSelection::collapsed(call);
+    {
+        let mut rt = app.runtime.lock().unwrap();
+        let doc = rt.workspace.get_mut(id).unwrap();
+        doc.bindings.selection.set(selection);
+        doc.editor.moved(selection);
+    }
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let mut last_request = Instant::now() - Duration::from_secs(5);
+    let mut last_status = String::new();
+    let mut saw_progress = false;
+    loop {
+        app.poll_language();
+        let status = app.language_status.get();
+        if status != last_status {
+            eprintln!("LSP_STATUS {status}");
+            last_status = status;
+        }
+        let ready = {
+            let rt = app.runtime.lock().unwrap();
+            let session = rt
+                .language
+                .sessions
+                .get(&session_key("rust", &root))
+                .unwrap();
+            assert!(
+                session.failure.is_none(),
+                "server failed: {:?}",
+                session.failure
+            );
+            saw_progress |= !session.progress.is_empty();
+            session.ready
+        };
+        let target = app.bindings(id).unwrap().selection.get().start().byte;
+        if target != call {
+            assert!(
+                source[..target].ends_with("fn "),
+                "unexpected definition at {target}"
+            );
+            assert!(source[target..].starts_with("new("), "wrong definition");
+            assert!(saw_progress, "server never reported progress");
+            eprintln!("KUREHA_PROJECT_DEFINITION_OK byte={target}");
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "definition timed out: {} / {}",
+            app.language_status.get(),
+            app.status.get()
+        );
+        if ready && last_request.elapsed() > Duration::from_secs(2) {
+            app.language_request("textDocument/definition");
+            last_request = Instant::now();
+        }
+        thread::sleep(Duration::from_millis(30));
+    }
+}
+

@@ -88,6 +88,8 @@ struct Session {
     failure: Option<String>,
     started: Instant,
     diagnostic_requests: BTreeMap<PathBuf, (u64, Instant)>,
+    /// Active work, most recently updated last.
+    progress: Vec<WorkProgress>,
 }
 #[derive(Default)]
 pub(super) struct Service {
@@ -209,6 +211,41 @@ fn extension_server(
     let path = process::resolve(program, kureha_code::environment::var_os("PATH").as_deref())
         .ok_or_else(|| format!("`{program}` was not found on PATH"))?;
     Ok((path.to_string_lossy().into_owned(), server.args.clone()))
+}
+struct WorkProgress {
+    token: String,
+    title: String,
+    message: String,
+    percentage: Option<u64>,
+}
+impl WorkProgress {
+    fn update(&mut self, value: &Value) {
+        // Omitted report fields retain their previous values.
+        if let Some(message) = value.get("message").and_then(Value::as_str) {
+            self.message = short_progress_text(message);
+        }
+        if let Some(percentage) = value.get("percentage").and_then(Value::as_u64) {
+            self.percentage = Some(percentage.min(100));
+        }
+    }
+    fn text(&self) -> String {
+        let mut text = self.title.clone();
+        if !self.message.is_empty() {
+            text.push(' ');
+            text.push_str(&self.message);
+        }
+        if let Some(percentage) = self.percentage {
+            text.push_str(&format!(" {percentage}%"));
+        }
+        short_progress_text(&text)
+    }
+}
+fn short_progress_text(text: &str) -> String {
+    if text.chars().count() > 60 {
+        text.chars().take(59).collect::<String>() + "…"
+    } else {
+        text.to_string()
+    }
 }
 fn session_key(language: &str, root: &Path) -> String {
     format!("{language}:{}", root.display())
@@ -561,6 +598,7 @@ impl Service {
                     failure,
                     started: Instant::now(),
                     diagnostic_requests: BTreeMap::new(),
+                    progress: Vec::new(),
                 },
             );
         }
@@ -655,7 +693,7 @@ impl App {
                             } else {
                                 Value::Null
                             };
-                            let params = json!({"processId":std::process::id(),"clientInfo":{"name":"Kureha Code","version":env!("CARGO_PKG_VERSION")},"rootUri":root_uri,"initializationOptions":options,"workspaceFolders":[{"uri":root_uri,"name":session.root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false},"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"publishDiagnostics":{"versionSupport":true},"hover":{"contentFormat":["plaintext"]},"rename":{"prepareSupport":true,"honorsChangeAnnotations":false}},"workspace":{"configuration":true,"workspaceFolders":true}}});
+                            let params = json!({"processId":std::process::id(),"clientInfo":{"name":"Kureha Code","version":env!("CARGO_PKG_VERSION")},"rootUri":root_uri,"initializationOptions":options,"workspaceFolders":[{"uri":root_uri,"name":session.root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false},"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"publishDiagnostics":{"versionSupport":true},"hover":{"contentFormat":["plaintext"]},"rename":{"prepareSupport":true,"honorsChangeAnnotations":false}},"workspace":{"configuration":true,"workspaceFolders":true},"window":{"workDoneProgress":true}}});
                             match client.request("initialize", params) {
                                 Ok(id) => session.initialize = Some(id),
                                 Err(e) => session.failure = Some(e),
@@ -865,6 +903,9 @@ impl App {
                     .map(|s| {
                         if let Some(e) = &s.failure {
                             format!("{lang}: {e}")
+                        } else if let Some(work) = s.progress.last() {
+                            // Indexing, say: definitions come back empty until it ends.
+                            format!("{lang}: {}", work.text())
                         } else if s.ready {
                             format!(
                                 "{lang} · {} diagnostics",
@@ -907,6 +948,53 @@ impl App {
                 if let Some(session) = rt.language.sessions.get_mut(key) {
                     session.failure = Some(error);
                     session.client = None;
+                    session.progress.clear();
+                }
+                true
+            }
+            LspEvent::Notification { method, params } if method == "$/progress" => {
+                let Some(session) = rt.language.sessions.get_mut(key) else {
+                    return false;
+                };
+                let Some(token) = params
+                    .get("token")
+                    .filter(|token| {
+                        token.is_string() || token.as_i64().is_some_and(|n| i32::try_from(n).is_ok())
+                    })
+                    .map(Value::to_string)
+                else {
+                    return false;
+                };
+                let value = params.get("value").unwrap_or(&Value::Null);
+                let position = session.progress.iter().position(|work| work.token == token);
+                match (value.get("kind").and_then(Value::as_str), position) {
+                    (Some("begin"), _) => {
+                        let title = value
+                            .get("title")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Working")
+                            .to_string();
+                        if let Some(index) = position {
+                            session.progress.remove(index);
+                        }
+                        let mut work = WorkProgress {
+                            token,
+                            title: short_progress_text(&title),
+                            message: String::new(),
+                            percentage: None,
+                        };
+                        work.update(value);
+                        session.progress.push(work);
+                    }
+                    (Some("report"), Some(index)) => {
+                        let mut work = session.progress.remove(index);
+                        work.update(value);
+                        session.progress.push(work);
+                    }
+                    (Some("end"), Some(index)) => {
+                        session.progress.remove(index);
+                    }
+                    _ => return false,
                 }
                 true
             }
@@ -1212,8 +1300,19 @@ impl App {
                             .or_else(|| location.get("targetUri"))
                             .and_then(Value::as_str)
                         else {
+                            // Servers answer nothing while they load the project.
+                            let busy = rt.language.sessions.get(key).and_then(|s| {
+                                s.progress
+                                    .last()
+                                    .map(|work| (s.label.clone(), work.title.clone()))
+                            });
                             drop(rt);
-                            self.status.set("No definition found".into());
+                            self.status.set(match busy {
+                                Some((server, work)) => {
+                                    format!("No definition found; {server} is busy ({work})")
+                                }
+                                None => "No definition found".into(),
+                            });
                             return true;
                         };
                         let Some(range) = location
@@ -1320,6 +1419,15 @@ impl App {
             if !quiet {
                 self.status
                     .set("The server does not support this command".into());
+            }
+            return;
+        }
+        // It started once and has stopped since (its failure is in the status).
+        if session.client.is_none() {
+            let label = session.label.clone();
+            drop(rt);
+            if !quiet {
+                self.status.set(format!("{label} has stopped; see its status"));
             }
             return;
         }
