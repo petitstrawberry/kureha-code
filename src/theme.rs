@@ -95,7 +95,11 @@ impl Theme {
             Self::Dark => Color::rgb(200, 204, 211),
             Self::Custom(_) => unreachable!(),
         };
-        let accent = p.primary();
+        let accent = if self == &Self::Light {
+            Color::rgb(51, 114, 187)
+        } else {
+            p.primary()
+        };
         let mut colors = WorkbenchColors {
             background: p.background(),
             surface: p.surface_variant(),
