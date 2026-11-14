@@ -437,7 +437,10 @@ mod login_tests {
             vars,
             BTreeMap::from([
                 ("EMPTY".to_string(), String::new()),
-                ("PATH".to_string(), "/etc/profiles/per-user/me/bin:/usr/bin".to_string()),
+                (
+                    "PATH".to_string(),
+                    "/etc/profiles/per-user/me/bin:/usr/bin".to_string()
+                ),
                 ("WITH".to_string(), "EQUALS=x".to_string()),
             ])
         );
@@ -449,7 +452,8 @@ mod login_tests {
     #[cfg(unix)]
     fn fake_shell(name: &str, body: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("kureha-login {}-{}", name, std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kureha-login {}-{}", name, std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let shell = dir.join("shell");
         std::fs::write(&shell, format!("#!/bin/sh\n{body}\n")).unwrap();
@@ -497,7 +501,10 @@ mod login_tests {
         let _serial = test_serial();
         let run = |overlay: bool| {
             let mut command = Command::new("/bin/sh");
-            command.args(["-c", "echo \"${KUREHA_TEST_LAYER-none} ${KUREHA_TEST_LOGIN-none}\""]);
+            command.args([
+                "-c",
+                "echo \"${KUREHA_TEST_LAYER-none} ${KUREHA_TEST_LOGIN-none}\"",
+            ]);
             if overlay {
                 apply(&mut command);
             } else {
@@ -509,8 +516,14 @@ mod login_tests {
             ("KUREHA_TEST_LAYER".to_string(), "login".to_string()),
             ("KUREHA_TEST_LOGIN".to_string(), "login".to_string()),
         ])));
-        assert_eq!(base_var_os("KUREHA_TEST_LAYER").as_deref(), Some("login".as_ref()));
-        assert_eq!(var_os("KUREHA_TEST_LAYER").as_deref(), Some("login".as_ref()));
+        assert_eq!(
+            base_var_os("KUREHA_TEST_LAYER").as_deref(),
+            Some("login".as_ref())
+        );
+        assert_eq!(
+            var_os("KUREHA_TEST_LAYER").as_deref(),
+            Some("login".as_ref())
+        );
         assert_eq!(base_var_os("HOME"), std::env::var_os("HOME"));
         set(Some(Overlay {
             folder: "/project".into(),
@@ -519,8 +532,14 @@ mod login_tests {
         }));
         assert_eq!(run(true), "folder login\n");
         assert_eq!(run(false), "login login\n");
-        assert_eq!(var_os("KUREHA_TEST_LAYER").as_deref(), Some("folder".as_ref()));
-        assert_eq!(base_var_os("KUREHA_TEST_LAYER").as_deref(), Some("login".as_ref()));
+        assert_eq!(
+            var_os("KUREHA_TEST_LAYER").as_deref(),
+            Some("folder".as_ref())
+        );
+        assert_eq!(
+            base_var_os("KUREHA_TEST_LAYER").as_deref(),
+            Some("login".as_ref())
+        );
         set(None);
         set_login_for_test(None);
         assert_eq!(run(true), "none none\n");
