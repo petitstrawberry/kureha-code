@@ -11,12 +11,17 @@
 //! Reload" ask again. An answer applies only to the request it answers; a
 //! changed folder, a disabled extension or a withdrawn permission clears the
 //! overlay.
+use super::extension_ui::Consent;
 use super::*;
 use kureha_code::{
     environment::{self, Overlay},
     extensions::{EnvironmentContribution, Extension},
 };
 use std::time::{Duration, Instant};
+
+/// Keys of the prompts this module shows, all about the open folder.
+const CONSENT_PROMPT: &str = "environment:consent";
+const FIX_PROMPT: &str = "environment:fix";
 
 /// How long language servers for a newly opened folder wait for the
 /// extensions and settings to load before starting without its environment.
@@ -36,8 +41,8 @@ pub(super) struct State {
     request: Option<(u64, PathBuf, String)>,
     /// The status bar's progress item for it.
     progress: Option<u64>,
-    /// Folders already told that the extension needs permission.
-    told: BTreeSet<PathBuf>,
+    /// Folders whose permission prompt the user answered "Not now".
+    declined: BTreeSet<PathBuf>,
     /// Whether the folder's language servers wait for the extensions and
     /// settings to load.
     waiting: bool,
@@ -55,13 +60,16 @@ fn provider(folder: &Path) -> Option<(&'static Extension, &'static EnvironmentCo
 }
 
 impl App {
-    /// The explorer's folder, once the extensions and the settings (which
-    /// hold the grants) have loaded.
+    /// The explorer's folder, once the extensions, the settings (which hold
+    /// the grants) and the login shell's environment (direnv may only be on
+    /// its PATH) are in.
     fn environment_folder(&self) -> Option<PathBuf> {
         let rt = self.runtime.lock().unwrap();
         let (folder, _) = rt.environment.folder.as_ref()?;
-        (super::extension_ui::registry().is_some() && rt.extensions.settings_applied)
-            .then(|| folder.clone())
+        (super::extension_ui::registry().is_some()
+            && rt.extensions.settings_applied
+            && !environment::reading_login_shell())
+        .then(|| folder.clone())
     }
 
     /// The id of the folder's provider, if any (cached).
@@ -83,6 +91,12 @@ impl App {
     /// Follows the explorer's folder and asks its provider when that changes;
     /// removes an overlay no allowed provider supplies any more.
     pub(super) fn poll_environment(&self) {
+        if let Some(error) = environment::take_login_shell_error() {
+            self.notify(
+                super::messages::Level::Error,
+                format!("Could not read your login shell's environment, so programs may not be found: {error}"),
+            );
+        }
         let root = self.runtime.lock().unwrap().explorer.root.clone();
         let changed = {
             let mut rt = self.runtime.lock().unwrap();
@@ -98,6 +112,8 @@ impl App {
             }
         };
         if changed {
+            self.withdraw(CONSENT_PROMPT);
+            self.withdraw(FIX_PROMPT);
             self.end_environment_progress();
             environment::set_pending(None);
             if environment::overlay().is_some() {
@@ -123,9 +139,16 @@ impl App {
             return;
         };
         self.runtime.lock().unwrap().environment.waiting = false;
-        let wanted = self
-            .environment_provider(&folder)
-            .filter(|id| environment::allows(id));
+        // Asked only once it has everything it declares, so it is never
+        // refused halfway.
+        let consent = self.environment_consent(&folder);
+        let wanted = consent
+            .as_ref()
+            .filter(|consent| consent.granted())
+            .map(|consent| consent.extension.manifest.id.clone());
+        if wanted.is_some() || consent.is_none() {
+            self.withdraw(CONSENT_PROMPT);
+        }
         let asked_for = self.runtime.lock().unwrap().environment.asked_for.clone();
         match wanted {
             Some(id) if asked_for.as_ref() != Some(&(folder.clone(), id.clone())) => {
@@ -152,36 +175,68 @@ impl App {
                         "The folder's environment was removed",
                     );
                 }
-                self.tell_environment_permission(&folder);
+                if let Some(consent) = consent {
+                    self.ask_environment_consent(&folder, consent);
+                }
             }
         }
     }
 
-    /// Tells once per folder how to allow its provider, if it needs that.
-    fn tell_environment_permission(&self, folder: &Path) {
-        let Some((extension, _)) = provider(folder) else {
-            return;
-        };
-        let id = &extension.manifest.id;
-        if environment::allows(id)
-            || !self
-                .runtime
-                .lock()
-                .unwrap()
-                .environment
-                .told
-                .insert(folder.to_owned())
+    /// What the folder's provider still needs: the right to set the
+    /// environment and the programs it declares. `None` without a provider.
+    fn environment_consent(&self, folder: &Path) -> Option<Consent> {
+        let id = self.environment_provider(folder)?;
+        let extension = super::extension_ui::registry()?
+            .extensions
+            .iter()
+            .find(|e| e.manifest.id == id)?;
+        let mut consent = Consent::missing(extension);
+        // It supplies the environment only once allowed to set it, even if
+        // that was granted already.
+        consent.environment = !environment::allows(&id);
+        Some(consent)
+    }
+
+    /// Treats the open folder's permission prompt as answered "Not now".
+    pub(super) fn decline_environment_prompt(&self) {
+        let mut rt = self.runtime.lock().unwrap();
+        if let Some((folder, _)) = rt.environment.folder.clone() {
+            rt.environment.declined.insert(folder);
+        }
+        drop(rt);
+        self.withdraw(CONSENT_PROMPT);
+    }
+
+    /// Asks for what the folder's provider needs, unless the user said "Not
+    /// now" for this folder.
+    fn ask_environment_consent(&self, folder: &Path, consent: Consent) {
+        if self
+            .runtime
+            .lock()
+            .unwrap()
+            .environment
+            .declined
+            .contains(folder)
         {
             return;
         }
-        self.notify(
-            super::messages::Level::Info,
-            format!(
-                "{} can load this folder's environment: run \"{}\" from the command palette",
-                extension.manifest.name,
-                environment::allow_command_label(id)
-            ),
+        let folder = folder.to_owned();
+        let prompt = consent.prompt(
+            CONSENT_PROMPT.into(),
+            "can load this folder's environment",
+            "",
         );
+        self.ask(prompt, move |app, choice| match choice {
+            0 => app.grant(&consent),
+            _ => drop(
+                app.runtime
+                    .lock()
+                    .unwrap()
+                    .environment
+                    .declined
+                    .insert(folder.clone()),
+            ),
+        });
     }
 
     /// Asks the folder's provider for its environment (again).
@@ -198,10 +253,21 @@ impl App {
             }
             return;
         };
-        if !environment::allows(&id) {
-            self.tell_environment_permission(&folder);
+        if let Some(consent) = self
+            .environment_consent(&folder)
+            .filter(|consent| !consent.granted())
+        {
+            // Asked for on purpose (Reload, say): ask again even after "Not now".
+            self.runtime
+                .lock()
+                .unwrap()
+                .environment
+                .declined
+                .remove(&folder);
+            self.ask_environment_consent(&folder, consent);
             return;
         }
+        self.withdraw(FIX_PROMPT);
         let Some(host) = super::extension_ui::start_host() else {
             return;
         };
@@ -236,6 +302,7 @@ impl App {
         &self,
         request: u64,
         result: std::result::Result<BTreeMap<String, Option<String>>, String>,
+        actions: Vec<String>,
     ) {
         let (folder, id) = {
             let mut rt = self.runtime.lock().unwrap();
@@ -257,7 +324,7 @@ impl App {
                 environment::set(Some(Overlay {
                     folder,
                     vars,
-                    source: id,
+                    source: id.clone(),
                 }));
                 (
                     super::messages::Level::Info,
@@ -267,9 +334,10 @@ impl App {
                     },
                 )
             }
+            // The worker already names the extension.
             Err(error) => {
                 environment::set(None);
-                (super::messages::Level::Error, format!("{name}: {error}"))
+                (super::messages::Level::Error, error)
             }
         };
         // Servers that waited start now; running ones restart only if what
@@ -277,7 +345,53 @@ impl App {
         if environment::revision() != before {
             self.restart_language_servers_for_environment();
         }
-        self.notify(message.0, message.1);
+        // A failure that offers a way out (allowing `.envrc`, say) asks.
+        if message.0 == super::messages::Level::Error && !actions.is_empty() {
+            self.ask_environment_fix(&id, message.1, actions);
+        } else {
+            self.notify(message.0, message.1);
+        }
+    }
+
+    /// Shows `error` with buttons for the provider's `actions`, labelled with
+    /// the titles of its manifest, not with anything the reply says.
+    fn ask_environment_fix(&self, extension: &str, error: String, actions: Vec<String>) {
+        let Some(manifest) = super::extension_ui::registry().and_then(|registry| {
+            registry
+                .extensions
+                .iter()
+                .find(|e| e.manifest.id == extension)
+                .map(|e| &e.manifest)
+        }) else {
+            return;
+        };
+        let commands: Vec<(String, String)> = actions
+            .into_iter()
+            .filter_map(|action| {
+                let command = manifest
+                    .contributes
+                    .commands
+                    .iter()
+                    .find(|c| c.id == action)?;
+                Some((command.id.clone(), command.title.clone()))
+            })
+            .collect();
+        let mut choices: Vec<String> = commands.iter().map(|(_, title)| title.clone()).collect();
+        choices.push("Not now".into());
+        let extension = extension.to_owned();
+        self.ask(
+            super::messages::Prompt {
+                key: FIX_PROMPT.into(),
+                title: error,
+                detail: String::new(),
+                choices,
+            },
+            move |app, choice| {
+                if let Some((command, _)) = commands.get(choice) {
+                    app.run_extension_command(&extension, command);
+                }
+            },
+        );
     }
 
     /// A file was saved: if the folder's provider watches it, ask again.
@@ -352,9 +466,86 @@ mod tests {
         environment::apply(&mut command);
         String::from_utf8(command.output().unwrap().stdout).unwrap()
     }
+    fn prompt(app: &App, key: &str) -> Option<crate::messages::Prompt> {
+        app.messages
+            .prompts
+            .get()
+            .into_iter()
+            .find(|p| p.key == key)
+    }
     fn latest(app: &App) -> (Level, String) {
         let message = app.messages.history().remove(0);
         (message.level, message.text)
+    }
+
+    /// The permission and fix prompts as pictures, at the default and the
+    /// smallest window size, with the real direnv manifest:
+    /// `KUREHA_WORKBENCH_PREVIEW=<folder> cargo test --bin kureha-code prompts_render -- --ignored`
+    #[test]
+    #[ignore = "renders pictures into KUREHA_WORKBENCH_PREVIEW"]
+    fn prompts_render_above_the_status_bar() {
+        use scarlet_ui::{pipeline::RenderingPipeline, prelude::*};
+        let out = PathBuf::from(std::env::var_os("KUREHA_WORKBENCH_PREVIEW").expect("a folder"));
+        let dir =
+            std::env::temp_dir().join(format!("kureha-prompt-preview-{}", std::process::id()));
+        let folder = dir.join("direnv.kx");
+        std::fs::create_dir_all(&folder).unwrap();
+        let manifest =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("extensions/direnv/extension.toml");
+        std::fs::copy(manifest, folder.join("extension.toml")).unwrap();
+        std::fs::write(folder.join("extension.wasm"), guest("{}", 0)).unwrap();
+        let registry: &'static Registry = Box::leak(Box::new(Registry::load(&dir)));
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        let host: &'static Host = Box::leak(Box::new(Host::start(
+            registry,
+            Budgets::default(),
+            Default::default(),
+        )));
+        use_test_extensions(registry, host);
+        let app = App::with_document();
+        let consent = Consent::missing(&registry.extensions[0]);
+        app.ask(
+            consent.prompt(
+                CONSENT_PROMPT.into(),
+                "can load this folder's environment",
+                "",
+            ),
+            |_, _| {},
+        );
+        app.ask(
+            crate::messages::Prompt {
+                key: FIX_PROMPT.into(),
+                title: "direnv: this folder's .envrc is not allowed yet".into(),
+                detail: String::new(),
+                choices: vec!["Allow .envrc".into(), "Not now".into()],
+            },
+            |_, _| {},
+        );
+        for (name, width, height) in [
+            ("prompts.png", 1100.0, 760.0),
+            ("prompts-narrow.png", 720.0, 400.0),
+        ] {
+            let mut pipeline = RenderingPipeline::new();
+            pipeline.set_root(
+                Window::new("Kureha Code", app.content())
+                    .decorated(false)
+                    .size(Size::new(width, height))
+                    .create_element(),
+            );
+            pipeline.layout_initial();
+            let buffer = pipeline.render().expect("workbench paints");
+            let pixels = buffer
+                .data()
+                .chunks_exact(4)
+                .flat_map(|p| [p[2], p[1], p[0]])
+                .collect();
+            image::RgbImage::from_raw(buffer.width(), buffer.height(), pixels)
+                .unwrap()
+                .save(out.join(name))
+                .unwrap();
+            pipeline.teardown();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The whole flow with a stand-in for direnv: its answer puts a dev
@@ -395,8 +586,9 @@ mod tests {
         std::fs::write(
             extension.join("extension.toml"),
             "[extension]\nid='test.env'\nname='Env'\nversion='1'\napi=1\nwasm='ext.wasm'\n\
-             [capabilities]\nenvironment=true\n\
-             [contributes.environment]\nfiles=['.envrc']\nwatch=['flake.nix']\n",
+             [capabilities]\nenvironment=true\nprocess=['envtool']\n\
+             [contributes.environment]\nfiles=['.envrc']\nwatch=['flake.nix']\n\
+             [[contributes.commands]]\nid='env.allow'\ntitle='Allow .envrc'\n",
         )
         .unwrap();
         let registry: &'static Registry =
@@ -424,8 +616,8 @@ mod tests {
         assert_eq!(request(&app), None);
         assert!(app.messages.history().is_empty());
         assert!(environment::is_pending(&project));
-        // Loaded without a grant: nothing runs until the user allows it, and
-        // they are told how, once.
+        // Loaded without a grant: nothing runs until the user allows it; a
+        // prompt asks for everything it declares at once.
         app.sync_process_grants(&app.preferences.get());
         app.poll_environment();
         assert_eq!(request(&app), None);
@@ -441,19 +633,34 @@ mod tests {
                 "Extensions: Allow test.env to Set the Environment".into()
             )
         );
-        let (level, text) = latest(&app);
-        assert_eq!(level, Level::Info);
-        assert!(
-            text.contains("\"Extensions: Allow test.env to Set the Environment\""),
-            "{text}"
+        let asked = prompt(&app, CONSENT_PROMPT).expect("a permission prompt");
+        assert_eq!(
+            asked.title,
+            "Env (test.env) can load this folder's environment"
         );
-        let told = app.messages.history().len();
+        assert_eq!(
+            asked.detail,
+            "Allowing it runs envtool with your permissions and sets PATH and other \
+             variables for the language servers, terminals and tools Kureha starts."
+        );
+        assert_eq!(asked.choices, ["Allow", "Not now"]);
+        assert!(app.messages.history().is_empty(), "a prompt, not a message");
+        // "Not now" holds for the folder until it is asked for on purpose.
+        app.answer(CONSENT_PROMPT, 1);
+        app.poll_environment();
+        assert!(prompt(&app, CONSENT_PROMPT).is_none());
+        assert!(app.preferences.get().allow_environment.is_empty());
         app.request_environment();
-        assert_eq!(app.messages.history().len(), told);
+        assert!(prompt(&app, CONSENT_PROMPT).is_some());
+        assert_eq!(request(&app), None);
 
-        // Allowed: language servers for the folder wait while it loads.
-        app.set_environment_permission("test.env", true);
+        // Allowed with one answer, which grants all of it; language servers
+        // for the folder wait while it loads.
+        app.answer(CONSENT_PROMPT, 0);
         assert!(app.preferences.get().allow_environment.contains("test.env"));
+        assert!(app.preferences.get().allow_process["test.env"].contains("envtool"));
+        assert!(prompt(&app, CONSENT_PROMPT).is_none());
+        app.poll_environment();
         assert!(request(&app).is_some());
         assert!(environment::is_pending(&project.join("crates/a")));
         assert_eq!(app.messages.progress.get().len(), 1);
@@ -513,6 +720,7 @@ mod tests {
                 "KUREHA_TEST_SHELL".into(),
                 Some("stale".into()),
             )])),
+            Vec::new(),
         );
         assert!(environment::overlay().is_none());
         assert_eq!(shell("echo \"${KUREHA_TEST_SHELL-base}\""), "base\n");
@@ -525,13 +733,32 @@ mod tests {
         });
         app.request_environment();
         let blocked = request(&app).unwrap();
-        app.environment_answered(blocked, Err("direnv: .envrc is blocked".into()));
+        app.environment_answered(blocked, Err("Env: .envrc is blocked".into()), Vec::new());
         assert!(environment::overlay().is_none());
         assert!(!environment::is_pending(&project));
         assert_eq!(
             latest(&app),
-            (Level::Error, "Env: direnv: .envrc is blocked".into())
+            (Level::Error, "Env: .envrc is blocked".into())
         );
+        // A failure that offers the extension's own command asks with it, by
+        // its manifest title; others are dropped.
+        app.request_environment();
+        let blocked = request(&app).unwrap();
+        app.environment_answered(
+            blocked,
+            Err("Env: this folder's .envrc is not allowed yet".into()),
+            vec!["env.allow".into(), "someone.elses".into()],
+        );
+        let fix = prompt(&app, FIX_PROMPT).expect("a prompt with the way out");
+        assert_eq!(fix.title, "Env: this folder's .envrc is not allowed yet");
+        assert_eq!(fix.choices, ["Allow .envrc", "Not now"]);
+        app.answer(FIX_PROMPT, 0);
+        assert!(
+            app.status.get().contains("Env: Allow .envrc"),
+            "{}",
+            app.status.get()
+        );
+        assert!(prompt(&app, FIX_PROMPT).is_none());
         app.request_environment();
         wait(&app, "the environment after a failure", |_| {
             environment::overlay().is_some()
@@ -557,14 +784,19 @@ mod tests {
         app.request_environment();
         wait(&app, "the same environment", |app| request(app).is_none());
         assert_eq!(app.runtime.lock().unwrap().environment.restarts, restarts);
+        // Withdrawn from the palette: no prompt at once, but Reload asks.
         app.set_environment_permission("test.env", false);
         app.poll_environment();
         assert!(environment::overlay().is_none());
-        let told = app.messages.history().len();
+        assert!(prompt(&app, CONSENT_PROMPT).is_none());
         app.request_environment();
         assert_eq!(request(&app), None);
-        assert_eq!(app.messages.history().len(), told, "asked once per folder");
+        assert!(prompt(&app, CONSENT_PROMPT).is_some());
         assert_eq!(shell("echo \"${KUREHA_TEST_SHELL-base}\""), "base\n");
+        // Another folder takes the folder's prompts away.
+        app.runtime.lock().unwrap().explorer.root = Some(plain.clone());
+        app.poll_environment();
+        assert!(app.messages.prompts.get().is_empty());
 
         // A grant already saved: the environment loads once the settings do,
         // even if the folder opened first.
@@ -574,10 +806,13 @@ mod tests {
         assert_eq!(request(&app), None);
         app.preferences.update(|p| {
             p.allow_environment.insert("test.env".into());
+            p.allow_process
+                .insert("test.env".into(), ["envtool".to_string()].into());
         });
         app.sync_process_grants(&app.preferences.get());
         app.poll_environment();
         assert!(request(&app).is_some());
+        assert!(app.messages.prompts.get().is_empty());
         wait(&app, "the environment at startup", |_| {
             environment::overlay().is_some()
         });
@@ -589,7 +824,7 @@ mod tests {
 }
 
 /// The real direnv extension, direnv and Nix, through the app's own flow:
-/// `KUREHA_TEST_DIRENV_EXTENSIONS=<folder with the built direnv example>
+/// `KUREHA_TEST_DIRENV_EXTENSIONS=<folder scripts/build-extension.py --out built it into>
 /// KUREHA_TEST_DIRENV_PROJECT=<folder with an allowed `.envrc`>
 /// KUREHA_TEST_DIRENV_PROGRAM=<a program only its dev shell has>
 /// cargo test real_direnv_dev_shell -- --ignored`
@@ -614,13 +849,22 @@ fn real_direnv_dev_shell_reaches_language_servers() {
         Default::default(),
     )));
     super::extension_ui::use_test_extensions(registry, host);
+    // As `main` does: outside a terminal (run it under `env -i` to see a
+    // Finder launch), the login shell's environment comes first.
+    environment::read_login_shell_if_outside_terminal();
     let app = App::with_document();
     app.preferences.update(|p| {
-        p.allow_environment.insert("example.direnv".into());
+        p.allow_environment.insert("kureha.direnv".into());
         p.allow_process
-            .insert("example.direnv".into(), ["direnv".to_string()].into());
+            .insert("kureha.direnv".into(), ["direnv".to_string()].into());
     });
     app.sync_process_grants(&app.preferences.get());
+    while environment::reading_login_shell() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if let Some(error) = environment::take_login_shell_error() {
+        panic!("login shell: {error}");
+    }
     assert!(
         kureha_code::lsp::Client::spawn(&program, &[], &project).is_err(),
         "`{program}` is already on PATH"

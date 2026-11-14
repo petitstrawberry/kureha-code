@@ -3,7 +3,7 @@ id = "example.upper-case"
 name = "Upper Case"
 version = "0.1.0"
 api = 1
-wasm = "target/wasm32-unknown-unknown/release/kureha_upper_case.wasm"
+wasm = "extension.wasm"
 
 [activation]
 commands = ["upper-case.selection"]

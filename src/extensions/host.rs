@@ -65,10 +65,12 @@ pub enum Reply {
         id: u64,
         result: Result<CommandOutcome, String>,
     },
-    /// Variables to set, or (`None`) to remove.
+    /// Variables to set, or (`None`) to remove. A failure may come with
+    /// commands of the extension's own to offer (`direnv.allow`, say).
     Environment {
         id: u64,
         result: Result<std::collections::BTreeMap<String, Option<String>>, String>,
+        actions: Vec<String>,
     },
 }
 
@@ -99,6 +101,7 @@ impl Request {
             Self::Environment { id, .. } => Reply::Environment {
                 id,
                 result: Err(reason),
+                actions: Vec::new(),
             },
         }
     }
@@ -113,6 +116,7 @@ pub struct Host {
     lanes: Mutex<HashMap<String, Sender<Request>>>,
     outbox: Sender<Reply>,
     replies: Mutex<Receiver<Reply>>,
+    refusals: Refusals,
 }
 
 /// Request ids are unique in the process, not just per worker, so callers
@@ -133,7 +137,10 @@ struct Lane {
     slot: Option<Slot>,
     /// Consecutive budget overruns, kept apart because overrun instances are dropped.
     overruns: u32,
+    refusals: Refusals,
 }
+/// (extension id, program) pairs refused for want of the user's grant.
+type Refusals = std::sync::Arc<Mutex<Vec<(String, String)>>>;
 
 impl Lane {
     fn run<T>(
@@ -159,6 +166,9 @@ impl Lane {
         let result = call(runtime);
         for line in runtime.take_log() {
             eprintln!("[extension {id}] {line}");
+        }
+        for program in runtime.take_refused() {
+            self.refusals.lock().unwrap().push((id.to_owned(), program));
         }
         match result {
             Ok(value) => {
@@ -254,7 +264,27 @@ impl Lane {
                 } else {
                     self.run(|runtime| runtime.environment(&folder))
                 };
-                Reply::Environment { id, result }
+                // Only commands it contributes, so a button runs nothing else.
+                let actions = match (&result, &mut self.slot) {
+                    (Err(_), Some(Slot::Ready(runtime))) => runtime
+                        .take_offered()
+                        .into_iter()
+                        .filter(|action| {
+                            self.extension
+                                .manifest
+                                .contributes
+                                .commands
+                                .iter()
+                                .any(|command| command.id == *action)
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                Reply::Environment {
+                    id,
+                    result,
+                    actions,
+                }
             }
         }
     }
@@ -294,7 +324,13 @@ impl Host {
             lanes: Mutex::new(HashMap::new()),
             outbox,
             replies: Mutex::new(replies),
+            refusals: Default::default(),
         }
+    }
+    /// Programs the worker refused since the last call, for want of the
+    /// user's grant: (extension id, program).
+    pub fn take_refusals(&self) -> Vec<(String, String)> {
+        std::mem::take(&mut *self.refusals.lock().unwrap())
     }
     /// The queue for `extension`, starting its thread on first use.
     fn lane(&self, extension: &str) -> Result<Sender<Request>, String> {
@@ -322,6 +358,7 @@ impl Host {
             grants: self.grants.clone(),
             slot: None,
             overruns: 0,
+            refusals: self.refusals.clone(),
         };
         std::thread::Builder::new()
             .name(format!("extension {extension}"))
@@ -493,6 +530,43 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+    /// A failed environment offers only commands its extension contributes.
+    #[test]
+    fn environment_failures_offer_only_the_extensions_own_commands() {
+        let dir = std::env::temp_dir().join(format!("kureha-host-offers-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let folder = dir.join("test.offers");
+        std::fs::create_dir_all(&folder).unwrap();
+        let wasm = Guest::new()
+            .replying(r#"{"error":"not allowed yet","actions":["someone.else","offers.allow"]}"#)
+            .wasm();
+        std::fs::write(folder.join("ext.wasm"), wasm).unwrap();
+        std::fs::write(
+            folder.join("extension.toml"),
+            "[extension]\nid='test.offers'\nname='Offers'\nversion='1'\napi=1\nwasm='ext.wasm'\n\
+             [capabilities]\nenvironment=true\n[contributes.environment]\nfiles=['.envrc']\n\
+             [[contributes.commands]]\nid='offers.allow'\ntitle='Allow'\n",
+        )
+        .unwrap();
+        let registry: &'static Registry = Box::leak(Box::new(Registry::load(&dir)));
+        assert!(registry.errors.is_empty(), "{:?}", registry.errors);
+        crate::environment::set_allowed(&["test.offers".to_string()].into());
+        let host = start(registry);
+        let id = host.environment("test.offers", dir.clone()).unwrap();
+        match wait(&host, id) {
+            Reply::Environment {
+                result: Err(error),
+                actions,
+                ..
+            } => {
+                assert_eq!(error, "Offers: not allowed yet");
+                assert_eq!(actions, ["offers.allow"]);
+            }
+            other => panic!("{other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn command(host: &Host, extension: &str, command: &str) -> Result<CommandOutcome, String> {
         let id = host.command(extension, command, snapshot("hello")).unwrap();
         match wait(host, id) {

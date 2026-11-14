@@ -24,12 +24,16 @@ Alt+Shift+L lower case, Alt+Shift+C count.
 Line commands keep CRLF line endings and the document's final newline. Input
 is limited to 192 KiB so every command stays inside the host's time budget.
 
+To install it, run this from the repository and restart Kureha Code:
+
 ```sh
-nix develop --command cargo build --release --target wasm32-unknown-unknown \
-  --manifest-path examples/extensions/text-tools/Cargo.toml
-mkdir -p ~/.config/kureha-code/extensions
-ln -s "$PWD/examples/extensions/text-tools" ~/.config/kureha-code/extensions/text-tools
+nix develop --command python3 scripts/build-extension.py --install examples/extensions/text-tools
 ```
+
+It builds the module and puts `extension.toml`, `extension.wasm` and this
+README in `~/.config/kureha-code/extensions/text-tools.kx/` (or under
+`KUREHA_EXTENSIONS_DIR`). Run it again after changing the code; `--out <folder>`
+puts the folder somewhere else.
 
 Restart Kureha Code and type `Text Tools` in the command palette.
 Run the transformation tests natively with

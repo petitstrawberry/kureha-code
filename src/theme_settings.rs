@@ -612,7 +612,7 @@ mod persistence_tests {
         let f = Fixture::new();
         fs::write(f.settings(), "# mine\ncolor_theme = 'nord'\n").unwrap();
         let allow = |allowed| Change::AllowEnvironment {
-            extension: "example.direnv".into(),
+            extension: "kureha.direnv".into(),
             allowed,
         };
         let disable = Change::ExtensionEnabled {
@@ -625,7 +625,7 @@ mod persistence_tests {
         let preferences = Preferences::parse(&fs::read_to_string(f.settings()).unwrap()).unwrap();
         assert_eq!(
             preferences.allow_environment,
-            ["example.direnv".to_string()].into()
+            ["kureha.direnv".to_string()].into()
         );
         assert_eq!(
             preferences.disabled_extensions,

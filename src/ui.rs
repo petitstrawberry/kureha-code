@@ -352,7 +352,7 @@ impl App {
         }
         .spacing(0.0)
         .frame(f32::INFINITY, f32::INFINITY)
-        .background(theme.workspace_background()), self.navigation_overlay())).alignment(Alignment::TopLeading)
+        .background(theme.workspace_background()), self.prompt_overlay(), self.navigation_overlay())).alignment(Alignment::TopLeading)
         .frame(f32::INFINITY,f32::INFINITY)
         .focusable(self.workbench_focus.clone())
         .on_event_capture(move |event| {

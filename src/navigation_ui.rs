@@ -2163,7 +2163,8 @@ mod tests {
         assert!(navigation::filter_commands(COMMANDS, "split", 10).len() >= 2);
     }
     /// Drives the real palette, worker and an installed extension. Build the
-    /// example, point `KUREHA_EXTENSIONS_DIR` at a folder containing it, and run
+    /// example with `scripts/build-extension.py --out <folder>`, point
+    /// `KUREHA_EXTENSIONS_DIR` at that folder, and run
     /// `cargo test --bin kureha-code extension_command_end_to_end -- --ignored --nocapture`.
     #[test]
     #[ignore = "needs KUREHA_EXTENSIONS_DIR with the built upper-case example"]

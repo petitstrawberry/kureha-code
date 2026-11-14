@@ -9,6 +9,8 @@ pub struct Anchored<V: View + Clone> {
     content: V,
     anchor: Option<State<Point>>,
     centered: bool,
+    /// Placed this far above the bottom edge instead of at the top.
+    bottom: Option<f32>,
     max_size: Size,
 }
 impl<V: View + Clone> Anchored<V> {
@@ -17,6 +19,7 @@ impl<V: View + Clone> Anchored<V> {
             content,
             anchor: Some(anchor),
             centered: false,
+            bottom: None,
             max_size: Size::new(440.0, 260.0),
         }
     }
@@ -25,6 +28,7 @@ impl<V: View + Clone> Anchored<V> {
             content,
             anchor: None,
             centered: false,
+            bottom: None,
             max_size: Size::new(440.0, 260.0),
         }
     }
@@ -33,7 +37,19 @@ impl<V: View + Clone> Anchored<V> {
             content,
             anchor: None,
             centered: true,
+            bottom: None,
             max_size: Size::new(620.0, 380.0),
+        }
+    }
+    /// In the bottom-right corner, `inset` above the bottom edge (over the
+    /// workbench, above the status bar).
+    pub fn bottom_right(content: V, inset: f32) -> Self {
+        Self {
+            content,
+            anchor: None,
+            centered: false,
+            bottom: Some(inset),
+            max_size: Size::new(480.0, 420.0),
         }
     }
     pub fn max_size(mut self, size: Size) -> Self {
@@ -48,6 +64,7 @@ impl<V: View + Clone + 'static> View for Anchored<V> {
             |v| Popover {
                 anchor: v.anchor.as_ref().map(State::get),
                 centered: v.centered,
+                bottom: v.bottom,
                 max_size: v.max_size,
                 size: Size::ZERO,
                 panel: Rect::zero(),
@@ -55,6 +72,7 @@ impl<V: View + Clone + 'static> View for Anchored<V> {
             |r, v| {
                 r.anchor = v.anchor.as_ref().map(State::get);
                 r.centered = v.centered;
+                r.bottom = v.bottom;
                 r.max_size = v.max_size;
                 UpdateResult::Updated
             },
@@ -74,6 +92,7 @@ impl<V: View + Clone + 'static> View for Anchored<V> {
 struct Popover {
     anchor: Option<Point>,
     centered: bool,
+    bottom: Option<f32>,
     max_size: Size,
     size: Size,
     panel: Rect,
@@ -109,7 +128,10 @@ impl ElementRenderObject for Popover {
                             self.size.width - size.width - 8.0
                         })
                         .max(0.0),
-                        8.0_f32.min((self.size.height - size.height).max(0.0)),
+                        match self.bottom {
+                            Some(inset) => (self.size.height - size.height - inset).max(0.0),
+                            None => 8.0_f32.min((self.size.height - size.height).max(0.0)),
+                        },
                     ),
                     size,
                 ),
