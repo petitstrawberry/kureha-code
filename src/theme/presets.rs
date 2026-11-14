@@ -2,7 +2,9 @@ use super::Theme;
 use std::sync::OnceLock;
 
 pub const PRESETS: &[(&str, &str)] = &[
-    ("kureha", "Kureha"),
+    ("kureha-light", "Kureha Light"),
+    ("kureha-dark", "Kureha Dark"),
+    ("sakura", "Sakura"),
     ("dracula", "Dracula"),
     ("monokai", "Monokai"),
     ("nord", "Nord"),
@@ -13,10 +15,19 @@ pub const PRESETS: &[(&str, &str)] = &[
 ];
 
 pub fn preset(name: &str) -> Option<Theme> {
+    let normalized = name.to_ascii_lowercase();
+    let name = match normalized.as_str() {
+        "kureha" => "kureha-light",
+        "classic light" | "classic-light" => return Some(Theme::Light),
+        "classic dark" | "classic-dark" => return Some(Theme::Dark),
+        _ => name,
+    };
     static THEMES: OnceLock<Vec<Theme>> = OnceLock::new();
     let themes = THEMES.get_or_init(|| {
         [
             include_str!("../../assets/themes/kureha.toml"),
+            include_str!("../../assets/themes/kureha-dark.toml"),
+            include_str!("../../assets/themes/sakura.toml"),
             include_str!("../../assets/themes/dracula.toml"),
             include_str!("../../assets/themes/monokai.toml"),
             include_str!("../../assets/themes/nord.toml"),

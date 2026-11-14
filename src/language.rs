@@ -112,6 +112,7 @@ pub(super) struct Service {
     hover_target: Option<(DocumentId, usize, Point, Instant)>,
     completion_due: Option<(DocumentId, u64, usize, Instant)>,
     hover_sent: bool,
+    primary_hover: bool,
     hover_hide: Option<Instant>,
     chord: Option<Instant>,
 }
@@ -1731,6 +1732,28 @@ impl App {
             })
             .map(|(rev, caret)| (id, rev, caret, Instant::now()));
     }
+    pub(super) fn definition_modifiers(&self, event: &Event) {
+        let primary = match event {
+            Event::Focus(scarlet_ui::event::FocusEvent::Lost) => false,
+            Event::ModifiersChanged(modifiers) => modifiers.primary(),
+            Event::Keyboard(KeyEvent::Pressed { modifiers, .. } | KeyEvent::Released { modifiers, .. }) => modifiers.primary(),
+            _ => return,
+        };
+        let mut rt = self.runtime.lock().unwrap();
+        if rt.language.primary_hover == primary { return; }
+        rt.language.primary_hover = primary;
+        drop(rt);
+        self.syntax_revision.update(|v| *v = v.wrapping_add(1));
+    }
+    pub(super) fn definition_link(&self, id: DocumentId) -> Option<std::ops::Range<usize>> {
+        let rt = self.runtime.lock().unwrap();
+        if !rt.language.primary_hover { return None; }
+        let (doc, start, _, _) = rt.language.hover_target?;
+        if doc != id { return None; }
+        let text = rt.workspace.get(id)?.editor.document.as_str();
+        let len: usize = text.get(start..)?.chars().take_while(|c| c.is_alphanumeric() || *c == '_').map(char::len_utf8).sum();
+        (len > 0).then_some(start..start + len)
+    }
     pub(super) fn pointer_hover(&self, id: DocumentId, hit: Option<(usize, Point)>) {
         let mut rt = self.runtime.lock().unwrap();
         let hit = hit.and_then(|(byte, point)| {
@@ -1765,6 +1788,9 @@ impl App {
         } else {
             None
         };
+        if rt.language.primary_hover {
+            self.syntax_revision.update(|v| *v = v.wrapping_add(1));
+        }
         if hit.is_some() && matches!(rt.language.panel, Panel::Hover(_)) {
             rt.language.panel = Panel::Closed;
             drop(rt);

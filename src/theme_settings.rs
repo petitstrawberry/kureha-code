@@ -706,7 +706,7 @@ mod persistence_tests {
         let watcher = Watcher::start(f.theme()).unwrap();
         assert!(matches!(next(&watcher), Update::Error(_)));
         watcher.save(Change::Color(Some("Kureha".into())));
-        assert!(matches!(next(&watcher),Update::Loaded(t,_) if t.name()=="Kureha"));
+        assert!(matches!(next(&watcher),Update::Loaded(t,_) if t.name()=="Kureha Light"));
         assert_eq!(fs::read_to_string(f.theme()).unwrap(), "[broken");
         drop(watcher);
     }

@@ -266,6 +266,14 @@ pub fn has_semantic_spans(id: u64, revision: u64, path: &Path) -> bool {
     })
 }
 
+/// Exact semantic punctuation, excluding lexical string and comment contents.
+pub fn bracket_spans(id: u64, revision: u64, path: Option<&Path>) -> Vec<TextStyleSpan> {
+    let Some(service) = SERVICE.get() else { return Vec::new(); };
+    let cache = service.shared.0.lock().unwrap();
+    let Some(entry) = cache.entries.get(&id).filter(|e| e.key.matches(revision, path)) else { return Vec::new(); };
+    entry.semantic.iter().flatten().filter(|span| span.range.len() == 1 && entry.text.get(span.range.clone()).is_some_and(|s| matches!(s, "(" | ")" | "[" | "]" | "{" | "}"))).cloned().collect()
+}
+
 /// Keep only unchanged pieces of the previous highlight, translated through a
 /// UTF-8-safe replacement range. Never expose old offsets against new text.
 fn remap_spans(before: &str, after: &str, spans: &[TextStyleSpan]) -> Vec<TextStyleSpan> {

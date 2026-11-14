@@ -842,7 +842,15 @@ fn pointer_hover_keeps_the_caret_and_invalidates_old_pointer_targets() {
     app.pointer_hover(id, Some((4, Point::new(80.0, 40.0))));
     let generation = app.runtime.lock().unwrap().language.hover_generation;
     assert_eq!(app.bindings(id).unwrap().selection.get(), selection);
+    let mut modifiers = scarlet_ui::event::KeyModifiers::empty();
+    if cfg!(target_os = "macos") { modifiers.super_key = true; } else { modifiers.control = true; }
+    app.definition_modifiers(&Event::ModifiersChanged(modifiers));
+    assert_eq!(app.definition_link(id), Some(3..8));
+    app.definition_modifiers(&Event::ModifiersChanged(Default::default()));
+    assert_eq!(app.definition_link(id), None);
+    app.definition_modifiers(&Event::ModifiersChanged(modifiers));
     app.pointer_hover(id, None);
+    assert_eq!(app.definition_link(id), None);
     let rt = app.runtime.lock().unwrap();
     assert!(rt.language.hover_target.is_none());
     assert!(rt.language.hover_generation > generation);

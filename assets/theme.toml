@@ -1,14 +1,14 @@
 # Save to apply. Invalid edits keep the last working theme.
 name = "My Theme"
-base = "kureha" # kureha, light, dark, dracula, monokai, nord, solarized-dark/light, gruvbox-dark, tokyo-night
+base = "kureha-light" # kureha-light/dark, sakura, classic-light/dark, dracula, monokai, nord, solarized-dark/light, gruvbox-dark, tokyo-night
 
 [colors]
-workspace = "#f5e3eb"
-background = "#fffbfd"
-foreground = "#463641"
-elevated = "#fff7fb"
-accent = "#c84c79"
-selection = "#e8aec7b0"
+workspace = "#f2eded"
+background = "#ffffff"
+foreground = "#242424"
+elevated = "#fafafa"
+accent = "#b32635"
+selection = "#e7aab570"
 # Also: surface, muted, border, current_line, error, warning,
 # selected_background, selected_foreground (rows/tabs), minimap_viewport, minimap_border. Colors accept #RRGGBB or #RRGGBBAA.
 
@@ -20,9 +20,9 @@ input_opacity = 0.78
 blur_radius = 18.0
 
 [syntax]
-comment = "#877281"
-keyword = "#aa3e78"
-string = "#8b6243"
+comment = "#467546"
+keyword = "#0000aa"
+string = "#a31515"
 # Also: constant, number, function, type, tag.
 
 # Optional TextMate scope overrides:
@@ -43,9 +43,9 @@ font_size = 14.0
 
 [terminal]
 # Defaults follow the workbench theme. Optional overrides:
-# background = "#fffbfd"
-# foreground = "#463641"
-# cursor = "#c84c79a6"
+# background = "#ffffff"
+# foreground = "#242424"
+# cursor = "#b32635a6"
 # red = "#b63b5e"
 # Also: black, green, yellow, blue, magenta, cyan, white,
 # and bright_black, bright_red, bright_green, bright_yellow,

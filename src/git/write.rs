@@ -20,6 +20,8 @@ pub enum Operation {
     Stage(Vec<PathBuf>),
     /// Put `HEAD`'s version of each path back into the index.
     Unstage(Vec<PathBuf>),
+    /// Restore tracked working-tree files from the index, preserving staged changes.
+    Discard(Vec<PathBuf>),
     /// Commit the index with this message.
     Commit(String),
     /// Create a branch at `HEAD`, and check it out if `switch`.
@@ -61,6 +63,7 @@ pub fn apply(folder: &Path, operation: &Operation) -> Result<Done, String> {
     match operation {
         Operation::Stage(paths) => stage(&workdir, paths).map(Done::from),
         Operation::Unstage(paths) => unstage(&workdir, paths).map(Done::from),
+        Operation::Discard(paths) => discard(&workdir, paths),
         Operation::Commit(message) => commit(&workdir, message).map(Done::from),
         Operation::CreateBranch { name, switch } => {
             super::branch::create(&workdir, name, *switch).map(Done::from)
@@ -86,6 +89,28 @@ fn unstage(workdir: &Path, paths: &[PathBuf]) -> Result<String, String> {
         with_paths(workdir, &["reset", "--quiet"], paths)?;
     }
     Ok("Unstaged changes".into())
+}
+
+fn discard(workdir: &Path, paths: &[PathBuf]) -> Result<Done, String> {
+    // Only exact tracked files: never recurse into folders, discard conflicts,
+    // or turn an empty path list into a repository-wide restore.
+    for path in paths {
+        if path.components().any(|c| !matches!(c, std::path::Component::Normal(_)))
+            || path.as_os_str().is_empty() {
+            return Err("Discard requires a relative file path".into());
+        }
+        let entries = command::run(workdir, [OsStr::new("ls-files"), OsStr::new("--stage"), OsStr::new("-z"), OsStr::new("--"), path.as_os_str()])?;
+        let records: Vec<_> = entries.split(|b| *b == 0).filter(|r| !r.is_empty()).collect();
+        if records.len() != 1 || !records[0].starts_with(b"100") && !records[0].starts_with(b"120000 ") {
+            return Err("Only tracked files can be discarded".into());
+        }
+        let (metadata, name) = records[0].split_at(records[0].iter().position(|b| *b == b'\t').ok_or("Invalid Git index entry")?);
+        if !metadata.ends_with(b" 0") || &name[1..] != path.as_os_str().as_encoded_bytes() {
+            return Err("Resolve conflicts before discarding this file".into());
+        }
+    }
+    if !paths.is_empty() { with_paths(workdir, &["restore", "--worktree"], paths)?; }
+    Ok(Done { message: "Discarded working-tree changes".into(), changed: paths.to_vec() })
 }
 
 /// Keep large selections below the OS argument limit, with literal path
@@ -193,6 +218,35 @@ impl Writer {
 mod tests {
     use super::*;
     use crate::git::{Change, testing::Repo};
+
+    #[test]
+    fn discard_restores_only_selected_worktree_files_and_keeps_index() {
+        let repo = Repo::new("discard");
+        repo.write("[literal].txt", "original\n");
+        repo.write("other.txt", "other\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-qm", "initial"]);
+        repo.write("[literal].txt", "staged\n");
+        repo.git(&["add", "--", "[literal].txt"]);
+        repo.write("[literal].txt", "unstaged\n");
+        repo.write("other.txt", "keep\n");
+        let index = repo.git(&["write-tree"]);
+        let done = apply(&repo.0, &Operation::Discard(vec!["[literal].txt".into()])).unwrap();
+        assert_eq!(done.changed, vec![PathBuf::from("[literal].txt")]);
+        assert_eq!(std::fs::read_to_string(repo.0.join("[literal].txt")).unwrap(), "staged\n");
+        assert_eq!(std::fs::read_to_string(repo.0.join("other.txt")).unwrap(), "keep\n");
+        assert_eq!(repo.git(&["write-tree"]), index);
+        std::fs::remove_file(repo.0.join("[literal].txt")).unwrap();
+        apply(&repo.0, &Operation::Discard(vec!["[literal].txt".into()])).unwrap();
+        assert_eq!(std::fs::read_to_string(repo.0.join("[literal].txt")).unwrap(), "staged\n");
+        repo.write("new.txt", "untracked\n");
+        for invalid in ["new.txt", "..", "", "."] {
+            assert!(apply(&repo.0, &Operation::Discard(vec![invalid.into()])).is_err());
+        }
+        apply(&repo.0, &Operation::Discard(vec![])).unwrap();
+        assert_eq!(std::fs::read_to_string(repo.0.join("new.txt")).unwrap(), "untracked\n");
+        assert_eq!(std::fs::read_to_string(repo.0.join("other.txt")).unwrap(), "keep\n");
+    }
 
     fn stage_all(repo: &Repo) -> String {
         let snapshot = repo.read("");

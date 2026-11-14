@@ -636,11 +636,11 @@ impl App {
             .unwrap()
             .clone()
             .unwrap_or_else(|| self.theme.get());
-        let mut choices = vec![preset("kureha").unwrap(), Theme::Light, Theme::Dark];
+        let mut choices = vec![preset("kureha-light").unwrap(), preset("kureha-dark").unwrap(), Theme::Light, Theme::Dark];
         choices.extend(
             PRESETS
                 .iter()
-                .filter(|(id, _)| *id != "kureha")
+                .filter(|(id, _)| !matches!(*id, "kureha-light" | "kureha-dark"))
                 .filter_map(|(id, _)| preset(id)),
         );
         // Not loaded yet means the worker is still reading; show presets only.
@@ -1571,7 +1571,7 @@ mod tests {
         use kureha_code::theme::{preset, Theme};
         let app = app_with_text("let value = 1;");
         let original = app.theme.get();
-        assert_eq!(original.name(), "Kureha");
+        assert_eq!(original.name(), "Kureha Light");
         app.show_commands();
         assert!(!app
             .nav
@@ -1592,7 +1592,7 @@ mod tests {
         app.accept_navigation();
         assert_eq!(app.nav.mode.get(), Mode::Themes { code_only: false });
         assert_eq!(app.theme.get(), original);
-        assert!(app.nav.rows.get().iter().any(|row| row.label == "Light"));
+        assert!(app.nav.rows.get().iter().any(|row| row.label == "Classic Light"));
         app.nav.query.set("monokai".into());
         app.poll_navigation();
         assert_eq!(app.theme.get(), preset("monokai").unwrap());
@@ -1693,7 +1693,7 @@ mod tests {
         let app = app_with_text("source");
         let original = app.theme.get();
         app.show_theme_picker(false);
-        app.nav.query.set("Dark".into());
+        app.nav.query.set("Solarized".into());
         app.poll_navigation();
         let window = || {
             Window::new("Theme picker", app.content())
@@ -1734,7 +1734,7 @@ mod tests {
         assert_eq!(app.nav.selected.get(), Some(1));
         assert_eq!(
             app.theme.get(),
-            kureha_code::theme::preset("solarized-dark").unwrap()
+            kureha_code::theme::preset("solarized-light").unwrap()
         );
         pipeline
             .element_tree_mut()
@@ -1743,7 +1743,7 @@ mod tests {
             .update(&window());
         pipeline.render();
         pipeline.handle_event(&Event::Keyboard(KeyEvent::Char { c: 'x' }));
-        assert_eq!(app.nav.query.get(), "Darkx");
+        assert_eq!(app.nav.query.get(), "Solarizedx");
         assert_eq!(
             app.bindings(app.document_id())
                 .unwrap()

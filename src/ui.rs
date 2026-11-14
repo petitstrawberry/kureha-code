@@ -1,6 +1,8 @@
 //! The workbench uses ScarletUI controls; the window menu is the app menu.
 #[path = "indent.rs"]
 mod indent;
+#[path = "editor_events.rs"]
+mod editor_events;
 
 use super::*;
 use kureha_code::{file_icons, git::Change, syntax};
@@ -360,6 +362,7 @@ impl App {
         .frame(f32::INFINITY,f32::INFINITY)
         .focusable(self.workbench_focus.clone())
         .on_event_capture(move |event| {
+            keys.definition_modifiers(event);
             if keys.tab_drag_event(event) { return true; }
             if keys.nav.capture_shortcut_text(event) { return true; }
             let Event::Keyboard(KeyEvent::Pressed { keycode, modifiers }) = event else {
@@ -615,7 +618,7 @@ impl App {
                     TextEditAction::SelectAll => edit_actions.select_all(),
                 }
             })
-            .text_spans(styles)
+            .text_spans(styles.clone())
             .diagnostic_spans(self.language_diagnostics(id))
             .caret_rect_state(if self.focused_group.get() == group {
                 self.caret_rect.clone()
@@ -666,13 +669,14 @@ impl App {
             editor
         };
         let preferences = self.preferences.get();
+        let modifiers = self.clone();
         let editor = indent::DecoratedEditor::new(
             editor,
             minimap.2,
             preferences.indent_depth_background,
             preferences.active_block_guide && self.focused_group.get() == group,
             theme.editor_colors(),
-        );
+        ).decorations(&minimap.0.as_str(), &syntax::bracket_spans(id, minimap.2, minimap.1.as_deref()), self.definition_link(id)).observe(move |event| modifiers.definition_modifiers(event));
         let editor = editor
             .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {

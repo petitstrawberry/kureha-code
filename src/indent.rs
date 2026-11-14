@@ -10,7 +10,7 @@ use scarlet_ui::{
     renderer::PaintContext,
     views::text_view::{TextViewLayout, TextViewRenderObject},
 };
-use std::{any::Any, ops::Range};
+use std::{any::Any, ops::Range, sync::Arc};
 
 // Match TextView's Spaces(4) mode and its fixed four-space tab expansion.
 const INDENT: usize = 4;
@@ -125,6 +125,42 @@ impl Indents {
     }
 }
 
+#[derive(Clone, Debug)]
+struct BracketPair { open: usize, close: usize, color: Color }
+
+fn bracket_pairs(source: &str, spans: &[TextStyleSpan]) -> Vec<BracketPair> {
+    let mut stack = Vec::new();
+    let mut pairs = Vec::new();
+    // Semantic punctuation spans are exactly one byte. Strings/comments remain
+    // lexical spans, so braces inside them cannot create a guide.
+    for span in spans {
+        if span.range.len() != 1 { continue; }
+        let Some(&ch) = source.as_bytes().get(span.range.start) else { continue; };
+        if matches!(ch, b'{' | b'[' | b'(') {
+            stack.push((ch, span.range.start, span.color));
+        } else if matches!(ch, b'}' | b']' | b')') {
+            let expected = match ch { b'}' => b'{', b']' => b'[', _ => b'(' };
+            while let Some((open, byte, color)) = stack.pop() {
+                if open == expected {
+                    pairs.push(BracketPair { open: byte, close: span.range.start, color });
+                    break;
+                }
+            }
+        }
+    }
+    pairs
+}
+
+// Map source offsets through tab expansion and wrapping using TextView's own
+// measured rows, so guide endpoints land at the actual bracket glyph.
+fn row_x(row: &scarlet_ui::views::text_view::VisualLine, byte: usize) -> f32 {
+    let end = row.display_text().char_indices().map(|(i, _)| i)
+        .chain(std::iter::once(row.display_text().len()))
+        .find(|i| row.source_byte_at_display_byte(*i) >= byte)
+        .unwrap_or(row.display_text().len());
+    row.x + row.display_advance(end)
+}
+
 #[derive(Clone)]
 pub(super) struct DecoratedEditor {
     editor: TextView,
@@ -132,6 +168,9 @@ pub(super) struct DecoratedEditor {
     backgrounds: bool,
     guide: bool,
     colors: WorkbenchColors,
+    brackets: Arc<Vec<BracketPair>>,
+    link: Option<Range<usize>>,
+    observer: Arc<dyn Fn(&Event)>,
 }
 
 impl DecoratedEditor {
@@ -148,7 +187,19 @@ impl DecoratedEditor {
             backgrounds,
             guide,
             colors,
+            brackets: Arc::new(Vec::new()),
+            link: None,
+            observer: Arc::new(|_| {}),
         }
+    }
+}
+
+impl DecoratedEditor {
+    pub(super) fn observe(mut self, observer: impl Fn(&Event) + 'static) -> Self { self.observer = Arc::new(observer); self }
+    pub(super) fn decorations(mut self, source: &str, spans: &[TextStyleSpan], link: Option<Range<usize>>) -> Self {
+        self.brackets = Arc::new(bracket_pairs(source, spans));
+        self.link = link;
+        self
     }
 }
 
@@ -171,7 +222,7 @@ impl View for DecoratedEditor {
                 render.update(view);
                 UpdateResult::Updated
             },
-            |view| vec![Box::new(view.editor.clone())],
+            |view| vec![Box::new(super::editor_events::ObservedEditor { editor: view.editor.clone(), observer: view.observer.clone() })],
         ))
     }
     fn listenables(&self) -> Vec<&dyn Listenable> {
@@ -207,7 +258,7 @@ impl Decorations {
 
     fn measure(&mut self, layout: &TextViewLayout) {
         self.marks.clear();
-        if !self.view.backgrounds && !self.view.guide {
+        if !self.view.backgrounds && !self.view.guide && self.view.link.is_none() {
             return;
         }
         let document = self.view.editor.document_state().unwrap().get();
@@ -217,17 +268,17 @@ impl Decorations {
             .view
             .guide
             .then(|| self.indents.active(caret_line))
-            .flatten();
+            .flatten().filter(|_| self.view.brackets.is_empty());
         let colors = self.view.colors;
         // Stable, distinct hues remain distinguishable even in monochrome themes.
         let palette = [
-            Color::rgb(80, 145, 245),
-            Color::rgb(65, 195, 120),
-            Color::rgb(175, 115, 235),
-            Color::rgb(230, 185, 65),
+            Color::rgb(220, 195, 90),
+            Color::rgb(100, 175, 135),
+            Color::rgb(185, 130, 190),
+            Color::rgb(100, 155, 195),
         ];
         let dark = colors.background.r + colors.background.g + colors.background.b < 1.5;
-        let opacity = if dark { 0.12 } else { 0.10 };
+        let opacity = if dark { 0.065 } else { 0.045 };
         let base = layout.visual_lines.first().map_or(0.0, |line| line.x);
         let left = PADDING + layout.gutter_width;
         let right = (self.size.width - 1.0).max(left);
@@ -270,7 +321,7 @@ impl Decorations {
             if bottom <= top {
                 continue;
             }
-            if self.view.backgrounds {
+            if self.view.backgrounds || self.view.guide {
                 let bands = columns.div_ceil(INDENT);
                 let (mut start, mut end) = (0, bands);
                 // Skip horizontally offscreen levels without visiting them.
@@ -289,10 +340,15 @@ impl Decorations {
                     }
                     let end = x_at((depth + 1) * INDENT).min(whitespace_right).min(right);
                     if end > x {
-                        self.marks.push((
-                            Rect::from_xywh(x, top, end - x, bottom - top),
-                            palette[depth % palette.len()].with_opacity(opacity),
-                        ));
+                        if self.view.backgrounds {
+                            self.marks.push((
+                                Rect::from_xywh(x, top, end - x, bottom - top),
+                                palette[depth % palette.len()].with_opacity(opacity),
+                            ));
+                        }
+                        if depth > 0 {
+                            self.marks.push((Rect::from_xywh(x, top, 1.0, bottom - top), colors.foreground.with_opacity(0.12)));
+                        }
                     }
                 }
             }
@@ -303,6 +359,52 @@ impl Decorations {
                         Rect::from_xywh(x, top, 1.0, bottom - top),
                         colors.warning.with_opacity(0.90),
                     ));
+                }
+            }
+        }
+        let pair = self.view.guide.then(|| self.view.brackets.iter()
+            .filter(|p| {
+                let open = document.line_index_at_byte(p.open);
+                let close = document.line_index_at_byte(p.close);
+                open < close && open <= caret_line && caret_line <= close
+            })
+            .min_by_key(|p| p.close - p.open)).flatten();
+        if let Some(pair) = pair {
+            let start = layout.visual_lines.partition_point(|r| r.text_range.end <= pair.open);
+            let end = layout.visual_lines.partition_point(|r| r.text_range.end <= pair.close);
+            if let (Some(open), Some(close)) = (layout.visual_lines.get(start), layout.visual_lines.get(end)) {
+                if start != end {
+                    let open_x = row_x(open, pair.open);
+                    let close_x = row_x(close, pair.close);
+                    let x = close_x.min(open_x);
+                    let y1 = open.y + layout.line_height - 1.0;
+                    let y2 = close.y + layout.line_height - 1.0;
+                    let top = y1.max(1.0);
+                    let bottom = y2.min(self.size.height - 1.0);
+                    let color = pair.color.with_opacity(0.9);
+                    if x >= left && x < right && bottom > top {
+                        self.marks.push((Rect::from_xywh(x, top, 1.0, bottom - top), color));
+                    }
+                    for (y, row, byte) in [(y1, open, pair.open), (y2, close, pair.close)] {
+                        if y >= 1.0 && y < self.size.height - 1.0 {
+                            let from = x.max(left);
+                            let to = row_x(row, byte + 1).min(right);
+                            if to > from { self.marks.push((Rect::from_xywh(from, y, to - from, 1.0), color)); }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(link) = &self.view.link {
+            for row in &layout.visual_lines[layout.visible_lines.clone()] {
+                let start = link.start.max(row.text_range.start);
+                let end = link.end.min(row.text_range.end);
+                if start >= end { continue; }
+                let x = row_x(row, start).max(left);
+                let end = row_x(row, end).min(right);
+                let y = row.y + layout.line_height - 2.0;
+                if end > x && y > 0.0 && y < self.size.height {
+                    self.marks.push((Rect::from_xywh(x, y, end - x, 1.5), colors.accent));
                 }
             }
         }
@@ -369,6 +471,28 @@ impl ElementRenderObject for Decorations {
 mod tests {
     use super::*;
     use kureha_code::theme::Theme;
+
+    #[test]
+    fn bracket_guides_use_pair_color_and_reach_the_opening_bracket() {
+        let source = "fn main() {\n    if ready {\n        run();\n    }\n}\n";
+        let color = Color::rgb(218, 112, 214);
+        let open = source.find("ready {").unwrap() + 6;
+        let close = source.find("    }").unwrap() + 4;
+        let spans = vec![TextStyleSpan { range: open..open + 1, color }, TextStyleSpan { range: close..close + 1, color }];
+        let view = view(source, false, true, WrapMode::None).decorations(source, &spans, None);
+        view.editor.selection_state().set(TextSelection::collapsed(source.find("run").unwrap()));
+        let mut element = view.create_element();
+        element.layout(LayoutConstraints::tight(600.0, 200.0));
+        let render = decorations(element.as_ref());
+        let guide: Vec<_> = render.marks.iter().filter(|(_, c)| c.a > 0.8).collect();
+        assert_eq!(guide.len(), 3);
+        assert!(guide.iter().all(|(_, c)| *c == color.with_opacity(0.9)));
+        let layout = element.children()[0].render_object().unwrap().as_any().downcast_ref::<TextViewRenderObject>().unwrap().text_layout();
+        let row = &layout.visual_lines[1];
+        let endpoint = row_x(row, open + 1);
+        assert!(guide.iter().any(|(r, _)| r.size.height == 1.0 && (r.origin.x + r.size.width - endpoint).abs() < 0.01));
+        assert!(guide.iter().any(|(r, _)| r.size.width == 1.0 && r.size.height > 20.0));
+    }
 
     #[test]
     fn native_pipeline_updates_the_guide_on_keyboard_input_without_rebuilding_the_view() {
@@ -604,7 +728,7 @@ mod tests {
                     render
                         .marks
                         .iter()
-                        .all(|(rect, color)| rect.size.width == 1.0 && color.a > 0.8)
+                        .all(|(rect, _)| rect.size.width == 1.0)
                 );
             } else {
                 assert!(render.indents.lines.is_empty() && render.marks.is_empty());

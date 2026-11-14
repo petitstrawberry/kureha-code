@@ -39,8 +39,8 @@ impl Theme {
 
     pub fn name(&self) -> &str {
         match self {
-            Self::Light => "Light",
-            Self::Dark => "Dark",
+            Self::Light => "Classic Light",
+            Self::Dark => "Classic Dark",
             Self::Custom(theme) => &theme.name,
         }
     }
@@ -50,6 +50,8 @@ impl Theme {
             Self::Light => Self::Dark,
             Self::Dark => Self::Light,
             Self::Custom(theme) => {
+                if theme.name == "Kureha Light" { return preset("kureha-dark").unwrap(); }
+                if theme.name == "Kureha Dark" { return preset("kureha-light").unwrap(); }
                 if theme.dark {
                     Self::Light
                 } else {

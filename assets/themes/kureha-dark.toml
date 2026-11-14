@@ -1,0 +1,37 @@
+name = "Kureha Dark"
+base = "dark"
+
+[colors]
+workspace = "#1a1718"
+background = "#211e20"
+surface = "#292527"
+elevated = "#322c2f"
+foreground = "#ede7e9"
+muted = "#b1a6ab"
+border = "#494045"
+accent = "#ee7888"
+selection = "#a64b6066"
+selected_background = "#54323b"
+selected_foreground = "#ffc6cf"
+current_line = "#2c272a"
+minimap_viewport = "#a99fa426"
+minimap_border = "#a99fa470"
+error = "#f48791"
+warning = "#e0bb79"
+
+[glass]
+pane_opacity = 0.80
+tab_opacity = 0.86
+popup_opacity = 0.96
+input_opacity = 0.88
+blur_radius = 18.0
+
+[syntax]
+comment = "#a09a94"
+string = "#d6b48c"
+constant = "#c5a3df"
+number = "#c5a3df"
+keyword = "#ee879a"
+function = "#e5cb91"
+type = "#8ac7c1"
+tag = "#ee879a"
