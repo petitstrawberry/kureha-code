@@ -1,4 +1,7 @@
 //! The workbench uses ScarletUI controls; the window menu is the app menu.
+#[path = "indent.rs"]
+mod indent;
+
 use super::*;
 use kureha_code::{file_icons, git::Change, syntax};
 use scarlet_ui::views::containers::ViewTuple;
@@ -662,6 +665,14 @@ impl App {
         } else {
             editor
         };
+        let preferences = self.preferences.get();
+        let editor = indent::DecoratedEditor::new(
+            editor,
+            minimap.2,
+            preferences.indent_depth_background,
+            preferences.active_block_guide && self.focused_group.get() == group,
+            theme.editor_colors(),
+        );
         let editor = editor
             .frame(f32::INFINITY, f32::INFINITY)
             .on_event_capture(move |event| {

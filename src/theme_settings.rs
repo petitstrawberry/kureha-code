@@ -171,7 +171,7 @@ fn create(path: &std::path::Path) -> std::io::Result<()> {
     }
 }
 
-const SETTINGS_TEMPLATE: &str = "# Theme selections and editor preferences. Changes apply automatically.\n# Omit color_theme to use theme.toml; omit code_theme to follow it.\n# color_theme = \"kureha\"\n# code_theme = \"monokai\"\n# font_size = 14\nhide_minimap = false\nword_wrap = true\nwrap_at_words = true\nformat_on_save = false\n# Pick a formatter per language: \"lsp\" or an extension id.\n# [formatter]\n# json = \"lsp\"\n";
+const SETTINGS_TEMPLATE: &str = "# Theme selections and editor preferences. Changes apply automatically.\n# Omit color_theme to use theme.toml; omit code_theme to follow it.\n# color_theme = \"kureha\"\n# code_theme = \"monokai\"\n# font_size = 14\nhide_minimap = false\nword_wrap = true\nwrap_at_words = true\nformat_on_save = false\nindent_depth_background = false\nactive_block_guide = false\n# Pick a formatter per language: \"lsp\" or an extension id.\n# [formatter]\n# json = \"lsp\"\n";
 fn create_settings(path: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -251,6 +251,8 @@ fn save(path: &std::path::Path, change: &Change) -> Result<(), String> {
         Change::Minimap(visible) => document["hide_minimap"] = toml_edit::value(!visible),
         Change::WordWrap(enabled) => document["word_wrap"] = toml_edit::value(*enabled),
         Change::WrapAtWords(enabled) => document["wrap_at_words"] = toml_edit::value(*enabled),
+        Change::IndentDepthBackground(enabled) => document["indent_depth_background"] = toml_edit::value(*enabled),
+        Change::ActiveBlockGuide(enabled) => document["active_block_guide"] = toml_edit::value(*enabled),
         Change::FormatOnSave(enabled) => document["format_on_save"] = toml_edit::value(*enabled),
         Change::AllowProcess {
             extension,
@@ -523,12 +525,16 @@ mod persistence_tests {
         assert!(matches!(next(&watcher),Update::Loaded(_,p) if p.hide_minimap));
         watcher.save(Change::WrapAtWords(false));
         assert!(matches!(next(&watcher),Update::Loaded(_,p) if !p.wrap_at_words));
+        watcher.save(Change::IndentDepthBackground(true));
+        assert!(matches!(next(&watcher),Update::Loaded(_,p) if p.indent_depth_background && !p.active_block_guide));
+        watcher.save(Change::ActiveBlockGuide(true));
+        assert!(matches!(next(&watcher),Update::Loaded(_,p) if p.indent_depth_background && p.active_block_guide));
         watcher.save(Change::WordWrap(false));
         assert!(matches!(next(&watcher),Update::Loaded(_,p) if !p.word_wrap));
         drop(watcher);
         let restored = Watcher::start(f.theme()).unwrap();
         assert!(
-            matches!(next(&restored),Update::Loaded(t,p) if t.editor_font_size()==19.0 && p.hide_minimap && !p.word_wrap && !p.wrap_at_words && p.code_theme.as_deref()==Some("Nord"))
+            matches!(next(&restored),Update::Loaded(t,p) if t.editor_font_size()==19.0 && p.hide_minimap && !p.word_wrap && !p.wrap_at_words && p.indent_depth_background && p.active_block_guide && p.code_theme.as_deref()==Some("Nord"))
         );
         assert_eq!(fs::read_to_string(f.theme()).unwrap(), custom);
         assert!(

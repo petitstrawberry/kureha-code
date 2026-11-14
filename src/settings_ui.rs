@@ -8,6 +8,8 @@ pub(super) struct Settings {
     word_wrap: State<bool>,
     wrap_mode: State<usize>,
     format_on_save: State<bool>,
+    indent_depth_background: State<bool>,
+    active_block_guide: State<bool>,
     license: State<usize>,
     query: State<String>,
     rows: State<Vec<usize>>,
@@ -25,6 +27,8 @@ impl Settings {
             word_wrap: state(true),
             wrap_mode: state(0),
             format_on_save: state(false),
+            indent_depth_background: state(false),
+            active_block_guide: state(false),
             license: state(0),
             query: state(String::new()),
             rows: state(Vec::new()),
@@ -45,6 +49,12 @@ impl Settings {
         }
         if self.format_on_save.get() != preferences.format_on_save {
             self.format_on_save.set(preferences.format_on_save);
+        }
+        if self.indent_depth_background.get() != preferences.indent_depth_background {
+            self.indent_depth_background.set(preferences.indent_depth_background);
+        }
+        if self.active_block_guide.get() != preferences.active_block_guide {
+            self.active_block_guide.set(preferences.active_block_guide);
         }
         let mode = usize::from(!preferences.wrap_at_words);
         if self.wrap_mode.get() != mode {
@@ -280,6 +290,8 @@ impl App {
         let wrap_app = self.clone();
         let wrap_mode_app = self.clone();
         let format_app = self.clone();
+        let indent_app = self.clone();
+        let guide_app = self.clone();
         let file_app = self.clone();
         let custom_app = self.clone();
         let button = |label: String| {
@@ -343,6 +355,16 @@ impl App {
                 Toggle::new(self.minimap_visible.clone())
                     .on_change(move |visible| minimap_app.change_preferences(Change::Minimap(visible))),
                 }.spacing(12.0),
+            }.alignment(Alignment::Leading).spacing(6.0),
+            vstack! {
+                label("Indent depth backgrounds"),
+                Toggle::new(self.settings_ui.indent_depth_background.clone())
+                    .on_change(move |enabled| indent_app.change_preferences(Change::IndentDepthBackground(enabled))),
+            }.alignment(Alignment::Leading).spacing(6.0),
+            vstack! {
+                label("Active block guide"),
+                Toggle::new(self.settings_ui.active_block_guide.clone())
+                    .on_change(move |enabled| guide_app.change_preferences(Change::ActiveBlockGuide(enabled))),
             }.alignment(Alignment::Leading).spacing(6.0),
             hstack! {
                 Button::new("Open Settings File…").header_style().text_color(colors.accent).background_color(Color::TRANSPARENT)
@@ -465,7 +487,7 @@ mod tests {
         let window = || {
             Window::new("Settings", app.content())
                 .decorated(false)
-                .size(Size::new(1100.0, 760.0))
+                .size(Size::new(1100.0, 1000.0))
         };
         pipeline.set_root(window().create_element());
         pipeline.layout_initial();
@@ -475,8 +497,8 @@ mod tests {
             Point::new(0.0, 0.0),
             &mut points,
         );
-        // Word wrap, format on save, minimap.
-        assert_eq!(points.len(), 3);
+        // Word wrap, format on save, minimap, indent backgrounds, active guide.
+        assert_eq!(points.len(), 5);
         for (index, point) in points.iter().enumerate() {
             let (x, y) = (point.x as i32, point.y as i32);
             pipeline.handle_event(&Event::Mouse(MouseEvent::ButtonPressed {
@@ -494,7 +516,9 @@ mod tests {
             match index {
                 0 => assert!(!app.preferences.get().word_wrap),
                 1 => assert!(app.preferences.get().format_on_save),
-                _ => assert!(app.preferences.get().hide_minimap),
+                2 => assert!(app.preferences.get().hide_minimap),
+                3 => assert!(app.preferences.get().indent_depth_background),
+                _ => assert!(app.preferences.get().active_block_guide),
             }
             pipeline
                 .element_tree_mut()
@@ -507,6 +531,10 @@ mod tests {
         app.change_preferences(Change::WrapAtWords(false));
         app.change_preferences(Change::Minimap(true));
         app.change_preferences(Change::FormatOnSave(false));
+        app.change_preferences(Change::IndentDepthBackground(false));
+        app.change_preferences(Change::ActiveBlockGuide(false));
+        assert!(!app.settings_ui.indent_depth_background.get());
+        assert!(!app.settings_ui.active_block_guide.get());
         assert!(!app.settings_ui.format_on_save.get());
         assert!(app.settings_ui.word_wrap.get());
         assert_eq!(app.settings_ui.wrap_mode.get(), 1);

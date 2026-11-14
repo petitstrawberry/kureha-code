@@ -61,6 +61,8 @@ struct Entry {
     cancel: Arc<AtomicBool>,
     used: u64,
     highlight: Arc<Highlight>,
+    lexical: Arc<Highlight>,
+    semantic: Option<Vec<TextStyleSpan>>,
     generation: u64,
 }
 struct Request {
@@ -165,11 +167,42 @@ impl Cache {
                 },
                 cancel,
                 used: self.clock,
+                lexical: Arc::new(Highlight {
+                    spans: highlight.spans.clone(),
+                    fallback: highlight.fallback,
+                }),
+                semantic: None,
                 highlight: Arc::new(highlight),
                 generation: self.clock,
             },
         );
         spans
+    }
+
+    fn publish_semantic(
+        &mut self,
+        id: u64,
+        revision: u64,
+        path: &Path,
+        theme: &EditorTheme,
+        spans: Vec<TextStyleSpan>,
+    ) -> bool {
+        if &self.theme != theme {
+            return false;
+        }
+        let Some(entry) = self
+            .entries
+            .get_mut(&id)
+            .filter(|e| e.key.matches(revision, Some(path)))
+        else {
+            return false;
+        };
+        self.clock = self.clock.wrapping_add(1);
+        entry.semantic = Some(spans);
+        entry.highlight = combined(&entry.lexical, entry.semantic.as_deref());
+        entry.generation = self.clock;
+        self.changed = true;
+        true
     }
 
     fn publish(&mut self, request: &Request, highlight: Highlight) -> bool {
@@ -185,12 +218,54 @@ impl Cache {
             return false;
         }
         self.clock = self.clock.wrapping_add(1);
-        entry.highlight = Arc::new(highlight);
+        entry.lexical = Arc::new(highlight);
+        entry.highlight = combined(&entry.lexical, entry.semantic.as_deref());
         entry.generation = self.clock;
         self.changed = true;
         true
     }
 }
+fn combined(lexical: &Arc<Highlight>, semantic: Option<&[TextStyleSpan]>) -> Arc<Highlight> {
+    match semantic {
+        Some(spans) => Arc::new(Highlight {
+            spans: crate::semantic::overlay(&lexical.spans, spans),
+            fallback: lexical.fallback,
+        }),
+        None => lexical.clone(),
+    }
+}
+
+/// Publish only onto the exact document and theme requested by the server client.
+pub fn set_semantic_spans(
+    id: u64,
+    revision: u64,
+    path: &Path,
+    theme: &EditorTheme,
+    spans: Vec<TextStyleSpan>,
+) -> bool {
+    let Some(service) = SERVICE.get() else {
+        return false;
+    };
+    service
+        .shared
+        .0
+        .lock()
+        .unwrap()
+        .publish_semantic(id, revision, path, theme, spans)
+}
+
+pub fn has_semantic_spans(id: u64, revision: u64, path: &Path) -> bool {
+    SERVICE.get().is_some_and(|s| {
+        s.shared
+            .0
+            .lock()
+            .unwrap()
+            .entries
+            .get(&id)
+            .is_some_and(|e| e.key.matches(revision, Some(path)) && e.semantic.is_some())
+    })
+}
+
 /// Keep only unchanged pieces of the previous highlight, translated through a
 /// UTF-8-safe replacement range. Never expose old offsets against new text.
 fn remap_spans(before: &str, after: &str, spans: &[TextStyleSpan]) -> Vec<TextStyleSpan> {
@@ -794,6 +869,55 @@ mod tests {
             assert_eq!(catalog().syntax(path.map(Path::new), first).name, expected);
         }
     }
+    #[test]
+    fn semantic_colors_survive_late_lexical_results_but_not_stale_edits_or_themes() {
+        let mut cache = Cache::default();
+        let path = Path::new("a.rs");
+        let theme = cache.theme.clone();
+        cache.request(11, 1, Some(path), "fn typed() {}");
+        let request = cache.pending.pop_front().unwrap();
+        let semantic = TextStyleSpan {
+            range: 3..8,
+            color: Color::rgb(100, 200, 30),
+        };
+        assert!(cache.publish_semantic(11, 1, path, &theme, vec![semantic.clone()]));
+        let generation = cache.entries[&11].generation;
+        let lexical = TextStyleSpan {
+            range: 0..8,
+            color: Color::rgb(200, 30, 100),
+        };
+        assert!(cache.publish(
+            &request,
+            Highlight {
+                spans: vec![lexical.clone()],
+                fallback: None
+            }
+        ));
+        assert_eq!(
+            cache.entries[&11].highlight.spans,
+            vec![
+                TextStyleSpan {
+                    range: 0..3,
+                    ..lexical
+                },
+                semantic
+            ]
+        );
+        assert!(cache.entries[&11].generation > generation);
+        assert!(cache.publish_semantic(11, 1, path, &theme, vec![]));
+        assert_eq!(cache.entries[&11].highlight.spans.len(), 1);
+        cache.request(11, 2, Some(path), "fn renamed() {}");
+        assert!(!cache.publish_semantic(11, 1, path, &theme, vec![]));
+        assert!(!cache.publish_semantic(11, 2, Path::new("b.rs"), &theme, vec![]));
+        cache.set_theme(if theme == EditorTheme::Light {
+            EditorTheme::Dark
+        } else {
+            EditorTheme::Light
+        });
+        cache.request(11, 2, Some(path), "fn renamed() {}");
+        assert!(!cache.publish_semantic(11, 2, path, &theme, vec![]));
+    }
+
     #[test]
     fn cache_hits_do_not_reenqueue_and_revisions_paths_and_ids_invalidate() {
         let mut cache = Cache::default();

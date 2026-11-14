@@ -231,6 +231,7 @@ fn document_scroll_discards_late_manual_hover_without_cancelling_diagnostics() {
             failure: None,
             started: Instant::now(),
             diagnostic_requests: BTreeMap::new(),
+            semantic: SemanticRequests::default(),
             progress: Vec::new(),
         },
     );
@@ -469,6 +470,7 @@ fn server_progress_shows_and_explains_an_empty_definition() {
             failure: None,
             started: Instant::now(),
             diagnostic_requests: BTreeMap::new(),
+            semantic: SemanticRequests::default(),
             progress: Vec::new(),
         },
     );
@@ -601,6 +603,7 @@ fn cancelled_background_diagnostics_keep_the_user_status() {
             failure: None,
             started: Instant::now(),
             diagnostic_requests: BTreeMap::new(),
+            semantic: SemanticRequests::default(),
             progress: Vec::new(),
         },
     );
@@ -1230,7 +1233,7 @@ fn unavailable_capabilities_do_not_dispatch_commands_and_escape_cancels_pending_
         capabilities: json!({"referencesProvider":false,"documentFormattingProvider":false,"renameProvider":false}),
         pending:BTreeMap::new(), documents:BTreeMap::new(), root,
         language:"rust".into(), label:"fixture".into(), failure:None,
-        started:Instant::now(), diagnostic_requests:BTreeMap::new(), progress:Vec::new(),
+        started:Instant::now(), diagnostic_requests:BTreeMap::new(), semantic:SemanticRequests::default(), progress:Vec::new(),
     });
     for method in [
         "textDocument/formatting",
@@ -1425,6 +1428,25 @@ fn real_rust_analyzer_indexes_kureha_and_navigates_with_progress() {
         rt.workspace.open(path.clone(), &source)
     };
     app.activate(id);
+    let previous_theme = kureha_code::syntax::theme();
+    struct RestoreTheme(kureha_code::theme::Theme);
+    impl Drop for RestoreTheme {
+        fn drop(&mut self) {
+            kureha_code::syntax::set_theme(self.0.clone());
+        }
+    }
+    let _restore_theme = RestoreTheme(previous_theme);
+    app.set_theme(kureha_code::theme::preset("Monokai").unwrap());
+    // rust-analyzer omits unmodified keywords and punctuation when the client
+    // advertises augmentsSyntaxTokens=true. Request them explicitly so fn/let
+    // and nested braces below exercise the complete semantic token stream.
+    assert_eq!(
+        kureha_code::semantic::capabilities()["augmentsSyntaxTokens"],
+        json!(false)
+    );
+    // There is no render pass in this headless test. Seed the same lexical
+    // cache entry that the editor paints before requesting semantic tokens.
+    kureha_code::syntax::spans(id, 0, Some(&path), &source);
     let selection = TextSelection::collapsed(call);
     {
         let mut rt = app.runtime.lock().unwrap();
@@ -1481,4 +1503,343 @@ fn real_rust_analyzer_indexes_kureha_and_navigates_with_progress() {
         }
         thread::sleep(Duration::from_millis(30));
     }
+    // Initialize only means the protocol is available. Require successful
+    // navigation and a quiet progress queue before requesting the colors that
+    // we assert, so an early partial indexing response cannot satisfy the test.
+    let key = session_key("rust", &root);
+    let mut quiet_since = None;
+    loop {
+        app.poll_language();
+        let rt = app.runtime.lock().unwrap();
+        let session = &rt.language.sessions[&key];
+        assert!(session.failure.is_none(), "{:?}", session.failure);
+        if session.ready && session.progress.is_empty() {
+            let quiet = quiet_since.get_or_insert_with(Instant::now);
+            if quiet.elapsed() >= Duration::from_secs(1) {
+                break;
+            }
+        } else {
+            quiet_since = None;
+        }
+        assert!(Instant::now() < deadline, "indexing never became idle");
+        drop(rt);
+        thread::sleep(Duration::from_millis(30));
+    }
+    let method = source
+        .find("fn sync_editor(&self, id: DocumentId)")
+        .unwrap();
+    let body = method + source[method..].find('{').unwrap();
+    let let_keyword = body + source[body..].find("let snapshot = {").unwrap();
+    let nested = let_keyword + "let snapshot = ".len();
+    let nested_end = nested + source[nested..].find("        };").unwrap() + 8;
+    let method_end = method + source[method..].find("\n    }\n    fn edit").unwrap() + 5;
+    let self_usage = nested + source[nested..].find("self.runtime").unwrap();
+    let parameter_usage = nested + source[nested..].find("get_mut(id)").unwrap() + "get_mut(".len();
+    let parameter_usage2 =
+        nested + source[nested..].find("self.bindings(id)").unwrap() + "self.bindings(".len();
+    let type_ref = method + source[method..].find("DocumentId").unwrap();
+    let checks = [
+        ("fn keyword", method..method + 2, Color::rgb(249, 38, 114)),
+        (
+            "let keyword",
+            let_keyword..let_keyword + 3,
+            Color::rgb(249, 38, 114),
+        ),
+        (
+            "DocumentId type reference",
+            type_ref..type_ref + 10,
+            Color::rgb(166, 226, 46),
+        ),
+        (
+            "self usage",
+            self_usage..self_usage + 4,
+            Color::rgb(249, 38, 114),
+        ),
+        (
+            "parameter usage in get_mut",
+            parameter_usage..parameter_usage + 2,
+            Color::rgb(253, 151, 31),
+        ),
+        (
+            "parameter usage in bindings",
+            parameter_usage2..parameter_usage2 + 2,
+            Color::rgb(253, 151, 31),
+        ),
+        (
+            "method open brace",
+            body..body + 1,
+            Color::rgb(218, 112, 214),
+        ),
+        (
+            "nested open brace",
+            nested..nested + 1,
+            Color::rgb(23, 159, 255),
+        ),
+        (
+            "nested close brace",
+            nested_end..nested_end + 1,
+            Color::rgb(23, 159, 255),
+        ),
+        (
+            "method close brace",
+            method_end..method_end + 1,
+            Color::rgb(218, 112, 214),
+        ),
+    ];
+    let after_indexing = Instant::now();
+    let refresh = || {
+        app.language_event(
+            &key,
+            LspEvent::Notification {
+                method: "workspace/semanticTokens/refresh".into(),
+                params: Value::Null,
+            },
+            &app.language_snapshots(),
+        );
+    };
+    refresh();
+    let mut last_refresh = Instant::now();
+    loop {
+        app.poll_language();
+        let cache = kureha_code::syntax::cached(id, 0, Some(&path)).unwrap();
+        let mismatches: Vec<_> = checks
+            .iter()
+            .filter_map(|(label, range, expected)| {
+                let actual = cache
+                    .spans()
+                    .iter()
+                    .find(|span| span.range.start <= range.start && span.range.end >= range.end)
+                    .map(|span| span.color);
+                (actual != Some(*expected)).then(|| {
+                    format!(
+                        "{label} {:?}: {actual:?}, expected {expected:?}",
+                        &source[range.clone()]
+                    )
+                })
+            })
+            .collect();
+        let fresh_completed = {
+            let rt = app.runtime.lock().unwrap();
+            let session = &rt.language.sessions[&key];
+            assert!(session.failure.is_none(), "{:?}", session.failure);
+            session.progress.is_empty()
+                && session.semantic.requested.get(&path).is_some_and(
+                    |(_, _, requested, complete)| *requested >= after_indexing && *complete,
+                )
+        };
+        if fresh_completed
+            && kureha_code::syntax::has_semantic_spans(id, 0, &path)
+            && mismatches.is_empty()
+        {
+            eprintln!(
+                "KUREHA_PROJECT_SEMANTIC_COLORS_AFTER_INDEXING_OK {} assertions",
+                checks.len()
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "post-indexing semantic colors timed out (fresh response={fresh_completed}): {} / {}",
+            mismatches.join("; "),
+            app.language_status.get()
+        );
+        if last_refresh.elapsed() > Duration::from_secs(2)
+            && app.runtime.lock().unwrap().language.sessions[&key]
+                .semantic
+                .pending
+                .is_empty()
+        {
+            refresh();
+            last_refresh = Instant::now();
+        }
+        thread::sleep(Duration::from_millis(30));
+    }
+}
+
+#[test]
+fn semantic_tokens_lifecycle_rejects_stale_results_accepts_cursor_moves_and_refreshes() {
+    use kureha_code::syntax;
+    let app = App::with_document();
+    let root = std::env::temp_dir();
+    let path = root.join("kureha-semantic-lifecycle.rs");
+    let source = "fn example(value: u32) { value; }\n";
+    let id = {
+        let mut rt = app.runtime.lock().unwrap();
+        rt.explorer.root = Some(root.clone());
+        rt.workspace.open(path.clone(), source)
+    };
+    app.activate(id);
+    // Use the shared palette without changing global syntax state in parallel tests.
+    app.theme.set(syntax::theme());
+    syntax::spans(id, 0, Some(&path), source);
+    let key = session_key("rust", &root);
+    // A real transport drains requests; responses below are deliberately delivered
+    // out of date through the same language-event entry point as the worker.
+    let client = Client::spawn(
+        "python3",
+        &["-c".into(), "import sys; sys.stdin.buffer.read()".into()],
+        &root,
+    )
+    .unwrap();
+    app.runtime.lock().unwrap().language.sessions.insert(
+        key.clone(),
+        Session {
+            client: Some(client),
+            starting: None,
+            initialize: None,
+            ready: true,
+            capabilities: json!({"textDocumentSync":1,"semanticTokensProvider":{"full":true,
+            "legend":{"tokenTypes":["function"],"tokenModifiers":[]}}}),
+            pending: BTreeMap::new(),
+            documents: BTreeMap::new(),
+            root,
+            language: "rust".into(),
+            label: "semantic fixture".into(),
+            failure: None,
+            started: Instant::now(),
+            diagnostic_requests: BTreeMap::new(),
+            semantic: SemanticRequests::default(),
+            progress: Vec::new(),
+        },
+    );
+    let poll = || {
+        app.runtime.lock().unwrap().language.last_poll = None;
+        app.poll_language();
+    };
+    let request = || {
+        let rt = app.runtime.lock().unwrap();
+        let pending = &rt.language.sessions[&key].semantic.pending;
+        assert_eq!(pending.len(), 1, "expected one semantic request");
+        *pending.keys().next().unwrap()
+    };
+    let response = |id| LspEvent::Response {
+        id,
+        result: json!({"data":[0,3,7,0,0]}),
+        error: None,
+    };
+    let age_request = || {
+        app.runtime
+            .lock()
+            .unwrap()
+            .language
+            .sessions
+            .get_mut(&key)
+            .unwrap()
+            .semantic
+            .requested
+            .get_mut(&path)
+            .unwrap()
+            .2 = Instant::now() - Duration::from_secs(3);
+    };
+    poll();
+    let stale_revision = request();
+    let snapshots = app.language_snapshots();
+    let mut edited = snapshots.clone();
+    edited.iter_mut().find(|doc| doc.id == id).unwrap().revision += 1;
+    assert!(!app.language_event(&key, response(stale_revision), &edited));
+    assert!(!syntax::has_semantic_spans(id, 0, &path));
+    age_request();
+    poll();
+    let stale_theme = request();
+    assert_ne!(stale_theme, stale_revision);
+    app.runtime
+        .lock()
+        .unwrap()
+        .language
+        .sessions
+        .get_mut(&key)
+        .unwrap()
+        .semantic
+        .pending
+        .get_mut(&stale_theme)
+        .unwrap()
+        .1 = syntax::theme().toggle();
+    assert!(!app.language_event(&key, response(stale_theme), &snapshots));
+    assert!(!syntax::has_semantic_spans(id, 0, &path));
+    age_request();
+    poll();
+    let moved_request = request();
+    app.bindings(id)
+        .unwrap()
+        .selection
+        .set(TextSelection::collapsed(10));
+    let moved = app.language_snapshots();
+    assert_ne!(
+        moved.iter().find(|doc| doc.id == id).unwrap().caret,
+        snapshots.iter().find(|doc| doc.id == id).unwrap().caret
+    );
+    assert!(app.language_event(&key, response(moved_request), &moved));
+    assert!(syntax::has_semantic_spans(id, 0, &path));
+    let cached = syntax::cached(id, 0, Some(&path)).unwrap();
+    assert!(cached.spans().iter().any(|span| span.range == (3..10)));
+    age_request();
+    poll();
+    assert!(
+        app.runtime.lock().unwrap().language.sessions[&key]
+            .semantic
+            .pending
+            .is_empty(),
+        "completed tokens must not be requested again on every retry interval"
+    );
+    let refresh = || LspEvent::Notification {
+        method: "workspace/semanticTokens/refresh".into(),
+        params: Value::Null,
+    };
+    app.language_event(&key, refresh(), &moved);
+    poll();
+    let before_refresh = request();
+    // A second refresh during a request must retire that request as well.
+    app.language_event(&key, refresh(), &moved);
+    assert!(
+        app.runtime.lock().unwrap().language.sessions[&key]
+            .semantic
+            .pending
+            .is_empty(),
+        "refresh must invalidate in-flight results"
+    );
+    assert!(
+        !app.language_event(&key, response(before_refresh), &moved),
+        "a response from before refresh must not publish"
+    );
+    poll();
+    let after_refresh = request();
+    assert_ne!(after_refresh, before_refresh);
+    assert!(app.language_event(&key, response(after_refresh), &moved));
+    assert!(syntax::has_semantic_spans(id, 0, &path));
+    app.language_event(&key, refresh(), &moved);
+    poll();
+    let malformed = request();
+    assert!(app.language_event(
+        &key,
+        LspEvent::Response {
+            id: malformed,
+            result: json!({"data":[0]}),
+            error: None,
+        },
+        &moved
+    ));
+    // Invalid token data installs an empty semantic layer (lexical fallback).
+    // Treat it as complete so unchanged invalid or oversized responses do not
+    // cause an endless two-second retry loop.
+    assert!(syntax::has_semantic_spans(id, 0, &path));
+    assert!(
+        app.runtime.lock().unwrap().language.sessions[&key]
+            .semantic
+            .requested[&path]
+            .3
+    );
+    age_request();
+    poll();
+    assert!(
+        app.runtime.lock().unwrap().language.sessions[&key]
+            .semantic
+            .pending
+            .is_empty(),
+        "invalid semantic data must not be retried just because time elapsed"
+    );
+    app.language_event(&key, refresh(), &moved);
+    poll();
+    let retry = request();
+    assert_ne!(retry, malformed);
+    assert!(app.language_event(&key, response(retry), &moved));
 }

@@ -472,6 +472,15 @@ fn dispatch(
             if !id.is_string() && id.as_i64().is_none_or(|n| i32::try_from(n).is_err()) {
                 return Err("Invalid LSP server request ID".into());
             }
+            if method == "workspace/semanticTokens/refresh" {
+                shared.event(
+                    Event::Notification {
+                        method: method.clone(),
+                        params: params.clone(),
+                    },
+                    bytes,
+                )?;
+            }
             enqueue(outgoing, &server_reply(id.clone(), &method, &params))
         } else {
             shared.event(Event::Notification { method, params }, bytes)
@@ -522,11 +531,12 @@ fn server_reply(id: Value, method: &str, params: &Value) -> Value {
             }
         },
         // This minimal backend does not implement dynamic capability tracking,
-        // UI prompts, workspace mutation, or refresh providers. Do not advertise
+        // UI prompts or workspace mutation. Do not advertise
         // those client capabilities during initialize.
         "workspace/workspaceFolders"
         | "window/showMessageRequest"
-        | "window/workDoneProgress/create" => Value::Null,
+        | "window/workDoneProgress/create"
+        | "workspace/semanticTokens/refresh" => Value::Null,
         "workspace/applyEdit" => {
             json!({"applied":false,"failureReason":"Workspace edits require editor approval and are not supported by this transport"})
         }
