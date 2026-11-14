@@ -149,7 +149,7 @@ pub fn login_environment(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .current_dir(std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from))
+        .current_dir(start_folder(std::env::var_os("HOME")))
         .process_group(0)
         .spawn()
         .map_err(|e| format!("{name}: {e}"))?;
@@ -184,6 +184,14 @@ pub fn login_environment(
         .recv_timeout(Duration::from_millis(500))
         .map_err(|_| format!("{name} kept its output open"))?;
     parse_login_environment(&bytes, &marker).map_err(|e| format!("{name}: {e}"))
+}
+
+/// Where the login shell starts: HOME, as in a terminal, or `/` when HOME is
+/// unset or does not exist (as in the nix build's sandbox).
+fn start_folder(home: Option<OsString>) -> PathBuf {
+    home.map(PathBuf::from)
+        .filter(|home| home.is_dir())
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// The `env -0` output between the two `marker`s, without the shell's own
@@ -463,6 +471,14 @@ mod login_tests {
 
     /// A shell whose startup files print and export, then run the command
     /// (`-l -i -c <command>`).
+    #[test]
+    fn a_login_shell_starts_at_home_or_the_root() {
+        let temp = std::env::temp_dir();
+        assert_eq!(start_folder(Some(temp.clone().into())), temp);
+        assert_eq!(start_folder(Some("/homeless-shelter".into())), PathBuf::from("/"));
+        assert_eq!(start_folder(None), PathBuf::from("/"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_login_shell_gives_what_its_startup_files_export() {
