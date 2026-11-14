@@ -1482,4 +1482,3 @@ fn real_rust_analyzer_indexes_kureha_and_navigates_with_progress() {
         thread::sleep(Duration::from_millis(30));
     }
 }
-
