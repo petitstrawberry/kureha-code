@@ -14,3 +14,13 @@ not complete imports of upstream editor plugins or their syntax rules.
 
 Palette values were checked against upstream sources on 2026-11-09. Original
 names identify their respective projects; these mappings are maintained here.
+
+Workbench diagnostics use each palette's own red and yellow. Secondary UI
+text follows the [Nord UI mapping](https://github.com/nordtheme/visual-studio-code/blob/develop/themes/nord-color-theme.json)
+and [Tokyo Night foreground palette](https://github.com/folke/tokyonight.nvim/blob/main/lua/tokyonight/colors/storm.lua),
+rather than their dim gutter or syntax-comment colors (checked 2026-11-14).
+
+Named presets define UI selection backgrounds and text separately from syntax
+accents. Monokai's neutral selection, focus ring and cursor follow the
+[VS Code Monokai mapping](https://github.com/microsoft/vscode/blob/main/extensions/theme-monokai/themes/monokai-color-theme.json);
+its green remains a syntax/terminal color.

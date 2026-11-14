@@ -1,5 +1,7 @@
-//! Recognizable language marks with contrast-aware 18 px workbench icons.
-//! Language colors are accents; the shape still distinguishes non-code files.
+//! Recognizable language marks as 18 px workbench icons. Language colors are
+//! accents and stay as they are in every theme and selection (selected rows
+//! and tabs are marked by their highlight and label); the shape still
+//! distinguishes non-code files.
 use scarlet_ui::icon::{IconFill, IconStyle, IconWeight};
 use scarlet_ui::prelude::*;
 use std::path::Path;
@@ -30,51 +32,6 @@ impl FileIcon {
                 IconFill::Outline
             })
     }
-    pub fn themed(mut self, theme: &crate::theme::Theme, selected: bool) -> Self {
-        let colors = theme.colors();
-        let background = if selected {
-            mix(colors.elevated, colors.selection, colors.selection.a)
-        } else {
-            colors.elevated
-        };
-        let endpoint = if contrast(Color::WHITE, background) > contrast(Color::BLACK, background) {
-            Color::WHITE
-        } else {
-            Color::BLACK
-        };
-        let original = self.color;
-        for step in 0..=20 {
-            self.color = mix(original, endpoint, step as f32 / 20.0);
-            if contrast(self.color, background) >= 4.5 {
-                break;
-            }
-        }
-        self
-    }
-}
-
-fn mix(from: Color, to: Color, fraction: f32) -> Color {
-    let channel = |a: f32, b: f32| a + (b - a) * fraction;
-    Color {
-        r: channel(from.r, to.r),
-        g: channel(from.g, to.g),
-        b: channel(from.b, to.b),
-        a: 1.0,
-    }
-}
-fn luminance(color: Color) -> f32 {
-    let linear = |c: f32| {
-        if c <= 0.04045 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
-}
-fn contrast(a: Color, b: Color) -> f32 {
-    let (a, b) = (luminance(a), luminance(b));
-    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
 pub fn for_path(path: Option<&Path>) -> FileIcon {
@@ -151,39 +108,6 @@ pub const APP_ICON_SVG: &str = include_str!("../assets/kureha.svg");
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn language_and_folder_marks_stay_readable_in_all_presets_and_selections() {
-        let themes = crate::theme::Theme::ALL.into_iter().chain(
-            crate::theme::PRESETS
-                .iter()
-                .map(|(name, _)| crate::theme::preset(name).unwrap()),
-        );
-        for theme in themes {
-            for selected in [false, true] {
-                let colors = theme.colors();
-                let bg = if selected {
-                    mix(colors.elevated, colors.selection, colors.selection.a)
-                } else {
-                    colors.elevated
-                };
-                for icon in [
-                    for_path(None),
-                    for_path(Some(Path::new("lib.rs"))),
-                    for_path(Some(Path::new("app.py"))),
-                    for_path(Some(Path::new("app.ts"))),
-                    for_path(Some(Path::new("app.js"))),
-                    folder(false),
-                    folder(true),
-                ] {
-                    assert!(
-                        contrast(icon.themed(&theme, selected).color, bg) >= 4.5,
-                        "{} {selected}",
-                        theme.name()
-                    );
-                }
-            }
-        }
-    }
     #[test]
     fn file_kinds_use_consistent_shapes_and_language_accents() {
         assert_eq!(for_path(None).icon, Icon::File);

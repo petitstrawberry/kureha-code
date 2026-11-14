@@ -903,8 +903,14 @@ impl App {
                     file_icons::folder(false)
                 } else {
                     file_icons::for_path(Some(&path))
-                }
-                .themed(theme, selected);
+                };
+                // The selected entry's name in the accent; its letter keeps
+                // the change's colour.
+                let name_color = if selected {
+                    colors.emphasis(colors.elevated)
+                } else {
+                    color
+                };
                 let target = entry.clone();
                 let stage = entry.clone();
                 Either::B(
@@ -914,7 +920,7 @@ impl App {
                             Spacer::new().frame(4.0, 1.0),
                             icon.view(),
                             Spacer::new().frame(6.0, 1.0),
-                            Text::new(name).font_size(13.0).color(color),
+                            Text::new(name).font_size(13.0).color(name_color),
                             Spacer::new().frame(6.0, 1.0),
                             Text::new(parent).font_size(11.0).color(colors.muted)
                                 .truncation(Truncation::Middle),

@@ -2061,7 +2061,7 @@ impl App {
         let cancel = self.clone();
         let rename_view = if_view!(rename.is_some(), super::popup::Anchored::new(
             Surface::floating(vstack! {
-                TextField::new(rename_input).font_size(13.0).autofocus(true)
+                TextField::new(rename_input).selection_color(colors.selection).font_size(13.0).autofocus(true)
                     .text_color(colors.foreground).background_color(colors.elevated)
                     .border_color(colors.border).focused_border_color(colors.accent).material(self.theme.get().input_material())
                     .on_submit(move || submit.submit_rename())

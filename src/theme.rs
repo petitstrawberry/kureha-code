@@ -25,6 +25,8 @@ pub struct WorkbenchColors {
     pub border: Color,
     pub accent: Color,
     pub selection: Color,
+    pub selected_background: Option<Color>,
+    pub selected_foreground: Option<Color>,
     pub current_line: Color,
     pub minimap_viewport: Color,
     pub minimap_border: Color,
@@ -95,7 +97,11 @@ impl Theme {
             Self::Dark => Color::rgb(200, 204, 211),
             Self::Custom(_) => unreachable!(),
         };
-        let accent = p.primary();
+        let accent = if self == &Self::Light {
+            Color::rgb(51, 114, 187)
+        } else {
+            Color::rgb(138, 180, 230)
+        };
         let mut colors = WorkbenchColors {
             background: p.background(),
             surface: p.surface_variant(),
@@ -105,6 +111,8 @@ impl Theme {
             border: p.divider(),
             accent,
             selection: Color { a: 0.25, ..accent },
+            selected_background: None,
+            selected_foreground: None,
             current_line: p.background_secondary(),
             minimap_viewport: Color { a: 0.15, ..accent },
             minimap_border: Color { a: 0.70, ..accent },
@@ -318,6 +326,59 @@ fn syntax_color(c: Color) -> SyntaxColor {
     }
 }
 
+/// `top` drawn over the opaque `below`.
+fn over(top: Color, below: Color) -> Color {
+    let channel = |t: f32, b: f32| t * top.a + b * (1.0 - top.a);
+    Color {
+        r: channel(top.r, below.r),
+        g: channel(top.g, below.g),
+        b: channel(top.b, below.b),
+        a: 1.0,
+    }
+}
+/// WCAG contrast ratio of two opaque colors.
+pub fn contrast(a: Color, b: Color) -> f32 {
+    let luminance = |c: Color| {
+        let channel = |v: f32| {
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
+    };
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+impl WorkbenchColors {
+    /// A preset's UI selection color, or a faint accent for custom themes.
+    pub fn highlight(&self) -> Color {
+        self.selected_background.unwrap_or_else(|| self.accent.with_opacity(0.16))
+    }
+    /// Selected UI text, adjusted toward the foreground when needed to keep
+    /// the theme's normal text contrast (4.5:1 at most).
+    pub fn emphasis(&self, under: Color) -> Color {
+        let selected = self.selected_foreground.unwrap_or(self.accent);
+        let behind = over(self.highlight(), Color { a: 1.0, ..under });
+        let target = contrast(Color { a: 1.0, ..self.foreground }, behind).min(4.5);
+        (0..=20)
+            .map(|step| {
+                let t = step as f32 / 20.0;
+                let mix = |a: f32, b: f32| a + (b - a) * t;
+                Color {
+                    r: mix(selected.r, self.foreground.r),
+                    g: mix(selected.g, self.foreground.g),
+                    b: mix(selected.b, self.foreground.b),
+                    a: 1.0,
+                }
+            })
+            .find(|color| contrast(*color, behind) >= target - 0.01)
+            .unwrap_or(self.foreground)
+    }
+}
+
 /// Whether `selection`, drawn over each of `under`, can be told apart from
 /// it: far enough in color and in lightness. A selection the same as the
 /// current line or a list's surface would vanish there.
@@ -370,6 +431,32 @@ pub fn ensure_visible_selection(colors: &mut WorkbenchColors) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Selected rows and the active tab read in every bundled theme, and
+    /// preserve the preset's selected text color when it already reads.
+    #[test]
+    fn emphasis_reads_on_the_highlight_in_every_theme() {
+        let themes = Theme::ALL.into_iter().chain(
+            PRESETS
+                .iter()
+                .map(|(name, _)| preset(name).unwrap()),
+        );
+        for theme in themes {
+            let colors = theme.colors();
+            let behind = over(colors.highlight(), Color { a: 1.0, ..colors.elevated });
+            let text = colors.emphasis(colors.elevated);
+            let plain = contrast(Color { a: 1.0, ..colors.foreground }, behind);
+            assert!(
+                contrast(text, behind) >= plain.min(4.5) - 0.01,
+                "{}: as readable as plain text",
+                theme.name()
+            );
+            let selected = colors.selected_foreground.unwrap_or(colors.accent);
+            if contrast(Color { a: 1.0, ..selected }, behind) >= plain.min(4.5) {
+                assert_eq!(text, Color { a: 1.0, ..selected }, "{}", theme.name());
+            }
+        }
+    }
 
     #[test]
     fn every_bundled_theme_has_a_selection_that_shows() {

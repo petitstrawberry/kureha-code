@@ -363,10 +363,18 @@ impl App {
             32.0,
             move |index, id, selected| {
                 let select = rows.clone();
+                let chosen = selected == Some(index);
                 ui::list_row(
-                    license_row_label(acknowledgements()[id].0.clone(), colors.foreground),
+                    license_row_label(
+                        acknowledgements()[id].0.clone(),
+                        if chosen {
+                            colors.emphasis(colors.elevated)
+                        } else {
+                            colors.foreground
+                        },
+                    ),
                     rows.row_inputs.get(format!("license:{id}")),
-                    selected == Some(index),
+                    chosen,
                     true,
                     colors,
                     move || select.show_license(id),
@@ -376,7 +384,7 @@ impl App {
         .item_key(|id| (*id as u64).into())
         .frame(f32::INFINITY, f32::INFINITY);
         let browser = vstack! {
-            TextField::new(self.settings_ui.query.clone()).placeholder("Search")
+            TextField::new(self.settings_ui.query.clone()).selection_color(colors.selection).placeholder("Search")
                 .font_size(13.0).text_color(colors.foreground).placeholder_color(colors.muted)
                 .background_color(colors.elevated).border_color(colors.border).focused_border_color(colors.accent)
                 .material(self.theme.get().input_material()).on_submit(move || {
