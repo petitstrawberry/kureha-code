@@ -350,9 +350,9 @@ fn run_process(state: &mut HostState, request: &Value) -> (Value, usize) {
         return error("no folder is available to run the program in".into());
     };
     // Programs see the overlay (a dev shell's PATH, say), except the one
-    // computing it, which starts from Kureha's own environment.
+    // computing it, which starts from the login shell's (or Kureha's own).
     let search = if environment {
-        std::env::var_os("PATH")
+        crate::environment::base_var_os("PATH")
     } else {
         crate::environment::var_os("PATH")
     };

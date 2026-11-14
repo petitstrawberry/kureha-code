@@ -24,9 +24,9 @@ Nothing happens until you allow two things from the command palette:
 direnv's own approval still applies. A new or changed `.envrc` loads nothing
 until you run "direnv: Allow .envrc" (the same as `direnv allow` in the folder).
 
-`direnv` itself is found on the editor's `PATH`. When Kureha Code starts from
-Finder, that `PATH` is short (`/usr/bin:/bin:/usr/sbin:/sbin`) and may not
-include your Nix profile; start it from a terminal in that case.
+`direnv` itself is found on the editor's `PATH`. Started from Finder or the
+Dock, Kureha Code reads your login shell's environment first (as a terminal
+would have it), so a `direnv` from your Nix profile or Homebrew is found.
 
 To install it, run this from the repository and restart Kureha Code:
 

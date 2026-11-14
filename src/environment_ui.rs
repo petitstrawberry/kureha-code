@@ -55,13 +55,16 @@ fn provider(folder: &Path) -> Option<(&'static Extension, &'static EnvironmentCo
 }
 
 impl App {
-    /// The explorer's folder, once the extensions and the settings (which
-    /// hold the grants) have loaded.
+    /// The explorer's folder, once the extensions, the settings (which hold
+    /// the grants) and the login shell's environment (direnv may only be on
+    /// its PATH) are in.
     fn environment_folder(&self) -> Option<PathBuf> {
         let rt = self.runtime.lock().unwrap();
         let (folder, _) = rt.environment.folder.as_ref()?;
-        (super::extension_ui::registry().is_some() && rt.extensions.settings_applied)
-            .then(|| folder.clone())
+        (super::extension_ui::registry().is_some()
+            && rt.extensions.settings_applied
+            && !environment::reading_login_shell())
+        .then(|| folder.clone())
     }
 
     /// The id of the folder's provider, if any (cached).
@@ -83,6 +86,12 @@ impl App {
     /// Follows the explorer's folder and asks its provider when that changes;
     /// removes an overlay no allowed provider supplies any more.
     pub(super) fn poll_environment(&self) {
+        if let Some(error) = environment::take_login_shell_error() {
+            self.notify(
+                super::messages::Level::Error,
+                format!("Could not read your login shell's environment, so programs may not be found: {error}"),
+            );
+        }
         let root = self.runtime.lock().unwrap().explorer.root.clone();
         let changed = {
             let mut rt = self.runtime.lock().unwrap();
@@ -267,9 +276,10 @@ impl App {
                     },
                 )
             }
+            // The worker already names the extension.
             Err(error) => {
                 environment::set(None);
-                (super::messages::Level::Error, format!("{name}: {error}"))
+                (super::messages::Level::Error, error)
             }
         };
         // Servers that waited start now; running ones restart only if what
@@ -525,12 +535,12 @@ mod tests {
         });
         app.request_environment();
         let blocked = request(&app).unwrap();
-        app.environment_answered(blocked, Err("direnv: .envrc is blocked".into()));
+        app.environment_answered(blocked, Err("Env: .envrc is blocked".into()));
         assert!(environment::overlay().is_none());
         assert!(!environment::is_pending(&project));
         assert_eq!(
             latest(&app),
-            (Level::Error, "Env: direnv: .envrc is blocked".into())
+            (Level::Error, "Env: .envrc is blocked".into())
         );
         app.request_environment();
         wait(&app, "the environment after a failure", |_| {
@@ -614,6 +624,9 @@ fn real_direnv_dev_shell_reaches_language_servers() {
         Default::default(),
     )));
     super::extension_ui::use_test_extensions(registry, host);
+    // As `main` does: outside a terminal (run it under `env -i` to see a
+    // Finder launch), the login shell's environment comes first.
+    environment::read_login_shell_if_outside_terminal();
     let app = App::with_document();
     app.preferences.update(|p| {
         p.allow_environment.insert("kureha.direnv".into());
@@ -621,6 +634,12 @@ fn real_direnv_dev_shell_reaches_language_servers() {
             .insert("kureha.direnv".into(), ["direnv".to_string()].into());
     });
     app.sync_process_grants(&app.preferences.get());
+    while environment::reading_login_shell() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if let Some(error) = environment::take_login_shell_error() {
+        panic!("login shell: {error}");
+    }
     assert!(
         kureha_code::lsp::Client::spawn(&program, &[], &project).is_err(),
         "`{program}` is already on PATH"

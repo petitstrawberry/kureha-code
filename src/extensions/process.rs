@@ -120,8 +120,9 @@ pub struct Run {
     pub stdin: Option<Vec<u8>>,
     pub cwd: PathBuf,
     pub timeout: Duration,
-    /// Give the program Kureha's environment overlay (direnv's, say). Off
-    /// when computing that environment, which must start from the base.
+    /// Give the program the folder's environment overlay (direnv's, say) on
+    /// top of the login shell's. Off when computing that overlay, which must
+    /// start from the login shell's alone.
     pub overlay: bool,
 }
 
@@ -209,6 +210,8 @@ pub fn run(run: Run) -> Result<Output, String> {
     let mut command = Command::new(&run.program);
     if run.overlay {
         crate::environment::apply(&mut command);
+    } else {
+        crate::environment::apply_base(&mut command);
     }
     command
         .args(&run.args)

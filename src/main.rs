@@ -1633,6 +1633,9 @@ impl Application for App {
     }
 }
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // From Finder or the Dock, PATH lacks Nix and Homebrew: read the login
+    // shell's environment while the window opens.
+    kureha_code::environment::read_login_shell_if_outside_terminal();
     kureha_code::extensions::preload();
     let mut app = App::new();
     app.apply_theme(app.theme.get());
