@@ -44,6 +44,6 @@ nix develop --command python3 scripts/build-extension.py --install examples/exte
 ```
 
 It builds the module and puts `extension.toml`, `extension.wasm` and this
-README in `~/.config/kureha-code/extensions/example.format-tools/` (or under
+README in `~/.config/kureha-code/extensions/format-tools.kx/` (or under
 `KUREHA_EXTENSIONS_DIR`). Run it again after changing the code; `--out <folder>`
 puts the folder somewhere else.

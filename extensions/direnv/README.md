@@ -1,11 +1,11 @@
-# direnv example extension
+# direnv extension
 
 Gives the programs Kureha Code starts for the open folder the environment
 [direnv](https://direnv.net) loads for it: language servers, new terminals,
 and the programs other extensions run. With `use flake` in `.envrc`, that is
 your Nix dev shell, so `rust-analyzer`, `nil` or `ruff` from the flake work
 without starting the editor from `nix develop`. Written with the minimal SDK
-in [`../sdk`](../sdk).
+in [`examples/extensions/sdk`](../../examples/extensions/sdk).
 
 It is asked when a folder with an `.envrc` opens, and again when you save
 `.envrc`, `flake.nix`, `flake.lock`, `shell.nix`, `default.nix` or
@@ -16,8 +16,8 @@ environment; new ones get it.
 
 Nothing happens until you allow two things from the command palette:
 
-- "Extensions: Allow example.direnv to Run direnv", to run `direnv`;
-- "Extensions: Allow example.direnv to Set the Environment", to give its
+- "Extensions: Allow kureha.direnv to Run direnv", to run `direnv`;
+- "Extensions: Allow kureha.direnv to Set the Environment", to give its
   variables to every program Kureha starts. Changing `PATH` decides which
   program runs for every name, so this is as strong as running code.
 
@@ -31,10 +31,10 @@ include your Nix profile; start it from a terminal in that case.
 To install it, run this from the repository and restart Kureha Code:
 
 ```sh
-nix develop --command python3 scripts/build-extension.py --install examples/extensions/direnv
+nix develop --command python3 scripts/build-extension.py --install extensions/direnv
 ```
 
 It builds the module and puts `extension.toml`, `extension.wasm` and this
-README in `~/.config/kureha-code/extensions/example.direnv/` (or under
+README in `~/.config/kureha-code/extensions/direnv.kx/` (or under
 `KUREHA_EXTENSIONS_DIR`). Run it again after changing the code; `--out <folder>`
 puts the folder somewhere else.

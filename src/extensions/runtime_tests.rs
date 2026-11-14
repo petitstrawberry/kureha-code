@@ -674,10 +674,10 @@ fn environment_calls_run_in_the_folder_without_the_overlay() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-/// Runs the direnv example (`examples/extensions/direnv`) with the `direnv`
+/// Runs the direnv extension (`extensions/direnv`) with the `direnv`
 /// first on PATH, in a folder, and checks one variable (`NAME=value`) or an
 /// error (`error:<part of it>`):
-/// `KUREHA_TEST_DIRENV_WASM=<built folder>/example.direnv/extension.wasm KUREHA_TEST_DIRENV_FOLDER=<dir>
+/// `KUREHA_TEST_DIRENV_WASM=<built folder>/direnv.kx/extension.wasm KUREHA_TEST_DIRENV_FOLDER=<dir>
 /// KUREHA_TEST_DIRENV_EXPECT=FOO=bar cargo test real_direnv -- --ignored`
 #[test]
 #[ignore]
@@ -689,10 +689,10 @@ fn real_direnv_guest_exports_the_folder_environment() {
     let folder = PathBuf::from(setting("KUREHA_TEST_DIRENV_FOLDER"));
     let expect = setting("KUREHA_TEST_DIRENV_EXPECT");
     let access = Access {
-        extension: "example.direnv".into(),
+        extension: "kureha.direnv".into(),
         programs: vec!["direnv".into()],
         grants: Grants::new(std::collections::BTreeMap::from([(
-            "example.direnv".to_string(),
+            "kureha.direnv".to_string(),
             ["direnv".to_string()].into(),
         )])),
     };

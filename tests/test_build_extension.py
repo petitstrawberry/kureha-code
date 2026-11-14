@@ -81,14 +81,14 @@ sys.exit({status})
         with self.fake_cargo():
             status, stdout, stderr = self.run_main("--out", self.out, self.source)
         self.assertEqual(status, 0, stderr)
-        folder = self.out / "test.tool"
+        folder = self.out / "tool.kx"
         self.assertIn(str(folder), stdout)
         self.assertEqual(self.installed(folder), [
             "LICENSE-MIT", "README.md", "extension.toml", "extension.wasm", "themes/dark.toml"])
         self.assertEqual((folder / "extension.wasm").read_bytes(), MODULE)
         self.assertEqual((folder / "extension.toml").read_text(),
                          (self.source / "extension.toml").read_text())
-        self.assertEqual([p.name for p in self.out.iterdir()], ["test.tool"], "no staging left")
+        self.assertEqual([p.name for p in self.out.iterdir()], ["tool.kx"], "no staging left")
 
     def test_a_failed_build_keeps_the_installed_extension(self):
         with self.fake_cargo():
@@ -97,29 +97,29 @@ sys.exit({status})
             status, _, stderr = self.run_main("--out", self.out, self.source)
         self.assertEqual(status, 1)
         self.assertIn("Cargo build failed", stderr)
-        self.assertEqual((self.out / "test.tool/extension.wasm").read_bytes(), MODULE)
-        self.assertEqual([p.name for p in self.out.iterdir()], ["test.tool"])
+        self.assertEqual((self.out / "tool.kx/extension.wasm").read_bytes(), MODULE)
+        self.assertEqual([p.name for p in self.out.iterdir()], ["tool.kx"])
 
     def test_a_rebuild_replaces_the_folder(self):
         with self.fake_cargo():
             self.assertEqual(self.run_main("--out", self.out, self.source)[0], 0)
-        (self.out / "test.tool/stale.txt").write_text("from an older version\n")
+        (self.out / "tool.kx/stale.txt").write_text("from an older version\n")
         with self.fake_cargo(module=MODULE + b"v2"):
             self.assertEqual(self.run_main("--out", self.out, self.source)[0], 0)
-        self.assertFalse((self.out / "test.tool/stale.txt").exists())
-        self.assertEqual((self.out / "test.tool/extension.wasm").read_bytes(), MODULE + b"v2")
-        self.assertEqual([p.name for p in self.out.iterdir()], ["test.tool"])
+        self.assertFalse((self.out / "tool.kx/stale.txt").exists())
+        self.assertEqual((self.out / "tool.kx/extension.wasm").read_bytes(), MODULE + b"v2")
+        self.assertEqual([p.name for p in self.out.iterdir()], ["tool.kx"])
 
     def test_a_linked_source_folder_is_replaced_without_touching_the_source(self):
         self.out.mkdir()
         (self.out / "tool").symlink_to(self.source)  # the old instructions
-        (self.out / "test.tool").symlink_to(self.source)
+        (self.out / "tool.kx").symlink_to(self.source)
         with self.fake_cargo():
             status, stdout, stderr = self.run_main("--out", self.out, self.source)
         self.assertEqual(status, 0, stderr)
         self.assertIn("Removed", stdout)
-        self.assertEqual([p.name for p in self.out.iterdir()], ["test.tool"])
-        self.assertFalse((self.out / "test.tool").is_symlink())
+        self.assertEqual([p.name for p in self.out.iterdir()], ["tool.kx"])
+        self.assertFalse((self.out / "tool.kx").is_symlink())
         self.assertTrue((self.source / "src/lib.rs").is_file())
         self.assertFalse((self.source / "extension.wasm").exists())
 
@@ -134,7 +134,7 @@ sys.exit({status})
         self.assertEqual([p.name for p in self.out.iterdir()], ["copy"])
 
     def test_a_folder_of_another_extension_is_not_replaced(self):
-        taken = self.out / "test.tool"
+        taken = self.out / "tool.kx"
         taken.mkdir(parents=True)
         (taken / "extension.toml").write_text("[extension]\nid = 'someone.else'\n")
         with self.fake_cargo():
@@ -162,19 +162,21 @@ sys.exit({status})
         with patch.dict(os.environ, {"PATH": str(self.root / "nowhere")}):
             status, _, stderr = self.run_main("--out", self.out, self.source)
         self.assertEqual(status, 0, stderr)
-        self.assertNotIn("extension.wasm", self.installed(self.out / "test.tool"))
+        self.assertNotIn("extension.wasm", self.installed(self.out / "tool.kx"))
 
     def test_install_uses_kureha_extensions_folder(self):
         with self.fake_cargo(), patch.dict(os.environ, {"KUREHA_EXTENSIONS_DIR": str(self.out)}):
             status, stdout, stderr = self.run_main("--install", self.source)
         self.assertEqual(status, 0, stderr)
-        self.assertTrue((self.out / "test.tool/extension.wasm").is_file())
+        self.assertTrue((self.out / "tool.kx/extension.wasm").is_file())
         self.assertIn("Restart Kureha Code", stdout)
         with patch.dict(os.environ, {"KUREHA_EXTENSIONS_DIR": "", "XDG_CONFIG_HOME": "/cfg"}):
             self.assertEqual(build.kureha_extensions_dir(), Path("/cfg/kureha-code/extensions"))
 
-    def test_every_example_has_a_manifest_naming_the_installed_module(self):
-        for manifest in sorted(build.EXAMPLES.glob("*/extension.toml")):
+    def test_every_extension_has_a_manifest_naming_the_installed_module(self):
+        manifests = [m for root in build.SOURCES for m in sorted(root.glob("*/extension.toml"))]
+        self.assertIn(ROOT / "extensions/direnv/extension.toml", manifests)
+        for manifest in manifests:
             self.assertEqual(build.read_manifest(manifest.parent)["extension"].get("wasm"),
                              "extension.wasm", manifest)
 

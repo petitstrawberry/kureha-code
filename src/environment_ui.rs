@@ -616,9 +616,9 @@ fn real_direnv_dev_shell_reaches_language_servers() {
     super::extension_ui::use_test_extensions(registry, host);
     let app = App::with_document();
     app.preferences.update(|p| {
-        p.allow_environment.insert("example.direnv".into());
+        p.allow_environment.insert("kureha.direnv".into());
         p.allow_process
-            .insert("example.direnv".into(), ["direnv".to_string()].into());
+            .insert("kureha.direnv".into(), ["direnv".to_string()].into());
     });
     app.sync_process_grants(&app.preferences.get());
     assert!(

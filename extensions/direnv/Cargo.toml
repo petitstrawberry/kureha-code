@@ -9,7 +9,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-kureha-extension = { path = "../sdk" }
+kureha-extension = { path = "../../examples/extensions/sdk" }
 
 [profile.release]
 opt-level = "s"

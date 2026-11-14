@@ -5,10 +5,11 @@ An extension's source is a Cargo project beside its `extension.toml`. The
 manifest describes the installed folder: `[extension] wasm` names the module
 there (`extension.wasm`). This builds the module for wasm32 with Cargo and
 puts it, the manifest, the files the manifest refers to (themes), and README
-and LICENSE files into `<out>/<id>/`; sources and Cargo files stay behind.
+and LICENSE files into `<out>/<name>.kx/` (`<name>` is the source folder's);
+sources and Cargo files stay behind.
 
-    scripts/build-extension.py --install examples/extensions/direnv
-    scripts/build-extension.py --out dist/extensions        # every example
+    scripts/build-extension.py --install extensions/direnv
+    scripts/build-extension.py --out dist/extensions        # all of them
 
 The new folder replaces an earlier install only once it is complete, so a
 failed build leaves the old one working. A symbolic link that held the same
@@ -26,7 +27,10 @@ import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLES = ROOT / "examples/extensions"
+# Kureha's own extensions, then the examples.
+SOURCES = (ROOT / "extensions", ROOT / "examples/extensions")
+# An installed extension is a folder named `<name>.kx`.
+SUFFIX = ".kx"
 TARGET = "wasm32-unknown-unknown"
 MANIFEST = "extension.toml"
 # Copied when present beside the manifest: README.md, LICENSE-MIT and so on.
@@ -98,7 +102,7 @@ def build_module(folder):
 
 
 def install(source, out):
-    """Builds the extension in `source` into `out/<id>/` and returns that."""
+    """Builds the extension in `source` into `out/<name>.kx/` and returns that."""
     source = source.resolve()
     manifest = read_manifest(source)
     extension = manifest.get("extension", {})
@@ -119,14 +123,15 @@ def install(source, out):
         files.discard(wasm)
 
     out.mkdir(parents=True, exist_ok=True)
-    destination = out / id
+    destination = out / (source.name + SUFFIX)
     if destination.exists() and not destination.is_symlink():
         if not destination.is_dir() or manifest_id(destination) not in (id, None):
             raise BuildError(f"{destination} holds something else; move it away first")
     # Kureha loads one folder per id, so any other holder must go. Links (a
     # source folder linked in by hand) are replaced; real folders are not.
     others = [entry for entry in out.iterdir()
-              if entry.name != id and not entry.name.startswith(".") and entry.is_dir()
+              if entry.name != destination.name and not entry.name.startswith(".")
+              and entry.is_dir()
               and manifest_id(entry) == id]
     for other in others:
         if not other.is_symlink():
@@ -167,7 +172,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Build Kureha Code extensions into folders that install as they are.")
     parser.add_argument("extensions", nargs="*", type=Path,
-                        help="extension source folders (default: every example)")
+                        help="extension source folders (default: extensions/ and the examples)")
     where = parser.add_mutually_exclusive_group()
     where.add_argument("--out", type=Path, help="folder to put the extensions in "
                        "(default: dist/extensions)")
@@ -175,8 +180,9 @@ def main(argv=None):
                        help="put them where Kureha Code loads extensions from")
     args = parser.parse_args(argv)
     out = kureha_extensions_dir() if args.install else args.out or ROOT / "dist/extensions"
-    sources = args.extensions or sorted(
-        folder for folder in EXAMPLES.iterdir() if (folder / MANIFEST).is_file())
+    sources = args.extensions or [
+        folder for root in SOURCES for folder in sorted(root.iterdir())
+        if (folder / MANIFEST).is_file()]
     try:
         for source in sources:
             print(install(source, out))

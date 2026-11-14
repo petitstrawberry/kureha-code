@@ -8,3 +8,4 @@
 /.direnv/
 __pycache__/
 /examples/extensions/*/target/
+/extensions/*/target/

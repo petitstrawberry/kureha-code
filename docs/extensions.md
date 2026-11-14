@@ -301,10 +301,11 @@ kx_host_take(ptr: u32, len: u32) -> i32   // 保留中の返事を拡張のメ�
 **ビルド**: `scripts/build-extension.py`。拡張のソースは `extension.toml` の隣のCargoプロジェクトで、
 マニフェストはインストールしたフォルダを表す(`wasm = "extension.wasm"`)。スクリプトはwasm32向けに
 ビルドし(モジュールはCargoの報告から取る)、マニフェスト、モジュール、マニフェストが参照するファイル(テーマ)、
-README・LICENSEだけを `<出力先>/<id>/` に置く。ソースとCargoのファイルは持っていかない。
+README・LICENSEだけを `<出力先>/<名前>.kx/` に置く(名前はソースのフォルダ名)。ソースとCargoのファイルは持っていかない。
 
 - `--install` でKurehaの読み込み先(`KUREHA_EXTENSIONS_DIR`、なければ `$XDG_CONFIG_HOME/kureha-code/extensions`)、
-  `--out <フォルダ>` で任意の場所、どちらもなければ `dist/extensions`。引数なしで例をすべてビルドする。
+  `--out <フォルダ>` で任意の場所、どちらもなければ `dist/extensions`。引数なしで `extensions/` と例をすべてビルドする。
+- Kurehaは `.kx` のないフォルダも読み込む。名前は目印で、読み込みの条件ではない。
 - 隠しフォルダに組み立ててから入れ替えるので、ビルドに失敗しても前のものが残る。
 - 同じidを持つ別の項目があると、Kurehaは1つしか読み込まない。シンボリックリンク(以前の手順でソースの
   フォルダをリンクしたもの)なら外し、実体のフォルダなら止まる。別の拡張が入っているフォルダも上書きしない。
@@ -585,7 +586,7 @@ Nixの開発シェル(`nix develop`、direnvの `use flake`)では、言語サ�
 
 **SDK**: `Request::Environment { folder }` と `Reply::environment([("PATH", Some(...)), ("OLD", None)])`。
 
-**例: direnv**(`examples/extensions/direnv`)。`direnv export json` の結果をそのまま返す。未承認の
+**direnv**(`extensions/direnv`、id `kureha.direnv`)。`direnv export json` の結果をそのまま返す。未承認の
 `.envrc` には「direnv: Allow .envrc」(`direnv allow` を実行する)を案内する。
 
 確認: `environment.rs` のテストで、起動するプログラムへの設定と削除、`PATH` の解決、待たせるフォルダの範囲。
