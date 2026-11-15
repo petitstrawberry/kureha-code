@@ -146,19 +146,10 @@
           ++ runtime;
 
           FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
-          RUST_SRC_PATH = "${rust}/lib/rustlib/src/rust/library";
           CARGO_NET_GIT_FETCH_WITH_CLI = "true";
-          CARGO_BUILD_JOBS = "4";
-          CARGO_PROFILE_DEV_DEBUG = "0";
-          CARGO_PROFILE_TEST_DEBUG = "0";
-          SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
-          GIT_SSL_CAINFO = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
           shellHook = ''
             export PATH="${rust}/bin:${pkgs.rustfmt}/bin:$PATH"
-            # Honor a host-provided CA bundle while keeping TLS verification enabled.
-            export SSL_CERT_FILE="''${NIX_SSL_CERT_FILE:-$SSL_CERT_FILE}"
-            export GIT_SSL_CAINFO="$SSL_CERT_FILE"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             if [ -z "''${XDG_RUNTIME_DIR:-}" ]; then
               export XDG_RUNTIME_DIR="/tmp/kureha-code-runtime-$(id -u)"
