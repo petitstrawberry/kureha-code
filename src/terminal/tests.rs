@@ -339,6 +339,40 @@ fn real_pty_interactive_cwd_input_ansi_resize_exit_and_close() {
 
 #[test]
 #[cfg(all(unix, not(target_os = "scarlet")))]
+fn real_pty_scrollback_moves_both_directions_and_typing_returns_to_live_output() {
+    let terminal = Terminal::new();
+    terminal.resize(40, 4);
+    terminal.open(std::env::temp_dir());
+    wait_until(&terminal, |t| t.status() == TerminalStatus::Running);
+    assert!(terminal.send_input(b"exec /bin/sh -i\r"));
+    assert!(terminal.send_input(
+        b"stty -echo; i=0; while [ $i -lt 40 ]; do printf 'HISTORY_%02d\\n' $i; i=$((i+1)); done\r"
+    ));
+    wait_until(&terminal, |t| t.visible_text().contains("HISTORY_39"));
+    let live = terminal.visible_text();
+    assert!(!live.contains("HISTORY_00"));
+    assert!(terminal.scroll(20));
+    wait_until(&terminal, |t| t.visible_text().contains("HISTORY_19"));
+    assert!(!terminal.shared.cursor.get().visible);
+    assert!(terminal.scroll(-20));
+    wait_until(&terminal, |t| t.visible_text() == live);
+    assert!(terminal.shared.cursor.get().visible);
+    assert!(terminal.scroll(20));
+    wait_until(&terminal, |t| t.visible_text().contains("HISTORY_19"));
+    assert!(terminal.send_input(b"printf 'LIVE_%s\\n' AGAIN\r"));
+    wait_until(&terminal, |t| t.visible_text().contains("LIVE_AGAIN"));
+    assert!(terminal.shared.cursor.get().visible);
+    // A wheel event immediately after input must apply after the pending reset.
+    assert!(terminal.send_input(b""));
+    assert!(terminal.scroll(20));
+    wait_until(&terminal, |t| !t.shared.cursor.get().visible);
+    assert!(terminal.scroll(-20));
+    wait_until(&terminal, |t| t.visible_text().contains("LIVE_AGAIN"));
+    terminal.close();
+}
+
+#[test]
+#[cfg(all(unix, not(target_os = "scarlet")))]
 fn new_terminals_get_the_folder_environment() {
     let _serial = crate::environment::test_serial();
     crate::environment::set(Some(crate::environment::Overlay {

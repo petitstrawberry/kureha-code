@@ -65,6 +65,8 @@ struct Inbox {
     input: VecDeque<u8>,
     size: Option<(u16, u16)>,
     scroll: isize,
+    scroll_to_bottom: bool,
+    wheel_remainder: f32,
 }
 
 struct Snapshot {
@@ -323,7 +325,9 @@ impl Terminal {
                 return false;
             }
             inbox.input.extend(bytes);
-            inbox.scroll = isize::MIN; // typing returns to the live viewport
+            inbox.scroll_to_bottom = true;
+            inbox.scroll = 0;
+            inbox.wheel_remainder = 0.0;
             true
         })
     }
@@ -343,6 +347,20 @@ impl Terminal {
 
     pub fn scroll(&self, lines: isize) -> bool {
         self.with_inbox(|inbox| {
+            inbox.scroll = inbox.scroll.saturating_add(lines);
+            inbox.wheel_remainder = 0.0;
+            true
+        })
+    }
+
+    fn scroll_pixels(&self, delta_y: i32, cell_height: f32) -> bool {
+        self.with_inbox(|inbox| {
+            // Wheel deltas are logical pixels, positive toward older output.
+            // Retain sub-row movement across events and view rebuilds so slow
+            // trackpad gestures still move the viewport.
+            let pixels = inbox.wheel_remainder + delta_y as f32;
+            let lines = (pixels / cell_height).trunc() as isize;
+            inbox.wheel_remainder = pixels % cell_height;
             inbox.scroll = inbox.scroll.saturating_add(lines);
             true
         })
@@ -424,6 +442,9 @@ impl Terminal {
         }
         let content = grid
             .on_event(move |event| {
+                if let Event::Mouse(scarlet_ui::event::MouseEvent::Wheel { delta_y, .. }) = event {
+                    return *delta_y != 0 && terminal.scroll_pixels(*delta_y, cell_size.height);
+                }
                 if !terminal.focused() {
                     return false;
                 }
@@ -578,7 +599,11 @@ fn worker(
             let capacity = INPUT_LIMIT.saturating_sub(pending.len());
             let count = capacity.min(inbox.input.len());
             pending.extend(inbox.input.drain(..count));
-            (inbox.size.take(), std::mem::take(&mut inbox.scroll))
+            (
+                inbox.size.take(),
+                std::mem::take(&mut inbox.scroll),
+                std::mem::take(&mut inbox.scroll_to_bottom),
+            )
         };
         if let Some((cols, rows)) = messages.0 {
             if let Err(error) = pty.resize(cols, rows) {
@@ -586,6 +611,10 @@ fn worker(
                 break;
             }
             parser.screen_mut().set_size(rows, cols);
+            dirty = true;
+        }
+        if messages.2 {
+            parser.screen_mut().set_scrollback(0);
             dirty = true;
         }
         if messages.1 != 0 {

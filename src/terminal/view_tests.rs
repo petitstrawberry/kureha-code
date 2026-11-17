@@ -264,6 +264,66 @@ fn tab_and_shift_tab_reach_the_pty_queue_and_keep_keyboard_focus() {
 }
 
 #[test]
+fn wheel_scrolls_hovered_terminal_without_focus_and_accumulates_trackpad_pixels() {
+    use scarlet_ui::event::{MouseEvent, ScrollSource, WheelPhase};
+    let terminal = Terminal::new();
+    let inbox = Arc::new(Mutex::new(Inbox::default()));
+    *terminal.shared.session.lock().unwrap() = Some(Session {
+        cancel: Arc::new(AtomicBool::new(false)),
+        inbox: inbox.clone(),
+        output: Arc::new(Mutex::new(None)),
+    });
+    let font = crate::fonts::editor_stack();
+    let height = view::cell_size(font.as_ref()).height as i32;
+    let mut pipeline = RenderingPipeline::new();
+    pipeline.set_root(
+        Window::new("Terminal scroll", terminal.view_with_font(font))
+            .decorated(false)
+            .size(Size::new(320.0, 170.0))
+            .create_element(),
+    );
+    pipeline.layout_initial();
+    pipeline.render();
+    let wheel = |delta_x, delta_y, x, source| {
+        Event::Mouse(MouseEvent::Wheel {
+            delta_x,
+            delta_y,
+            x,
+            y: 30,
+            phase: WheelPhase::Moved,
+            source,
+        })
+    };
+    // A horizontal gesture and events outside the pane do not scroll it.
+    pipeline.handle_event(&wheel(32, 0, 30, ScrollSource::Wheel));
+    pipeline.handle_event(&wheel(0, 32, 400, ScrollSource::Wheel));
+    assert_eq!(inbox.lock().unwrap().scroll, 0);
+    for _ in 0..height {
+        assert!(pipeline.handle_event(&wheel(0, 1, 30, ScrollSource::Trackpad)));
+        // Focus changes rebuild the view; its partial row must survive.
+        terminal.focus();
+        pipeline.render();
+        terminal.blur();
+        pipeline.render();
+    }
+    assert_eq!(inbox.lock().unwrap().scroll, 1);
+    assert!(
+        !terminal.focused(),
+        "scrolling must not steal keyboard focus"
+    );
+    assert!(pipeline.handle_event(&wheel(0, -height * 3, 30, ScrollSource::Wheel)));
+    let inbox = inbox.lock().unwrap();
+    assert_eq!(inbox.scroll, -2);
+    assert!(
+        inbox.input.is_empty(),
+        "wheel events must not reach the shell"
+    );
+    drop(inbox);
+    pipeline.teardown();
+    terminal.close();
+}
+
+#[test]
 fn ime_composition_stays_local_commits_utf8_once_and_cancels_on_blur() {
     use scarlet_ui::event::KeyModifiers;
     let terminal = Terminal::new();
